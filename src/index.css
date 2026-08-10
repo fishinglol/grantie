@@ -442,8 +442,7 @@ table.compare-table {
 .signup-marquee {
   position: absolute; inset: 0; z-index: 0;
   pointer-events: none;
-  color: var(--sand);
-  opacity: 0.16;
+  opacity: 0.55;
 }
 @media (prefers-reduced-motion: reduce) {
   .signup-marquee { display: none; }

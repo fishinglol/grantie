@@ -6,7 +6,13 @@ import MarqueeAlongSvgPath from "./ui/marquee-along-svg-path"
 const WAVE_PATH =
   "M0 260 C 200 160, 400 360, 600 220 C 800 80, 1000 320, 1200 180"
 
-const ICONS = [Cloud, FolderTree, FileText, Link2, RefreshCw]
+const ICONS = [
+  { Icon: Cloud, color: "#4C8FD9" },
+  { Icon: FolderTree, color: "#5C6E52" },
+  { Icon: FileText, color: "#8B7355" },
+  { Icon: Link2, color: "#B2593D" },
+  { Icon: RefreshCw, color: "#9DAE8F" },
+]
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
@@ -84,8 +90,8 @@ export default function Signup() {
           responsive
           className="signup-marquee"
         >
-          {ICONS.map((Icon, i) => (
-            <Icon key={i} size={24} strokeWidth={1.5} />
+          {ICONS.map(({ Icon, color }, i) => (
+            <Icon key={i} size={26} strokeWidth={1.6} color={color} />
           ))}
         </MarqueeAlongSvgPath>
       )}
