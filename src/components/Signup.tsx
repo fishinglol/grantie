@@ -70,7 +70,7 @@ export default function Signup() {
     }
 
     // Fire-and-forget: the signup itself is already saved, so the email isn't load-bearing.
-    fetch("/.netlify/functions/send-welcome-email", {
+    fetch("/api/send-welcome-email", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email }),
