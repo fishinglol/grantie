@@ -1,5 +1,12 @@
-import { useState, type FormEvent } from "react"
+import { useEffect, useState, type FormEvent } from "react"
 import { createClient } from "@supabase/supabase-js"
+import { Cloud, FileText, FolderTree, Link2, RefreshCw } from "lucide-react"
+import MarqueeAlongSvgPath from "./ui/marquee-along-svg-path"
+
+const WAVE_PATH =
+  "M0 260 C 200 160, 400 360, 600 220 C 800 80, 1000 320, 1200 180"
+
+const ICONS = [Cloud, FolderTree, FileText, Link2, RefreshCw]
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
@@ -20,6 +27,15 @@ export default function Signup() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [reduceMotion, setReduceMotion] = useState(false)
+
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)")
+    setReduceMotion(mq.matches)
+    const onChange = () => setReduceMotion(mq.matches)
+    mq.addEventListener("change", onChange)
+    return () => mq.removeEventListener("change", onChange)
+  }, [])
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -59,6 +75,21 @@ export default function Signup() {
 
   return (
     <section className="section signup" id="signup">
+      {!reduceMotion && (
+        <MarqueeAlongSvgPath
+          path={WAVE_PATH}
+          viewBox="0 0 1200 400"
+          baseVelocity={6}
+          repeat={2}
+          responsive
+          className="signup-marquee"
+        >
+          {ICONS.map((Icon, i) => (
+            <Icon key={i} size={24} strokeWidth={1.5} />
+          ))}
+        </MarqueeAlongSvgPath>
+      )}
+
       <div className="eyebrow">Early access</div>
       <h2>Get notified when Granite is ready to import your vault.</h2>
       <p className="sub">No spam. One email when we launch, plus an early-access link before anyone else.</p>

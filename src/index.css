@@ -236,14 +236,11 @@ nav.scrolled {
 
 /* ---------- Hero ---------- */
 .hero {
-  position: relative;
   min-height: 100svh;
   display: flex; align-items: center;
   padding: 132px var(--gutter) clamp(72px, 9vw, 108px);
-  overflow: hidden;
 }
 .hero-grid {
-  position: relative; z-index: 1;
   display: grid; grid-template-columns: 1fr 360px;
   gap: clamp(32px, 6vw, 72px); align-items: center;
 }
@@ -345,19 +342,6 @@ h1.display em {
 }
 .cb-icons svg.on { opacity: 1; filter: none; }
 
-/* ---------- Hero marquee background ---------- */
-.hero-marquee {
-  position: absolute; inset: 0; z-index: 0;
-  pointer-events: none;
-  color: var(--sand);
-  opacity: 0.16;
-}
-.hero-marquee svg[stroke] { color: transparent; }
-
-@media (prefers-reduced-motion: reduce) {
-  .hero-marquee { display: none; }
-}
-
 @media (max-width: 940px) {
   .hero-grid { grid-template-columns: 1fr; }
   .import-demo { margin: 8px 0 0; }
@@ -446,11 +430,24 @@ table.compare-table {
 
 /* ---------- Signup ---------- */
 .signup {
+  position: relative;
+  overflow: hidden;
   background: var(--quartz);
   display: flex; flex-direction: column; align-items: center; text-align: center;
 }
+.signup > *:not(.signup-marquee) { position: relative; z-index: 1; }
 .signup .eyebrow { justify-content: center; color: var(--sand); }
 .signup .eyebrow::before { display: none; }
+
+.signup-marquee {
+  position: absolute; inset: 0; z-index: 0;
+  pointer-events: none;
+  color: var(--sand);
+  opacity: 0.16;
+}
+@media (prefers-reduced-motion: reduce) {
+  .signup-marquee { display: none; }
+}
 .signup h2 {
   font-family: 'Fraunces', serif; font-weight: 500;
   font-size: clamp(1.9rem, 3.8vw, 3rem);
