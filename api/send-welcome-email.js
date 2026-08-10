@@ -73,8 +73,9 @@ function welcomeEmailHtml() {
 
             <tr>
               <td style="padding:32px 36px 0;">
-                <span style="font-family: Georgia, 'Times New Roman', serif; font-size:18px; font-weight:bold; color:${dark};">
-                  &#9650;&nbsp; Granite
+                <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 20L9 6L14 14L17 4L20 20H4Z' fill='%231C1B1A'/%3E%3C/svg%3E" width="16" height="16" alt="" style="vertical-align:middle; margin-right:8px;" />
+                <span style="font-family: Georgia, 'Times New Roman', serif; font-size:18px; font-weight:bold; color:${dark}; vertical-align:middle;">
+                  Granite
                 </span>
               </td>
             </tr>
