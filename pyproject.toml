@@ -1,0 +1,17 @@
+[project]
+name = "conflict-cleaner"
+version = "0.1.0"
+description = "Find and help resolve sync-conflict files in a Markdown notes folder"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "AGPL-3.0-or-later" }
+
+[project.scripts]
+conflict-cleaner = "conflict_cleaner.cli:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["conflict_cleaner"]
