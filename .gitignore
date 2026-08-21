@@ -28,3 +28,4 @@ Granite_Validation_Report.docx
 
 # Claude Code internal session state
 .claude/scheduled_tasks.lock
+.env*
