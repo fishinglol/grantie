@@ -8,45 +8,33 @@ const FILES = [
 ]
 const COUNTS = [128, 297, 412]
 
-const REDUCED_MOTION_STATE = {
-  status: "Synced to your cloud",
-  sending: [true, true, true],
-  vaultCount: "412 notes",
-  vaultPulse: false,
-  doneShown: true,
-  cloudsOn: [true, true, true, true],
-}
-
-const INITIAL_STATE = {
-  status: "Drop in your old vault",
-  sending: [false, false, false],
-  vaultCount: "0 notes",
-  vaultPulse: false,
-  doneShown: false,
-  cloudsOn: [false, false, false, false],
-}
+// One panel is on stage at a time — the layers cross-fade with a delay on the
+// incoming one, so two of them are never legible at once.
+type Phase = "drop" | "reading" | "result" | "sync"
 
 export default function ImportDemo() {
   const prefersReducedMotion =
     typeof window !== "undefined" &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches
 
+  const [phase, setPhase] = useState<Phase>(prefersReducedMotion ? "sync" : "drop")
   const [status, setStatusText] = useState(
-    prefersReducedMotion ? REDUCED_MOTION_STATE.status : INITIAL_STATE.status
+    prefersReducedMotion ? "Synced to your cloud" : "Drag in your vault folder"
   )
   const [statusOpacity, setStatusOpacity] = useState(1)
+  // The pointer walks through these in order: off-stage, reaching for the
+  // folder, holding it during the drag, then letting go.
+  const [cursor, setCursor] = useState<"off" | "reach" | "hold" | "released">("off")
+  const [grabbed, setGrabbed] = useState(false)
+  const [dragDropped, setDragDropped] = useState(false)
+  const [dropFilled, setDropFilled] = useState(false)
   const [sending, setSending] = useState(
-    prefersReducedMotion ? REDUCED_MOTION_STATE.sending : INITIAL_STATE.sending
+    prefersReducedMotion ? [true, true, true] : [false, false, false]
   )
-  const [vaultCount, setVaultCount] = useState(
-    prefersReducedMotion ? REDUCED_MOTION_STATE.vaultCount : INITIAL_STATE.vaultCount
-  )
+  const [vaultCount, setVaultCount] = useState(prefersReducedMotion ? "412 notes" : "0 notes")
   const [vaultPulse, setVaultPulse] = useState(false)
-  const [doneShown, setDoneShown] = useState(
-    prefersReducedMotion ? REDUCED_MOTION_STATE.doneShown : INITIAL_STATE.doneShown
-  )
   const [cloudsOn, setCloudsOn] = useState(
-    prefersReducedMotion ? REDUCED_MOTION_STATE.cloudsOn : INITIAL_STATE.cloudsOn
+    prefersReducedMotion ? [true, true, true, true] : [false, false, false, false]
   )
 
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
@@ -66,23 +54,41 @@ export default function ImportDemo() {
       })
     }
 
-    const reset = () => {
-      setSending([false, false, false])
-      setCloudsOn([false, false, false, false])
-      setDoneShown(false)
-      setVaultCount("0 notes")
-      setStatus("Drop in your old vault")
-    }
-
     function run() {
       timers.current.forEach(clearTimeout)
       timers.current = []
-      reset()
 
-      at(900, () => setStatus("Reading your files"))
+      // Reset happens while the drop layer is still hidden, so nothing snaps on screen.
+      setPhase("drop")
+      setCursor("off")
+      setGrabbed(false)
+      setDragDropped(false)
+      setDropFilled(false)
+      setSending([false, false, false])
+      setCloudsOn([false, false, false, false])
+      setVaultCount("0 notes")
+      setStatus("Drag in your vault folder")
+
+      // 1. A pointer comes in, picks the vault folder up and drags it into the zone.
+      at(560, () => setCursor("reach"))
+      at(1060, () => {
+        setCursor("hold")
+        setGrabbed(true)
+      })
+      at(1300, () => setDragDropped(true))
+      at(2180, () => {
+        setCursor("released")
+        setGrabbed(false)
+        setDropFilled(true)
+      })
+      at(2320, () => setStatus("Vault folder dropped"))
+
+      // 2. Granite reads it — the files inside stream out toward the vault.
+      at(2980, () => setStatus("Reading your files"))
+      at(3080, () => setPhase("reading"))
 
       FILES.forEach((_, i) => {
-        const t = 1200 + i * 700
+        const t = 3680 + i * 600
         at(t, () => setSending((prev) => prev.map((v, idx) => (idx === i ? true : v))))
         at(t + 380, () => {
           setVaultCount(COUNTS[i] + " notes")
@@ -91,17 +97,25 @@ export default function ImportDemo() {
         })
       })
 
-      at(3300, () => {
-        setDoneShown(true)
+      // 3. What survived the import.
+      at(5730, () => {
+        setPhase("result")
         setStatus("Nothing left behind")
       })
 
+      // 4. And out to whichever cloud you already pay for.
+      at(6930, () => setStatus("Syncing to your cloud"))
       CLOUD_IDS.forEach((_, i) =>
-        at(4600 + i * 200, () => setCloudsOn((prev) => prev.map((v, idx) => (idx === i ? true : v))))
+        at(7030 + i * 200, () =>
+          setCloudsOn((prev) => prev.map((v, idx) => (idx === i ? true : v)))
+        )
       )
-      at(4800, () => setStatus("Synced to your cloud"))
+      at(7930, () => {
+        setPhase("sync")
+        setStatus("Synced to your cloud")
+      })
 
-      at(8200, run)
+      at(10600, run)
     }
     run()
 
@@ -112,6 +126,11 @@ export default function ImportDemo() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const layer = (name: Phase | Phase[]) => {
+    const active = Array.isArray(name) ? name.includes(phase) : phase === name
+    return "demo-layer" + (active ? " active" : "")
+  }
+
   return (
     <div className="import-demo" aria-label="Importing an existing vault into Granite">
       <div className="demo-status" style={{ opacity: statusOpacity }}>
@@ -119,8 +138,38 @@ export default function ImportDemo() {
       </div>
 
       <div className="demo-stage">
-        <div className="src-slot">
-          <div className="src-col">
+        <div className="demo-panel">
+          <div className={layer("drop") + " is-drop"} aria-hidden="true">
+            {/* Where the folder sits before the drag; the rig floats above it. */}
+            <div className="drop-rest" />
+            <div className={"drop-zone" + (dropFilled ? " filled" : "")}>
+              <div className="drop-slot" />
+              <span className="drop-hint">{dropFilled ? "my-vault/" : "Drop your vault"}</span>
+            </div>
+
+            <div className={"drag-rig" + (dragDropped ? " dropped" : "")}>
+              <svg className={"drag-item" + (grabbed ? " grabbed" : "")} viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M3 7a2 2 0 0 1 2-2h4l2 2.2h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"
+                  fill="currentColor"
+                />
+              </svg>
+              <svg
+                className={"drag-cursor" + (cursor === "off" ? "" : " " + cursor)}
+                viewBox="0 0 24 24"
+              >
+                <path
+                  d="M4 2l0 16.5 4.2-4.1 2.6 6 3.3-1.4-2.6-5.9 5.9 0z"
+                  fill="var(--dark)"
+                  stroke="var(--white)"
+                  strokeWidth="1.2"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </div>
+          </div>
+
+          <div className={layer("reading")} aria-hidden="true">
             {FILES.map((file, i) => (
               <div key={file.name} className={"src-file" + (sending[i] ? " sending" : "")}>
                 <span className="fbadge">{file.ext}</span>
@@ -128,7 +177,8 @@ export default function ImportDemo() {
               </div>
             ))}
           </div>
-          <div className={"src-done" + (doneShown ? " show" : "")} aria-hidden="true">
+
+          <div className={layer(["result", "sync"])} aria-hidden="true">
             <div className="done-line">
               <svg viewBox="0 0 24 24" fill="none">
                 <path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
@@ -151,24 +201,7 @@ export default function ImportDemo() {
         </div>
 
         <div className={"vault" + (vaultPulse ? " pulse" : "")}>
-          <svg className="vault-slabs" viewBox="0 0 150 190" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-            <ellipse cx="70" cy="176" rx="48" ry="7" fill="#1C1B1A" opacity="0.1" />
-            <g transform="translate(64 14) rotate(12)">
-              <rect width="64" height="102" rx="6" fill="var(--quartz)" />
-            </g>
-            <g transform="translate(40 20) rotate(3)">
-              <rect width="66" height="106" rx="6" fill="var(--sand)" />
-            </g>
-            <g transform="translate(14 26) rotate(-9)">
-              <rect width="68" height="110" rx="6" fill="var(--dark)" />
-              <g stroke="var(--paper-40)" strokeWidth="2.4" strokeLinecap="round">
-                <path d="M15 30H46" />
-                <path d="M15 44H55" />
-                <path d="M15 58H39" />
-              </g>
-              <path d="M15 78H55" stroke="var(--lichen-lift)" strokeWidth="2.4" strokeLinecap="round" opacity="0.75" />
-            </g>
-          </svg>
+          <img className="vault-slabs" src="/logo-128.png" alt="" aria-hidden="true" />
           <div className="vault-count">{vaultCount}</div>
         </div>
       </div>

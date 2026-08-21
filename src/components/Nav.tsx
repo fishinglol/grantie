@@ -13,9 +13,7 @@ export default function Nav() {
   return (
     <nav className={scrolled ? "scrolled" : undefined}>
       <a href="#" className="logo">
-        <svg viewBox="0 0 24 24" fill="none">
-          <path d="M4 20L9 6L14 14L17 4L20 20H4Z" fill="currentColor" />
-        </svg>
+        <img src="/logo-64.png" alt="" />
         Granite
       </a>
       <a href="#signup" className="nav-cta">
