@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react"
 import { createClient } from "@supabase/supabase-js"
 import { Cloud, FileText, FolderTree, Link2, RefreshCw } from "lucide-react"
 import MarqueeAlongSvgPath from "./ui/marquee-along-svg-path"
+import { getAttributionData } from "../lib/attribution"
 
 const WAVE_PATH =
   "M0 260 C 200 160, 400 360, 600 220 C 800 80, 1000 320, 1200 180"
@@ -36,6 +37,9 @@ export default function Signup() {
   const [reduceMotion, setReduceMotion] = useState(false)
 
   useEffect(() => {
+    // Initialize attribution immediately on mount
+    getAttributionData()
+
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)")
     setReduceMotion(mq.matches)
     const onChange = () => setReduceMotion(mq.matches)
@@ -55,7 +59,27 @@ export default function Signup() {
       return
     }
 
-    const { error: insertError } = await sb.from("waitlist").insert({ email, platform })
+    const attribution = getAttributionData()
+
+    const payload = {
+      email,
+      platform,
+      source: attribution.source,
+      utm_source: attribution.utm_source,
+      utm_medium: attribution.utm_medium,
+      utm_campaign: attribution.utm_campaign,
+      utm_content: attribution.utm_content,
+      referrer_url: attribution.referrer_url,
+    }
+
+    let { error: insertError } = await sb.from("waitlist").insert(payload)
+
+    // Fallback: If DB table does not have attribution columns yet, retry with basic fields
+    if (insertError && insertError.code !== "23505") {
+      console.warn("Retrying signup with basic payload in case of schema discrepancy:", insertError)
+      const fallbackResult = await sb.from("waitlist").insert({ email, platform })
+      insertError = fallbackResult.error
+    }
 
     if (insertError) {
       setSubmitting(false)
