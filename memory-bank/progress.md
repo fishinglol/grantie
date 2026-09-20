@@ -121,6 +121,25 @@ _Last updated: 2026-09-20_
   - [x] Launch bug fixed: sidebar file list was read before the sample note existed
   - [x] Dev-only full page reload when `LiveEditor.tsx` (or what it imports) changes
   - [x] `tsc --noEmit` clean; `tsc -b` reports one pre-existing error (`vite.config.ts`)
+- **`apps/mobile` v0.2 — phone version of the desktop UI** (branch `feat/mobile-live-editor`)
+  - [x] New shared package `packages/live-editor` (`@granite/live-editor`): the CodeMirror live-preview
+        editor + image viewer + CSS, moved out of `apps/desktop`. Platform-neutral: `toUrl` prop turns a
+        file path into a loadable URL (desktop: `convertFileSrc`; phone: `file://` URI). `IMAGE_FILE` now
+        lives in `@granite/core-notes` so the RN app never imports the editor (it would bundle CodeMirror).
+  - [x] Phone editor = that editor inside a `react-native-webview` (user approved the dependency).
+        `apps/mobile/editor-web/` is the page; `scripts/build-editor.mjs` bundles it into the generated,
+        git-ignored `src/editorHtml.ts` (runs before `npm start|web|ios|android`). App ↔ page over
+        `postMessage` (protocol in `editor-web/main.tsx`). WebView base URL = the note's folder so
+        `![](assets/x.png)` loads from disk.
+  - [x] Notes list (folders/notes tree, "+ Note", "+ Folder"), full-screen note with back, save dot,
+        "Image" button (photo → `<note dir>/assets/` → link at cursor), account chip + bottom sheet, toast.
+        Autosave 700 ms after typing, flushed on back / app backgrounding / Android back.
+  - [x] `expoFs` / `memFs` are now `VaultFileSystem` (readBinaryFile, listDir, stat) — what sync needs.
+  - [x] Verified: web preview (create note, edit, autosave, reopen, live preview looks like desktop),
+        `tsc --noEmit` clean for mobile, desktop, live-editor; `expo export` bundles iOS + Android.
+  - [ ] **Not run on a phone yet** (WebView, file:// image loading, keyboard, photo picker).
+  - [ ] Touch: image resize handle / drag-to-move are mouse-only; no move-note, no paste/drag-in.
+  - [ ] Google sign-in + Drive sync on mobile (see activeContext for the Expo Go constraint).
 - **`apps/mobile` v0.1 (Expo SDK 57)**
   - [x] npm workspaces at repo root; Metro configured for the monorepo
   - [x] `src/expoFs.ts` — `FileSystem` adapter over `expo-file-system` (native)

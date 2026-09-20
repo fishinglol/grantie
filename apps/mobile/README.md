@@ -1,10 +1,12 @@
 # Granite — mobile (Expo / React Native)
 
-First-pass local features:
-1. **Read + parse a local `.md` file** — via `@granite/core-notes` (`parseNote`),
-   shown as raw text.
-2. **Insert an image** — pick a photo, it is copied to `vault/assets/` and a
-   relative `![alt](assets/…)` link is appended to the note.
+A phone version of the desktop app:
+1. **Notes list** — the vault's folders and notes, "+ Note" / "+ Folder", and an
+   account chip at the bottom (bottom sheet instead of the desktop hover menu).
+2. **Live-preview editor** — the *same* editor as desktop (`@granite/live-editor`,
+   CodeMirror 6) running inside a WebView. Edits autosave to the vault.
+3. **Add an image** — pick a photo; it is copied to `<note folder>/assets/` and
+   linked at the cursor.
 
 ## Run it
 
@@ -48,7 +50,7 @@ The app contains **no markdown logic** — it calls `NoteRepository.load()` and
   Opening an arbitrary folder from Files / Google Drive with **persistent**
   read-write access (iOS security-scoped bookmarks, Android SAF) is deferred —
   it belongs with the sync milestone.
-- **Open .md…** loads a temporary copy; edits to external files are not saved
-  back yet.
-- Body rendering is a lightweight built-in pass (headings / lists / images).
-  Swap in `react-native-markdown-display` when full Markdown rendering is needed.
+- Touch: tapping an image selects it and the toolbar (zoom, `</>`) works, but the
+  resize handle and drag-to-move are mouse-only for now.
+- No moving notes between folders, and no paste/drag-in of files (photo picker only).
+- No Google Drive sync yet.

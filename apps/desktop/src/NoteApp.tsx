@@ -6,7 +6,8 @@ import { GoogleDriveProvider, VaultSync, type GoogleSession, type SyncResult } f
 
 import { REMOTE_FOLDER_NAME, SYNC_INTERVAL_MS } from "./config";
 import { http } from "./googleLogin";
-import LiveEditor, { IMAGE_FILE, type LiveEditorHandle } from "./LiveEditor";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import { LiveEditor, IMAGE_FILE, type LiveEditorHandle } from "@granite/live-editor";
 import { relocateLinks } from "./relocateLinks";
 import { indexStore } from "./stores";
 import { moveFile, tauriFs } from "./tauriFs";
@@ -641,6 +642,7 @@ export default function NoteApp({
               embeds={vaultImages}
               value={editorText}
               notePath={path}
+              toUrl={convertFileSrc}
               onChange={(text) => {
                 setEditorText(text);
                 setIsDirty(true);

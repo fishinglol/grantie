@@ -21,6 +21,15 @@ Decisions confirmed with the user this round:
 Still **out of scope**: the Yjs CRDT engine (`packages/core-sync`), mobile sync,
 Dropbox/OneDrive providers.
 
+## Mobile session (2026-09-20, after the desktop PR merged) — phone version
+Goal from the user: "update it for phone version" — same UI as desktop. Confirmed: add
+`react-native-webview`; scope was "everything incl. Google sign-in + sync".
+Done: shared `@granite/live-editor`, WebView editor, notes list/note screens (see `progress.md`
+"`apps/mobile` v0.2"). **Open decision:** Google sign-in on a phone needs a native OAuth client
+(iOS client ID + `com.googleusercontent.apps.…` redirect scheme; Android client) and therefore a
+development build — Expo Go's bundle id cannot use them. There is no full Xcode on this machine.
+Also needs `expo-web-browser` (auth session) and `expo-crypto` (PKCE `crypto.subtle`), not yet approved.
+
 ## Latest session (2026-09-20) — live-preview editor & vault tools
 Work is on branch `feat/desktop-live-editor` (3 commits: core packages, mobile, desktop).
 Read `progress.md` → "`apps/desktop` v0.4" for the feature list. Shape of the work:

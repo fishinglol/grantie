@@ -1,141 +1,30 @@
-import { type ReactNode, useCallback, useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Alert, AppState, BackHandler, Platform, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
-import * as DocumentPicker from 'expo-document-picker';
-import { NoteRepository, type LoadedNote } from '@granite/core-notes';
+import { IMAGE_FILE, basename, dirname, embedImage, join } from '@granite/core-notes';
 
 import { expoFs } from './src/expoFs';
 import { memFs } from './src/memFs';
-import { ensureSampleVault } from './src/vault';
+import { VAULT_DIR, ensureSampleVault, scanVault, type VaultScan } from './src/vault';
+import { colors } from './src/theme';
+import NoteList from './src/components/NoteList';
+import NoteScreen from './src/components/NoteScreen';
+import AccountSheet from './src/components/AccountSheet';
+import Toast from './src/components/Toast';
+import type { NoteEditorHandle } from './src/components/NoteEditor.types';
 
 const isWeb = Platform.OS === 'web';
 const fs = isWeb ? memFs : expoFs;
-const repo = new NoteRepository(fs);
+const SAVE_DELAY_MS = 700;
 
 async function readBytes(uri: string): Promise<Uint8Array> {
   if (isWeb) return new Uint8Array(await (await fetch(uri)).arrayBuffer());
   return new File(uri).bytes();
 }
 
-export default function App() {
-  const [path, setPath] = useState<string | null>(null);
-  const [note, setNote] = useState<LoadedNote | null>(null);
-  const [status, setStatus] = useState('Starting…');
-  const [busy, setBusy] = useState(false);
-  const [external, setExternal] = useState(false);
-
-  const load = useCallback(async (uri: string, isExternal = false) => {
-    setBusy(true);
-    try {
-      setNote(await repo.load(uri));
-      setPath(uri);
-      setExternal(isExternal);
-      setStatus(`Read + parsed ${uri.split('/').pop()}`);
-    } catch (err) {
-      setStatus(`Error: ${String(err)}`);
-    } finally {
-      setBusy(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    ensureSampleVault(fs).then((uri) => load(uri));
-  }, [load]);
-
-  const insertImage = useCallback(async () => {
-    if (!path) return;
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      setStatus('Photo permission denied');
-      return;
-    }
-    const picked = await ImagePicker.launchImageLibraryAsync({ quality: 1 });
-    if (picked.canceled) return;
-    const asset = picked.assets[0];
-    if (!asset) return;
-
-    setBusy(true);
-    try {
-      const data = await readBytes(asset.uri);
-      const res = await repo.insertImage({
-        notePath: path,
-        image: { fileName: asset.fileName ?? `image${extFromMime(asset.mimeType)}`, data },
-        altText: asset.fileName ?? 'image',
-      });
-      setNote(res.note);
-      setStatus(`Inserted ${res.markdown}  →  wrote ${res.imagePath.split('/vault/').pop()}`);
-    } catch (err) {
-      setStatus(`Error: ${String(err)}`);
-    } finally {
-      setBusy(false);
-    }
-  }, [path]);
-
-  const openExternal = useCallback(async () => {
-    const res = await DocumentPicker.getDocumentAsync({
-      type: ['text/markdown', 'text/plain', 'public.text', '*/*'],
-      copyToCacheDirectory: true,
-    });
-    if (res.canceled) return;
-    const file = res.assets[0];
-    if (!file) return;
-    if (isWeb) await memFs.writeTextFile(file.uri, await (await fetch(file.uri)).text());
-    load(file.uri, true);
-  }, [load]);
-
-  return (
-    <View style={styles.screen}>
-      <StatusBar style="light" />
-      <View style={styles.header}>
-        <Text style={styles.title}>Granite</Text>
-        <Text style={styles.subtitle} numberOfLines={1}>
-          {path ? path.replace(/^.*\/Documents\//, '…/') : '—'}
-        </Text>
-      </View>
-
-      <View style={styles.toolbar}>
-        <Button label="Reload" onPress={() => path && load(path, external)} disabled={busy || !path} />
-        <Button label="Insert image" onPress={insertImage} disabled={busy || !path || external} />
-        <Button label="Open .md…" onPress={openExternal} disabled={busy} />
-      </View>
-
-      <View style={styles.statusBar}>
-        {busy && <ActivityIndicator size="small" color="#e8935f" />}
-        <Text style={styles.statusText} numberOfLines={2}>{status}</Text>
-      </View>
-
-      {external && (
-        <Text style={styles.warn}>
-          Opened a copy — edits to external files aren&apos;t saved back yet (needs
-          persistent folder access; tracked with the sync milestone).
-        </Text>
-      )}
-
-      <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
-        {note ? (
-          <Section title="Raw file">
-            <Text style={styles.raw}>{note.raw}</Text>
-          </Section>
-        ) : (
-          <Text style={styles.dim}>No note loaded</Text>
-        )}
-      </ScrollView>
-    </View>
-  );
-}
-
 function extFromMime(mime?: string): string {
-  if (!mime) return '.jpg';
   const map: Record<string, string> = {
     'image/jpeg': '.jpg',
     'image/png': '.png',
@@ -143,43 +32,205 @@ function extFromMime(mime?: string): string {
     'image/webp': '.webp',
     'image/gif': '.gif',
   };
-  return map[mime] ?? '.jpg';
+  return (mime && map[mime]) || '.jpg';
 }
 
-const Button = ({ label, onPress, disabled }: { label: string; onPress: () => void; disabled?: boolean }) => (
-  <Pressable
-    onPress={onPress}
-    disabled={disabled}
-    style={({ pressed }) => [styles.btn, disabled && styles.btnDisabled, pressed && styles.btnPressed]}
-  >
-    <Text style={styles.btnText}>{label}</Text>
-  </Pressable>
-);
+export default function App() {
+  const [scan, setScan] = useState<VaultScan>({ notes: [], folders: [], images: new Map() });
+  /** The open note: its vault-relative path and its text as it was opened (edits live in the editor). */
+  const [open, setOpen] = useState<{ rel: string; text: string } | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [sheet, setSheet] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const editor = useRef<NoteEditorHandle>(null);
+  const openRel = useRef<string | null>(null);
+  const pending = useRef<string | null>(null);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-const Section = ({ title, children }: { title: string; children: ReactNode }) => (
-  <View style={styles.section}>
-    <Text style={styles.sectionTitle}>{title}</Text>
-    {children}
-  </View>
-);
+  const say = useCallback((message: string) => {
+    setToast(message);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), /error|failed|already exists/i.test(message) ? 6000 : 3000);
+  }, []);
+
+  const refresh = useCallback(async () => {
+    try {
+      setScan(await scanVault(fs));
+    } catch (err) {
+      say(`Error: ${String(err)}`);
+    }
+  }, [say]);
+
+  useEffect(() => {
+    ensureSampleVault(fs).then(refresh, (err) => say(`Error: ${String(err)}`));
+  }, [refresh, say]);
+
+  /** Write the pending edit to disk now. */
+  const flush = useCallback(async () => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = null;
+    const rel = openRel.current;
+    const text = pending.current;
+    if (rel === null || text === null) return;
+    pending.current = null;
+    try {
+      await fs.writeTextFile(join(VAULT_DIR, rel), text);
+      setDirty(pending.current !== null);
+    } catch (err) {
+      pending.current = text;
+      say(`Save failed: ${String(err)}`);
+    }
+  }, [say]);
+
+  const onChange = useCallback(
+    (text: string) => {
+      pending.current = text;
+      setDirty(true);
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      saveTimer.current = setTimeout(flush, SAVE_DELAY_MS);
+    },
+    [flush],
+  );
+
+  const openNote = useCallback(
+    async (rel: string) => {
+      try {
+        const text = await fs.readTextFile(join(VAULT_DIR, rel));
+        openRel.current = rel;
+        pending.current = null;
+        setDirty(false);
+        setOpen({ rel, text });
+      } catch (err) {
+        say(`Error: ${String(err)}`);
+      }
+    },
+    [say],
+  );
+
+  const closeNote = useCallback(async () => {
+    await flush();
+    openRel.current = null;
+    setOpen(null);
+    void refresh();
+  }, [flush, refresh]);
+
+  // Never lose an edit: write it out when the app leaves the foreground, and let the
+  // Android back button leave the note instead of the app.
+  useEffect(() => {
+    const appState = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') void flush();
+    });
+    const back = isWeb
+      ? null
+      : BackHandler.addEventListener('hardwareBackPress', () => {
+          if (!openRel.current) return false;
+          void closeNote();
+          return true;
+        });
+    return () => {
+      appState.remove();
+      back?.remove();
+    };
+  }, [flush, closeNote]);
+
+  const create = useCallback(
+    async (kind: 'note' | 'folder', folder: string, name: string) => {
+      const clean = name.replace(/[\\/:*?"<>|]/g, '-');
+      try {
+        if (kind === 'folder') {
+          const rel = folder ? `${folder}/${clean}` : clean;
+          if (await fs.exists(join(VAULT_DIR, rel))) return say(`"${clean}" already exists`);
+          await fs.mkdirp(join(VAULT_DIR, rel));
+          await refresh();
+          return;
+        }
+        const file = /\.(md|markdown)$/i.test(clean) ? clean : `${clean}.md`;
+        const rel = folder ? `${folder}/${file}` : file;
+        if (await fs.exists(join(VAULT_DIR, rel))) return say(`"${file}" already exists`);
+        await fs.writeTextFile(join(VAULT_DIR, rel), '');
+        await refresh();
+        await openNote(rel);
+      } catch (err) {
+        say(`Error: ${String(err)}`);
+      }
+    },
+    [openNote, refresh, say],
+  );
+
+  /** Pick a photo, copy it into the note's `assets/` folder and link it at the cursor. */
+  const addImage = useCallback(async () => {
+    const rel = openRel.current;
+    if (!rel) return;
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) return say('Photo permission denied');
+    const picked = await ImagePicker.launchImageLibraryAsync({ quality: 1 });
+    if (picked.canceled || !picked.assets[0]) return;
+    const asset = picked.assets[0];
+    const fileName = asset.fileName ?? `image${extFromMime(asset.mimeType)}`;
+
+    try {
+      const noteDir = dirname(join(VAULT_DIR, rel));
+      let bump = 0;
+      let named = embedImage({ content: '', image: { fileName } });
+      while (await fs.exists(join(noteDir, named.relativeSrc))) {
+        const offset = ++bump * 1000;
+        named = embedImage({ content: '', image: { fileName }, now: () => new Date(Date.now() + offset) });
+      }
+      await fs.mkdirp(join(noteDir, 'assets'));
+      await fs.writeBinaryFile(join(noteDir, named.relativeSrc), await readBytes(asset.uri));
+      editor.current?.insert(IMAGE_FILE.test(fileName) ? named.markdown : `[${fileName}](${named.relativeSrc})`);
+      say('Added image to assets/');
+    } catch (err) {
+      say(`Error: ${String(err)}`);
+    }
+  }, [say]);
+
+  const account = {
+    email: null as string | null,
+    syncing: false,
+    onPress: () => setSheet(true),
+  };
+
+  return (
+    <View style={styles.screen}>
+      <StatusBar style="light" />
+      {open ? (
+        <NoteScreen
+          ref={editor}
+          key={open.rel}
+          path={join(VAULT_DIR, open.rel)}
+          initialText={open.text}
+          embeds={scan.images}
+          title={basename(open.rel).replace(/\.(md|markdown)$/i, '')}
+          dirty={dirty}
+          onChange={onChange}
+          onBack={closeNote}
+          onAddImage={addImage}
+        />
+      ) : (
+        <NoteList
+          notes={scan.notes}
+          folders={scan.folders}
+          dirtyNote={null}
+          account={account}
+          onOpen={openNote}
+          onCreate={create}
+        />
+      )}
+      <AccountSheet
+        visible={sheet}
+        email={account.email}
+        onClose={() => setSheet(false)}
+        onConnectDrive={() => Alert.alert('Coming next', 'Drive sync is not wired up yet.')}
+        onSyncNow={() => undefined}
+        onSignOut={() => undefined}
+      />
+      <Toast message={toast} />
+    </View>
+  );
+}
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#1b1f2a' },
-  header: { paddingTop: 60, paddingHorizontal: 20, paddingBottom: 12 },
-  title: { color: '#e8935f', fontSize: 30, fontWeight: '700' },
-  subtitle: { color: '#8b93a7', fontSize: 12, marginTop: 2 },
-  toolbar: { flexDirection: 'row', gap: 8, paddingHorizontal: 16 },
-  btn: { backgroundColor: '#2b3040', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8, flex: 1 },
-  btnDisabled: { opacity: 0.4 },
-  btnPressed: { backgroundColor: '#3a4055' },
-  btnText: { color: '#e6e9f0', fontSize: 13, fontWeight: '600', textAlign: 'center' },
-  statusBar: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 20, paddingVertical: 10 },
-  statusText: { color: '#8b93a7', fontSize: 12, flex: 1 },
-  warn: { color: '#d9a441', fontSize: 12, paddingHorizontal: 20, paddingBottom: 8 },
-  body: { flex: 1, backgroundColor: '#0f1219' },
-  bodyContent: { padding: 20, paddingBottom: 60 },
-  dim: { color: '#5c6474' },
-  section: { marginBottom: 22 },
-  sectionTitle: { color: '#e8935f', fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 },
-  raw: { color: '#7f88a0', fontFamily: 'Courier', fontSize: 11, lineHeight: 16 },
+  screen: { flex: 1, backgroundColor: colors.bg },
 });

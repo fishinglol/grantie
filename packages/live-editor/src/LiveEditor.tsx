@@ -1,5 +1,5 @@
+/// <reference types="vite/client" />
 import { type Ref, useEffect, useImperativeHandle, useRef } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { indentUnit, syntaxTree } from "@codemirror/language";
@@ -20,10 +20,10 @@ import {
   placeholder,
   WidgetType,
 } from "@codemirror/view";
-import { dirname, join } from "@granite/core-notes";
+import { dirname, IMAGE_FILE, join } from "@granite/core-notes";
 import { openImageViewer } from "./imageViewer";
 
-export const IMAGE_FILE = /\.(png|jpe?g|gif|webp|heic|avif|bmp|svg)$/i;
+export { IMAGE_FILE };
 
 /**
  * Obsidian-style "live preview" editor: the document stays plain Markdown, but
@@ -421,10 +421,10 @@ const markDeco = (cls: string) => Decoration.mark({ class: cls });
 
 const HEADING = /^ATXHeading([1-6])$/;
 
-function resolveImageSrc(src: string, baseDir: string): string {
+function resolveImageSrc(src: string, baseDir: string, toUrl: (path: string) => string): string {
   if (/^(https?:|data:|blob:)/.test(src)) return src;
   try {
-    return convertFileSrc(join(baseDir, src));
+    return toUrl(join(baseDir, src));
   } catch {
     return src;
   }
@@ -484,6 +484,8 @@ interface PreviewContext {
   getBaseDir: () => string;
   /** Absolute path of the vault image called `name` (Obsidian `![[name]]` embeds), if any. */
   resolveEmbed: (name: string) => string | null;
+  /** Turns a file path into a URL the page can load (Tauri's asset protocol, a `file://` URI, …). */
+  toUrl: (path: string) => string;
 }
 
 /** `![[image.png]]` / `![[image.png|300]]` embeds whose image can be found in the vault. */
@@ -503,7 +505,7 @@ function findEmbeds(state: EditorState, fromLine: number, ctx: PreviewContext) {
       found.push({
         from,
         to: from + m[0].length,
-        src: resolveImageSrc(abs, ""),
+        src: resolveImageSrc(abs, "", ctx.toUrl),
         name: base,
         width,
         sizeFrom: from + 3,
@@ -634,7 +636,7 @@ function buildDecorations(state: EditorState, ctx: PreviewContext): DecorationSe
           const altFrom = marks[0]!.to;
           const altTo = marks[1]!.from;
           const { base, width } = splitSize(doc.sliceString(altFrom, altTo));
-          const src = resolveImageSrc(doc.sliceString(url.from, url.to), ctx.getBaseDir());
+          const src = resolveImageSrc(doc.sliceString(url.from, url.to), ctx.getBaseDir(), ctx.toUrl);
           out.push(
             Decoration.replace({
               widget: new ImageWidget({
@@ -722,10 +724,12 @@ export interface LiveEditorProps {
   embeds: ReadonlyMap<string, string>;
   /** Path of the open note; relative image links resolve against its folder. */
   notePath: string | null;
+  /** Turns a file path into a URL the page can load: Tauri's asset protocol on desktop, `file://` on phones. */
+  toUrl: (path: string) => string;
   onChange: (value: string) => void;
 }
 
-export default function LiveEditor({ ref, value, embeds, notePath, onChange }: LiveEditorProps) {
+export default function LiveEditor({ ref, value, embeds, notePath, toUrl, onChange }: LiveEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -733,6 +737,8 @@ export default function LiveEditor({ ref, value, embeds, notePath, onChange }: L
   const prevPath = useRef(notePath);
   const embedsRef = useRef(embeds);
   embedsRef.current = embeds;
+  const toUrlRef = useRef(toUrl);
+  toUrlRef.current = toUrl;
   onChangeRef.current = onChange;
   baseDirRef.current = notePath ? dirname(notePath) : "";
 
@@ -771,6 +777,7 @@ export default function LiveEditor({ ref, value, embeds, notePath, onChange }: L
           livePreview({
             getBaseDir: () => baseDirRef.current,
             resolveEmbed: (name) => embedsRef.current.get(name.toLowerCase()) ?? null,
+            toUrl: (path) => toUrlRef.current(path),
           }),
           dropField,
           EditorView.updateListener.of((u) => {
