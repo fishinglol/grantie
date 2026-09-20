@@ -1,0 +1,20 @@
+{
+  "name": "@granite/core-notes",
+  "version": "0.1.0",
+  "description": "Platform-agnostic markdown note parsing + image embedding for Granite. No React Native / Tauri imports.",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./adapters/node": "./adapters/nodeFs.ts"
+  },
+  "scripts": {
+    "test": "node --test 'test/**/*.test.ts'",
+    "typecheck": "tsc --noEmit",
+    "demo": "node demo/demo.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  }
+}

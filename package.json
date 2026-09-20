@@ -1,0 +1,13 @@
+{
+  "name": "granite",
+  "private": true,
+  "description": "Local-first Markdown note app. JS/TS workspace; the Python conflict_cleaner CLI is independent.",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "overrides": {
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  }
+}

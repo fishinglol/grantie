@@ -1,0 +1,21 @@
+{
+  "name": "@granite/core-cloud",
+  "version": "0.1.0",
+  "description": "Platform-agnostic cloud sync for Granite: Google OAuth (PKCE), a Drive provider, and a two-way vault sync engine. No Tauri / React Native imports.",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test 'test/**/*.test.ts'",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@granite/core-notes": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  }
+}
