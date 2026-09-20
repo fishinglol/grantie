@@ -51,6 +51,10 @@ declared permissions, explicit per-device enable**.
   error; the browser preview's in-memory fs never enforces scopes, so it hid this) and sync would have failed once it
   started listing `.granite`. Now `usePlugins.refresh` shows the error, and `listLocalFiles` skips an unreadable
   `.granite` so notes still sync. Capability changes need a `tauri dev` rebuild.
+- **Sync ↔ plugins**: the Plugins screen on the phone runs a sync before rescanning (Refresh does too), and both apps rescan
+  automatically when a sync downloads/deletes anything under `.granite/plugins/`, so a plugin installed on the other device
+  shows up without a manual step. Checked 2026-09-21: the desktop's sync index recorded `.granite/plugins/sheet/*` as
+  uploaded, so an empty phone list means the phone hasn't synced yet (or isn't signed in), not a missing upload.
 - **First plugin: Sheet** (`examples/plugins/sheet`, id `sheet`, permission `editor.style` only): ruled index-card
   paper after the r/ObsidianMD "real notecards" post (Slipbox Desk CSS: paper #fafafa, rules #72aaff every 24px, 8:5
   card, 24px line height, bold 18px headings). Properties box forced to whole 24px lines so rules align with text.

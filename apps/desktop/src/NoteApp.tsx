@@ -163,6 +163,8 @@ export default function NoteApp({
 
   const dirtyRef = useRef(isDirty);
   dirtyRef.current = isDirty;
+  /** Always the current plugin rescan (the hook that owns it is declared after `doSync`). */
+  const rescanPlugins = useRef<() => Promise<void>>(async () => undefined);
 
   /** `poll` = the cheap background check; otherwise a full sync (after a save, on the button, at start). */
   const doSync = useCallback(
@@ -177,6 +179,10 @@ export default function NoteApp({
         setSync({ phase: "idle", at: new Date(), result });
         if (result.downloaded + result.conflicted + result.deleted > 0 && dir) {
           await refreshVaultFiles(dir);
+          // A plugin arrived from (or was removed on) another device: pick it up without a manual refresh.
+          if (result.items.some((i) => i.path.startsWith(".granite/plugins/") && !i.error && i.action !== "skip")) {
+            void rescanPlugins.current();
+          }
           // Reload the open note only if the sync rewrote or removed it, and never over unsaved edits.
           const open = pathRef.current;
           const rel = open?.startsWith(dir) ? open.slice(dir.length).replace(/^[\\/]/, "") : null;
@@ -315,6 +321,8 @@ export default function NoteApp({
       void runSync();
     },
   });
+
+  rescanPlugins.current = plugins.refresh;
 
   const deleteNote = useCallback(
     async (file: string) => {

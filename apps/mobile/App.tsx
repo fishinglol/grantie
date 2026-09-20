@@ -77,6 +77,8 @@ export default function App() {
   const latest = useRef('');
   /** Always the current full-sync function, for callers declared before it. */
   const syncNow = useRef<() => Promise<void>>(async () => undefined);
+  /** Always the current plugin rescan, for the sync code that runs before it is declared. */
+  const rescanPlugins = useRef<() => Promise<void>>(async () => undefined);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -179,6 +181,8 @@ export default function App() {
         if (poll && result.items.length === 0) return; // nothing changed anywhere
         if (result.downloaded + result.conflicted + result.deleted > 0) {
           await refresh();
+          // A plugin arrived from (or was removed on) another device: pick it up without a manual refresh.
+          if (result.items.some((i) => i.path.startsWith('.granite/plugins/') && !i.error && i.action !== 'skip')) void rescanPlugins.current();
           // Reload the open note only if the sync rewrote or removed it, and never over unsaved edits.
           const rel = openRel.current;
           const touched = result.items.some(
@@ -327,6 +331,8 @@ export default function App() {
     }
   }, [say]);
 
+  rescanPlugins.current = refreshPlugins;
+
   useEffect(() => {
     void refreshPlugins();
   }, [refreshPlugins]);
@@ -455,7 +461,7 @@ export default function App() {
     label: 'Plugins',
     icon: 'puzzle-outline' as const,
     onPress: () => {
-      void refreshPlugins();
+      void (email ? runSync() : Promise.resolve()).then(refreshPlugins); // pull in plugins added on another device
       setPluginsOpen(true);
     },
   };
@@ -563,7 +569,7 @@ export default function App() {
           setPluginsOpen(false); // the message it shows would sit behind this sheet
           void editor.current?.runPluginCommand(c.pluginId, c.id).catch((e: unknown) => say(e instanceof Error ? e.message : String(e)));
         }}
-        onRefresh={() => void refreshPlugins()}
+        onRefresh={() => void (email ? runSync() : Promise.resolve()).then(refreshPlugins)}
         onClose={() => setPluginsOpen(false)}
       />
       <Toast message={toast} />
