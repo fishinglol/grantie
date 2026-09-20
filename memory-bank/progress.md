@@ -126,6 +126,10 @@ _Last updated: 2026-09-20_
         editor get/replace, vault list/read/write, notice); `.granite/` now syncs; enabled state per device.
   - [x] Verified in browser previews incl. a hostile-plugin test; 5 plugin tests + 42 core-cloud tests pass; `expo export` OK.
   - [ ] Not run in the real Tauri window / on a phone; full details in `pluginDesign.md`.
+- **Plugin: Sheet + `editor.style`** (2026-09-21): first real plugin (ruled index-card paper) in `examples/plugins/sheet`,
+  installed in the user's vault. Added permission `editor.style` + `setStyle` (with CSS safety check, 6 plugin tests pass),
+  moved the desktop plugin host to app lifetime (`usePlugins.ts`), fixed a blank phone editor caused by `<!--` in the inline
+  script (`build-editor.mjs`). See `pluginDesign.md`. [ ] Real-device check; [ ] Slipbox-style stacked "deck" view is not done.
 - **Sync v0.2 — deletes + near-real-time** (branch `feat/mobile-live-editor`, 2026-09-21; user asked: sync too slow,
   add Delete on desktop (right-click) and phone (⋮ menu))
   - [x] `planSync` now propagates deletions: synced file missing on one side = deleted there → `delete-local` /

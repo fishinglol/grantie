@@ -14,8 +14,10 @@ const css = readdirSync(dist)
   .filter((f) => f.endsWith(".css"))
   .map((f) => readFileSync(resolve(dist, f), "utf8"))
   .join("\n");
-// `</script>` inside the bundle would end the inline script early.
-const safeJs = js.replaceAll("</script", "<\\/script");
+// Inline scripts need two escapes: `</script` would end the script early, and `<!--` followed later by
+// `<script` puts the HTML parser in a state where the real `</script>` no longer ends it (the plugin
+// host's code contains both). `\/` and `\!` mean the same as `/` and `!` in strings and regexes.
+const safeJs = js.replaceAll("</script", "<\\/script").replaceAll("<!--", "<\\!--");
 const html = readFileSync(resolve(root, "editor-web/index.html"), "utf8")
   .replace("/*__CSS__*/", () => css)
   .replace("/*__JS__*/", () => safeJs);

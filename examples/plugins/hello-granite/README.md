@@ -13,5 +13,5 @@ device**. Nothing runs until you enable it.
 
 ## Write your own
 Keep to the API in `packages/plugins/src/api.ts` (`GraniteApi`): `commands.add`, `editor.getText / getSelection /
-replaceSelection`, `vault.list / read / write`, `notice`. Everything is async and works the same on desktop and
+replaceSelection / setStyle`, `vault.list / read / write`, `notice`. Everything is async and works the same on desktop and
 phone. Plugins run in a sandbox with no DOM access to the app and no network unless `network` is declared.

@@ -7,6 +7,7 @@ import { GoogleDriveProvider, VaultSync, type GoogleSession, type SyncResult } f
 import { REMOTE_FOLDER_NAME, SYNC_INTERVAL_MS } from "./config";
 import DeleteDialog from "./DeleteDialog";
 import PluginsDialog from "./PluginsDialog";
+import { usePlugins } from "./usePlugins";
 import { http } from "./googleLogin";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { LiveEditor, IMAGE_FILE, type LiveEditorHandle } from "@granite/live-editor";
@@ -302,6 +303,18 @@ export default function NoteApp({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [menu]);
+
+  const plugins = usePlugins({
+    vaultDir: dir,
+    editor: editorRef,
+    hasNote: path !== null,
+    notes: vaultFiles,
+    notify: setStatus,
+    onWroteNote: () => {
+      if (dir) void refreshVaultFiles(dir);
+      void runSync();
+    },
+  });
 
   const deleteNote = useCallback(
     async (file: string) => {
@@ -754,20 +767,7 @@ export default function NoteApp({
           }}
         />
       )}
-      {showPlugins && dir && (
-        <PluginsDialog
-          vaultDir={dir}
-          editor={editorRef}
-          hasNote={path !== null}
-          notes={vaultFiles}
-          notify={setStatus}
-          onWroteNote={() => {
-            void refreshVaultFiles(dir);
-            void runSync();
-          }}
-          onClose={() => setShowPlugins(false)}
-        />
-      )}
+      {showPlugins && <PluginsDialog plugins={plugins} onClose={() => setShowPlugins(false)} />}
       {toast && <div className="toast">{toast}</div>}
     </div>
   );

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { discoverPlugins, parseManifest, safeNotePath } from "../src/index.ts";
+import { checkPluginCss, discoverPlugins, parseManifest, safeNotePath } from "../src/index.ts";
 import { MemoryFs } from "../../core-cloud/test/memoryFs.ts";
 
 const good = { id: "hello-granite", name: "Hello", version: "1.0.0", permissions: ["editor.write"] };
@@ -53,4 +53,21 @@ test("discoverPlugins lists valid plugins and reports broken ones instead of hid
 
 test("no plugins folder means no plugins", async () => {
   assert.deepEqual(await discoverPlugins(new MemoryFs(), "/vault"), []);
+});
+
+test("plugin CSS may style but never fetch or escape", () => {
+  assert.equal(checkPluginCss(".live-editor { --text: #202124; }"), ".live-editor { --text: #202124; }");
+  for (const bad of [
+    "@import 'https://evil.example/x.css';",
+    "a { background: url(https://evil.example/?x) }",
+    "a { background: URL ( data:image/png;base64,AA ) }",
+    "a { background: image-set('x' 1x) }",
+    "a { background: u\\72l(x) }",
+    "</style><script>alert(1)</script>",
+    "a { background: url/**/(x) }",
+    "x".repeat(20_001),
+    42,
+  ]) {
+    assert.throws(() => checkPluginCss(bad), Error, `should reject ${String(bad).slice(0, 30)}`);
+  }
 });

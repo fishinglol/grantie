@@ -2,12 +2,13 @@
  * What a plugin may ask for. Nothing is granted implicitly: the user enables a plugin on each
  * device after seeing this list, and the host refuses any call outside it.
  */
-export const PERMISSIONS = ["editor.read", "editor.write", "vault.read", "vault.write", "network"] as const;
+export const PERMISSIONS = ["editor.read", "editor.write", "editor.style", "vault.read", "vault.write", "network"] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
 export const PERMISSION_LABELS: Record<Permission, string> = {
   "editor.read": "Read the open note",
   "editor.write": "Change the open note",
+  "editor.style": "Change how the editor looks",
   "vault.read": "Read your notes",
   "vault.write": "Create and change notes",
   network: "Use the internet",

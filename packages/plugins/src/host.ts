@@ -1,4 +1,4 @@
-import { METHOD_PERMISSION, safeNotePath, type CommandInfo } from "./api.ts";
+import { METHOD_PERMISSION, checkPluginCss, safeNotePath, type CommandInfo } from "./api.ts";
 import type { PluginManifest } from "./manifest.ts";
 
 /**
@@ -46,7 +46,8 @@ function bootstrapHtml(network: boolean): string {
     editor: Object.freeze({
       getText: function () { return call("editor.getText", []); },
       getSelection: function () { return call("editor.getSelection", []); },
-      replaceSelection: function (t) { return call("editor.replaceSelection", [t]); }
+      replaceSelection: function (t) { return call("editor.replaceSelection", [t]); },
+      setStyle: function (css) { return call("editor.setStyle", [css]); }
     }),
     vault: Object.freeze({
       list: function () { return call("vault.list", []); },
@@ -126,6 +127,7 @@ export class PluginHost {
     if (!entry) return;
     this.#plugins.delete(id);
     entry.frame.remove();
+    this.#setStyle(id, ""); // a plugin's look goes away with it
     for (const run of entry.runs.values()) {
       clearTimeout(run.timer);
       run.reject(new Error("plugin was stopped"));
@@ -220,6 +222,19 @@ export class PluginHost {
     }
   };
 
+  /** One `<style>` per plugin in the app's document (which is where the editor lives, on desktop and phone). */
+  #setStyle(id: string, css: string): void {
+    const existing = document.head.querySelector(`style[data-granite-plugin="${id}"]`);
+    if (css === "") {
+      existing?.remove();
+      return;
+    }
+    const style = existing ?? document.createElement("style");
+    style.setAttribute("data-granite-plugin", id);
+    style.textContent = css;
+    if (!existing) document.head.append(style);
+  }
+
   async #call(manifest: PluginManifest, method: string, args: unknown[]): Promise<unknown> {
     if (!(method in METHOD_PERMISSION)) throw new Error(`unknown method "${method}"`);
     const needed = METHOD_PERMISSION[method];
@@ -237,6 +252,8 @@ export class PluginHost {
         return this.#adapter.getSelection();
       case "editor.replaceSelection":
         return this.#adapter.replaceSelection(text(0));
+      case "editor.setStyle":
+        return this.#setStyle(manifest.id, checkPluginCss(args[0]));
       case "vault.list":
         return this.#adapter.listNotes();
       case "vault.read":

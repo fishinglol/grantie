@@ -19,6 +19,12 @@ export interface GraniteApi {
     getSelection(): Promise<string>;
     /** editor.write: replace the selection, or insert at the cursor when nothing is selected. */
     replaceSelection(text: string): Promise<void>;
+    /**
+     * editor.style: apply CSS to the app while the plugin runs ("" removes it; it is removed automatically when
+     * the plugin is switched off). The editor's colours are CSS variables (`--text`, `--h`, `--accent`, `--bg`,
+     * `--panel`, …) on `.live-editor`, so restyling usually means setting those. No `@import` or `url()`.
+     */
+    setStyle(css: string): Promise<void>;
   };
   vault: {
     /** vault.read: vault-relative paths of every note, e.g. `Projects/plan.md`. */
@@ -37,6 +43,7 @@ export const METHOD_PERMISSION: Record<string, Permission | null> = {
   "editor.getText": "editor.read",
   "editor.getSelection": "editor.read",
   "editor.replaceSelection": "editor.write",
+  "editor.setStyle": "editor.style",
   "vault.list": "vault.read",
   "vault.read": "vault.read",
   "vault.write": "vault.write",
@@ -59,4 +66,22 @@ export function safeNotePath(path: unknown): string {
   }
   if (!/\.(md|markdown)$/i.test(path)) throw new Error(`"${path}" is not a Markdown note`);
   return path;
+}
+
+/** Largest stylesheet a plugin may apply. */
+export const MAX_PLUGIN_CSS = 20_000;
+
+/**
+ * Plugin CSS must not load anything (`@import`, `url()`, `image-set`) and can't break out of its `<style>`:
+ * a stylesheet that can fetch a URL could be used to phone home. Throws with a readable message.
+ */
+export function checkPluginCss(css: unknown): string {
+  if (typeof css !== "string") throw new Error("style must be text");
+  if (css.length > MAX_PLUGIN_CSS) throw new Error(`style is longer than ${MAX_PLUGIN_CSS} characters`);
+  // Strip comments first so `/* */` can't hide or split a forbidden token.
+  const plain = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  if (/@import|url\s*\(|image-set\s*\(|expression\s*\(|<\/?style|<!--|behavior\s*:|\\/i.test(plain)) {
+    throw new Error("style may not use @import, url(), image-set() or backslash escapes");
+  }
+  return css;
 }

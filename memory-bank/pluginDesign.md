@@ -33,6 +33,23 @@ declared permissions, explicit per-device enable**.
 - **Sample / template**: `examples/plugins/hello-granite` (insert date, word count, uppercase selection).
 - **Verified**: both flows in the browser previews (enable, commands, edits, permission denial, sandbox attack),
   `tsc` clean, `expo export` bundles. **Not verified**: on a real phone / in the real Tauri window.
+- **Editor styling (added when the first real plugin, Sheet, was built)**: permission `editor.style` ("Change how the
+  editor looks") + `granite.editor.setStyle(css)`. The host puts one `<style data-granite-plugin=id>` in the app
+  document (both apps' editors live there) and removes it when the plugin stops. `checkPluginCss` rejects `@import`,
+  `url()`, `image-set()`, backslash escapes and `</style`, max 20 000 chars, because CSS that can fetch a URL could
+  phone home. The editor's colours are CSS variables on `.live-editor` (`--text --h --accent --bg --panel …`), so a
+  theme mostly just sets those. The CSS is not scoped by the host: it applies app-wide (documented, and shown as a permission).
+- **Desktop host lifetime**: the host now lives for the whole app session (`apps/desktop/src/usePlugins.ts`), not only
+  while the Plugins dialog is open; before that fix, a look plugin vanished when the dialog closed.
+- **Gotcha (phone editor page)**: the editor HTML is one inline `<script>`. `</script` must be escaped AND so must `<!--`
+  (the plugin host code contains both `<!--` and `<script`, which puts the HTML parser in "double escaped" state so the
+  real `</script>` no longer ends the script and the page renders blank). `scripts/build-editor.mjs` escapes both.
+- **First plugin: Sheet** (`examples/plugins/sheet`, id `sheet`, permission `editor.style` only): ruled index-card
+  paper after the r/ObsidianMD "real notecards" post (Slipbox Desk CSS: paper #fafafa, rules #72aaff every 24px, 8:5
+  card, 24px line height, bold 18px headings). Properties box forced to whole 24px lines so rules align with text.
+  Command "Turn the paper look on / off". Installed into the user's real vault at
+  `~/Documents/GraniteVault-new/.granite/plugins/sheet/`; it syncs to the phone via Drive, then must be switched on
+  there. Verified in both browser previews; not yet seen in the real Tauri window / on the phone.
 - **Next**: command palette (Cmd+P) so commands aren't only reachable from the Plugins screen; CodeMirror
   extension / event / settings APIs; plugin registry + install-from-URL; docs site; a Worker layer for hangs;
   `desktopOnly` plugins are hidden on the phone but never exercised.
