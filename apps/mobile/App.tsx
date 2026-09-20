@@ -1,12 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, AppState, BackHandler, Platform, StyleSheet, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AppState, BackHandler, Platform, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import { IMAGE_FILE, basename, dirname, embedImage, join } from '@granite/core-notes';
+import { GoogleDriveProvider, VaultSync, type GoogleSession } from '@granite/core-cloud';
 
 import { expoFs } from './src/expoFs';
 import { memFs } from './src/memFs';
+import { REMOTE_FOLDER_NAME, SYNC_INTERVAL_MS } from './src/config';
+import { http, restoreGoogleSession, signInWithGoogle } from './src/googleLogin';
+import { indexStore } from './src/stores';
 import { VAULT_DIR, ensureSampleVault, scanVault, type VaultScan } from './src/vault';
 import { colors } from './src/theme';
 import NoteList from './src/components/NoteList';
@@ -42,6 +46,10 @@ export default function App() {
   const [dirty, setDirty] = useState(false);
   const [sheet, setSheet] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [session, setSession] = useState<GoogleSession | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  /** Bumped when a sync rewrote the open note, so the editor reloads it. */
+  const [revision, setRevision] = useState(0);
   const editor = useRef<NoteEditorHandle>(null);
   const openRel = useRef<string | null>(null);
   const pending = useRef<string | null>(null);
@@ -108,12 +116,86 @@ export default function App() {
     [say],
   );
 
+  useEffect(() => {
+    restoreGoogleSession().then(setSession, () => undefined);
+  }, []);
+
+  const engine = useMemo(
+    () =>
+      session
+        ? new VaultSync({
+            fs,
+            provider: new GoogleDriveProvider(http, () => session.accessToken()),
+            vaultDir: VAULT_DIR,
+            remoteFolderName: REMOTE_FOLDER_NAME,
+            indexStore,
+          })
+        : null,
+    [session],
+  );
+
+  const runSync = useCallback(async () => {
+    if (!engine) return;
+    setSyncing(true);
+    try {
+      await flush(); // the engine reads the file from disk
+      const result = await engine.sync();
+      if (result.downloaded + result.conflicted > 0) {
+        await refresh();
+        const rel = openRel.current;
+        if (rel && pending.current === null) {
+          const text = await fs.readTextFile(join(VAULT_DIR, rel)).catch(() => null);
+          if (text !== null) {
+            setOpen({ rel, text });
+            setRevision((r) => r + 1);
+          }
+        }
+      }
+      if (result.failed > 0) say(`Sync: ${result.failed} file(s) failed`);
+    } catch (err) {
+      say(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSyncing(false);
+    }
+  }, [engine, flush, refresh, say]);
+
+  useEffect(() => {
+    if (!engine) return;
+    void runSync();
+    const timer = setInterval(() => void runSync(), SYNC_INTERVAL_MS);
+    const appState = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void runSync();
+    });
+    return () => {
+      clearInterval(timer);
+      appState.remove();
+    };
+  }, [engine, runSync]);
+
+  const connectDrive = useCallback(async () => {
+    say('Waiting for Google…');
+    try {
+      const next = await signInWithGoogle();
+      setSession(next);
+      say(`Connected ${next.user.email ?? 'Google Drive'}`);
+    } catch (err) {
+      say(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, [say]);
+
+  const signOut = useCallback(async () => {
+    await session?.signOut();
+    setSession(null);
+    say('Signed out — notes stay on this phone');
+  }, [session, say]);
+
   const closeNote = useCallback(async () => {
     await flush();
     openRel.current = null;
     setOpen(null);
     void refresh();
-  }, [flush, refresh]);
+    void runSync();
+  }, [flush, refresh, runSync]);
 
   // Never lose an edit: write it out when the app leaves the foreground, and let the
   // Android back button leave the note instead of the app.
@@ -181,14 +263,15 @@ export default function App() {
       await fs.writeBinaryFile(join(noteDir, named.relativeSrc), await readBytes(asset.uri));
       editor.current?.insert(IMAGE_FILE.test(fileName) ? named.markdown : `[${fileName}](${named.relativeSrc})`);
       say('Added image to assets/');
+      void runSync();
     } catch (err) {
       say(`Error: ${String(err)}`);
     }
-  }, [say]);
+  }, [say, runSync]);
 
   const account = {
-    email: null as string | null,
-    syncing: false,
+    email: session?.user.email ?? null,
+    syncing,
     onPress: () => setSheet(true),
   };
 
@@ -198,7 +281,7 @@ export default function App() {
       {open ? (
         <NoteScreen
           ref={editor}
-          key={open.rel}
+          key={`${open.rel}:${revision}`}
           path={join(VAULT_DIR, open.rel)}
           initialText={open.text}
           embeds={scan.images}
@@ -222,9 +305,9 @@ export default function App() {
         visible={sheet}
         email={account.email}
         onClose={() => setSheet(false)}
-        onConnectDrive={() => Alert.alert('Coming next', 'Drive sync is not wired up yet.')}
-        onSyncNow={() => undefined}
-        onSignOut={() => undefined}
+        onConnectDrive={connectDrive}
+        onSyncNow={runSync}
+        onSignOut={signOut}
       />
       <Toast message={toast} />
     </View>

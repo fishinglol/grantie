@@ -139,7 +139,14 @@ _Last updated: 2026-09-20_
         `tsc --noEmit` clean for mobile, desktop, live-editor; `expo export` bundles iOS + Android.
   - [ ] **Not run on a phone yet** (WebView, file:// image loading, keyboard, photo picker).
   - [ ] Touch: image resize handle / drag-to-move are mouse-only; no move-note, no paste/drag-in.
-  - [ ] Google sign-in + Drive sync on mobile (see activeContext for the Expo Go constraint).
+  - [x] Google sign-in + Drive sync wired (user approved `expo-web-browser`, `expo-crypto`): `src/googleLogin.ts`
+        (system browser sheet + PKCE, redirect = reversed client ID scheme via `app.config.js`),
+        `src/stores.ts` (session/index files in `Paths.document/config`, outside the vault),
+        `src/cryptoShim.ts` (Hermes lacks `crypto.subtle`), `VaultSync` in `App.tsx` (on sign-in, 60 s,
+        on foreground, after leaving a note / adding an image; a sync that rewrites the open note reloads it).
+        Bundles for iOS + Android; the not-configured path is verified in the web preview; core-cloud tests pass (29).
+  - [ ] **Sign-in and real Drive sync are unproven**: need `EXPO_PUBLIC_GOOGLE_CLIENT_ID` (iOS/Android OAuth
+        client) and a development build; Expo Go can't use it. Refresh token is plain text in the app sandbox.
 - **`apps/mobile` v0.1 (Expo SDK 57)**
   - [x] npm workspaces at repo root; Metro configured for the monorepo
   - [x] `src/expoFs.ts` — `FileSystem` adapter over `expo-file-system` (native)

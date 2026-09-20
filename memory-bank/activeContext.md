@@ -25,10 +25,10 @@ Dropbox/OneDrive providers.
 Goal from the user: "update it for phone version" — same UI as desktop. Confirmed: add
 `react-native-webview`; scope was "everything incl. Google sign-in + sync".
 Done: shared `@granite/live-editor`, WebView editor, notes list/note screens (see `progress.md`
-"`apps/mobile` v0.2"). **Open decision:** Google sign-in on a phone needs a native OAuth client
+"`apps/mobile` v0.2"). Sync was then built too (user chose "Build it, test later"). **Constraint:** Google sign-in on a phone needs a native OAuth client
 (iOS client ID + `com.googleusercontent.apps.…` redirect scheme; Android client) and therefore a
 development build — Expo Go's bundle id cannot use them. There is no full Xcode on this machine.
-Also needs `expo-web-browser` (auth session) and `expo-crypto` (PKCE `crypto.subtle`), not yet approved.
+Added (approved): `expo-web-browser`, `expo-crypto`.
 
 ## Latest session (2026-09-20) — live-preview editor & vault tools
 Work is on branch `feat/desktop-live-editor` (3 commits: core packages, mobile, desktop).

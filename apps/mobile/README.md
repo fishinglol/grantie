@@ -53,4 +53,20 @@ The app contains **no markdown logic** — it calls `NoteRepository.load()` and
 - Touch: tapping an image selects it and the toolbar (zoom, `</>`) works, but the
   resize handle and drag-to-move are mouse-only for now.
 - No moving notes between folders, and no paste/drag-in of files (photo picker only).
-- No Google Drive sync yet.
+
+## Google Drive sync (needs a development build)
+
+"Connect Drive" (account chip → sheet) signs in with Google and two-way syncs the vault with a
+`Granite Vault` folder in your Drive, using the same engine as desktop (`@granite/core-cloud`),
+so notes and `assets/` images flow between phone and desktop. It syncs on sign-in, every minute
+while the app is open, when you return to the app, and after you leave a note or add an image.
+
+Google only accepts a native app's own client ID, so this **does not work in Expo Go**:
+1. Google Cloud console → Credentials → create an **iOS** (bundle id `ios.bundleIdentifier`) and/or
+   **Android** (package name + SHA-1) OAuth client. Same project/consent screen as the desktop client.
+2. Copy `.env.example` to `.env`, set `EXPO_PUBLIC_GOOGLE_CLIENT_ID`.
+3. Build a dev client: `npx expo run:ios` / `npx expo run:android` (or EAS). `app.config.js`
+   registers the reversed-client-ID redirect scheme.
+
+Without a client ID the app works fully offline; Connect Drive just says it isn't configured.
+The refresh token is kept in a file in the app sandbox (outside the vault), not the Keychain yet.
