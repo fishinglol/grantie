@@ -1,14 +1,13 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
-import { basename, dirname, embedImage, join, NoteRepository } from "@granite/core-notes";
+import { basename, dirname, embedImage, join, NoteRepository, relocateLinks } from "@granite/core-notes";
 import { GoogleDriveProvider, VaultSync, type GoogleSession, type SyncResult } from "@granite/core-cloud";
 
 import { REMOTE_FOLDER_NAME, SYNC_INTERVAL_MS } from "./config";
 import { http } from "./googleLogin";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { LiveEditor, IMAGE_FILE, type LiveEditorHandle } from "@granite/live-editor";
-import { relocateLinks } from "./relocateLinks";
 import { indexStore } from "./stores";
 import { moveFile, tauriFs } from "./tauriFs";
 import { ensureSampleVault, vaultDir } from "./vault";

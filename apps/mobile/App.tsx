@@ -3,7 +3,7 @@ import { AppState, BackHandler, Platform, Share, StyleSheet, View } from 'react-
 import { StatusBar } from 'expo-status-bar';
 import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
-import { IMAGE_FILE, basename, dirname, embedImage, join } from '@granite/core-notes';
+import { IMAGE_FILE, basename, dirname, embedImage, join, relocateLinks } from '@granite/core-notes';
 import { GoogleDriveProvider, VaultSync, type GoogleSession } from '@granite/core-cloud';
 
 import { expoFs } from './src/expoFs';
@@ -17,6 +17,8 @@ import NoteList from './src/components/NoteList';
 import NoteScreen, { EmptyNote } from './src/components/NoteScreen';
 import ActionSheet from './src/components/ActionSheet';
 import Sidebar from './src/components/Sidebar';
+import FolderPicker from './src/components/FolderPicker';
+import { parentOf } from './src/tree';
 import Toast from './src/components/Toast';
 import type { NoteEditorHandle } from './src/components/NoteEditor.types';
 
@@ -48,6 +50,7 @@ export default function App() {
   const [sidebar, setSidebar] = useState(true);
   const [menu, setMenu] = useState(false);
   const [settings, setSettings] = useState(false);
+  const [picking, setPicking] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [session, setSession] = useState<GoogleSession | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -229,6 +232,35 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openedRel]);
 
+  /** Move a note into `folder` ("" = vault root), keeping its relative image links pointing at the same files. */
+  const moveNote = useCallback(
+    async (rel: string, folder: string) => {
+      const name = basename(rel);
+      const to = folder ? `${folder}/${name}` : name;
+      if (to === rel) return;
+      const from = join(VAULT_DIR, rel);
+      const dest = join(VAULT_DIR, to);
+      try {
+        if (await fs.exists(dest)) return say(`"${name}" already exists in ${folder ? basename(folder) : 'the vault'}`);
+        if (openRel.current === rel) await flush();
+        const text = await fs.readTextFile(from);
+        await fs.moveFile(from, dest);
+        const fixed = relocateLinks(text, dirname(from), dirname(dest));
+        if (fixed !== text) await fs.writeTextFile(dest, fixed);
+        if (openRel.current === rel) {
+          openRel.current = to;
+          latest.current = fixed;
+          setOpen({ rel: to, text: fixed });
+        }
+        await refresh();
+        say(`Moved to ${folder ? basename(folder) : 'the vault'}`);
+      } catch (err) {
+        say(`Error: ${String(err)}`);
+      }
+    },
+    [flush, refresh, say],
+  );
+
   const create = useCallback(
     async (kind: 'note' | 'folder', folder: string, name: string) => {
       const clean = name.replace(/[\\/:*?"<>|]/g, '-');
@@ -315,6 +347,7 @@ export default function App() {
           syncing={syncing}
           onOpen={openNote}
           onCreate={create}
+          onMove={moveNote}
           onOpenSettings={() => setSettings(true)}
         />
       </Sidebar>
@@ -325,10 +358,21 @@ export default function App() {
         groups={[
           [
             { label: 'Add image', icon: 'image-outline', onPress: addImage },
+            { label: 'Move file', icon: 'folder-move-outline', onPress: () => setPicking(true) },
             { label: 'Share note', icon: 'share-variant-outline', onPress: shareNote },
           ],
         ]}
       />
+      {open && (
+        <FolderPicker
+          visible={picking}
+          noteName={basename(open.rel).replace(/\.(md|markdown)$/i, '')}
+          current={parentOf(open.rel)}
+          folders={scan.folders}
+          onPick={(folder) => void moveNote(open.rel, folder)}
+          onClose={() => setPicking(false)}
+        />
+      )}
       <ActionSheet
         visible={settings}
         onClose={() => setSettings(false)}

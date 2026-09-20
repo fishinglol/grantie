@@ -1,7 +1,7 @@
-import type { VaultFileSystem } from '@granite/core-cloud';
+import type { MovableFs } from './expoFs';
 
 /**
- * In-memory `VaultFileSystem` for the **web preview** (`npm run web`).
+ * In-memory `MovableFs` for the **web preview** (`npm run web`).
  * `expo-file-system` is not available on web; this lets the real UI + real
  * `@granite/core-notes` logic run in a browser for fast iteration. Nothing
  * persists across reloads.
@@ -11,7 +11,7 @@ const dirs = new Set<string>();
 
 const asDir = (path: string) => (path.endsWith('/') ? path : `${path}/`);
 
-export const memFs: VaultFileSystem = {
+export const memFs: MovableFs = {
   async readTextFile(path) {
     const v = files.get(path);
     if (typeof v !== 'string') throw new Error(`memFs: not found — ${path}`);
@@ -33,6 +33,12 @@ export const memFs: VaultFileSystem = {
   },
   async mkdirp(path) {
     dirs.add(path);
+  },
+  async moveFile(from, to) {
+    const v = files.get(from);
+    if (v === undefined) throw new Error(`memFs: not found — ${from}`);
+    files.set(to, v);
+    files.delete(from);
   },
   async listDir(path) {
     const prefix = asDir(path);

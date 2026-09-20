@@ -135,6 +135,10 @@ _Last updated: 2026-09-20_
         sidebar + ⋮ buttons and the note title above the editor; slide-in `Sidebar` (tree, pencil / folder-plus
         icons, vault name + "N files, M folders" + gear); `ActionSheet` bottom sheets for ⋮ (Add image, Share
         note) and the gear (Connect Drive / Sync now / Sign out). Icons: `@expo/vector-icons` (user approved).
+        Move note: long-press + drag in the sidebar (flat fixed-height rows, PanResponder, drop on folder / list
+        background = root) and ⋮ → Move file (`FolderPicker` lists vault + folders + subfolders); `moveNote` in
+        App.tsx uses `MovableFs.moveFile` + `relocateLinks` (moved to `@granite/core-notes`, desktop imports it from there).
+        Verified in the web preview with synthetic touch events (drag) and the menu; not on a phone.
         Deliberately left out: Delete file (Drive sync doesn't propagate deletes, the note would come back),
         Find/Replace, Copy path, version history, reading view, rename (title is display-only).
         Autosave 700 ms after typing, flushed on note switch / app backgrounding.

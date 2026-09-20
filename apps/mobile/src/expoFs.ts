@@ -5,7 +5,12 @@ import type { VaultFileSystem } from '@granite/core-cloud';
  * `VaultFileSystem` (note editing + what sync needs) implemented with Expo's file API.
  * The desktop (Tauri) app provides an equivalent adapter over `@tauri-apps/plugin-fs`.
  */
-export const expoFs: VaultFileSystem = {
+/** The vault filesystem plus renaming/moving a note, which sync doesn't need. */
+export interface MovableFs extends VaultFileSystem {
+  moveFile(from: string, to: string): Promise<void>;
+}
+
+export const expoFs: MovableFs = {
   async readTextFile(path) {
     return new File(path).text();
   },
@@ -34,6 +39,10 @@ export const expoFs: VaultFileSystem = {
 
   async mkdirp(path) {
     new Directory(path).create({ intermediates: true, idempotent: true });
+  },
+
+  async moveFile(from, to) {
+    await new File(from).move(new File(to));
   },
 
   async listDir(path) {

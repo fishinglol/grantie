@@ -6,7 +6,10 @@ A phone version of the desktop app:
    The layout follows the mobile Obsidian app.
 2. **Live-preview editor** — the *same* editor as desktop (`@granite/live-editor`,
    CodeMirror 6) running inside a WebView. Edits autosave to the vault.
-3. **⋮ menu** (top right) — *Add image* (pick a photo; it is copied to `<note folder>/assets/`
+3. **Moving notes** — long-press a note in the sidebar and drag it onto a folder (or the list background for
+   the vault's top level), or use ⋮ → *Move file* and pick a folder or subfolder. Relative image links are
+   rewritten so they keep pointing at the same files (`relocateLinks`, shared with desktop).
+4. **⋮ menu** (top right) — *Move file*, *Add image* (pick a photo; it is copied to `<note folder>/assets/`
    and linked at the cursor) and *Share note*.
 
 ## Run it
@@ -53,7 +56,8 @@ The app contains **no markdown logic** — it calls `NoteRepository.load()` and
   it belongs with the sync milestone.
 - Touch: tapping an image selects it and the toolbar (zoom, `</>`) works, but the
   resize handle and drag-to-move are mouse-only for now.
-- No moving notes between folders, and no paste/drag-in of files (photo picker only).
+- No paste/drag-in of files (photo picker only).
+- Moving a note while signed in to Drive: deletes don't sync yet, so the old copy may come back (same known risk as desktop).
 
 ## Google Drive sync (needs a development build)
 
