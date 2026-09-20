@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildAuthUrl, exchangeCode, refreshTokens, DRIVE_SCOPE } from "../src/googleAuth.ts";
+import { buildAuthUrl, exchangeCode, pollDeviceToken, refreshTokens, requestDeviceCode, DRIVE_SCOPE } from "../src/googleAuth.ts";
 import { GoogleSession, type SessionStore, type StoredSession } from "../src/session.ts";
 import type { HttpClient } from "../src/http.ts";
 
@@ -138,4 +138,71 @@ test("refreshTokens posts the grant type Google expects", async () => {
   assert.equal(sent.get("grant_type"), "refresh_token");
   assert.equal(sent.get("refresh_token"), "rt");
   assert.equal(sent.get("client_secret"), "secret");
+});
+
+function scriptedHttp(replies: Array<{ ok: boolean; status: number; body: unknown }>): HttpClient & { calls: Array<[string, any]> } {
+  const calls: Array<[string, any]> = [];
+  const http = (async (url: string, init: any = {}) => {
+    calls.push([url, init]);
+    const r = replies.shift()!;
+    return {
+      ok: r.ok,
+      status: r.status,
+      async json() {
+        return r.body;
+      },
+      async text() {
+        return JSON.stringify(r.body);
+      },
+      async arrayBuffer() {
+        return new ArrayBuffer(0);
+      },
+    };
+  }) as HttpClient & { calls: Array<[string, any]> };
+  http.calls = calls;
+  return http;
+}
+
+test("device flow: requests a code with the Drive scope", async () => {
+  const http = scriptedHttp([
+    { ok: true, status: 200, body: { device_code: "dc", user_code: "ABCD-EFGH", verification_url: "https://www.google.com/device", expires_in: 1800, interval: 5 } },
+  ]);
+  const device = await requestDeviceCode(http, { clientId: "c" }, () => 1000);
+  assert.equal(device.userCode, "ABCD-EFGH");
+  assert.equal(device.intervalMs, 5000);
+  assert.equal(device.expiresAtMs, 1000 + 1800 * 1000);
+  assert.match(http.calls[0]![1].body, /scope=.*drive\.file/);
+});
+
+test("device flow: keeps polling while pending, backs off on slow_down, then returns tokens", async () => {
+  const http = scriptedHttp([
+    { ok: false, status: 428, body: { error: "authorization_pending" } },
+    { ok: false, status: 403, body: { error: "slow_down" } },
+    { ok: true, status: 200, body: { access_token: "at", refresh_token: "rt", expires_in: 3600 } },
+  ]);
+  const waits: number[] = [];
+  const device = { deviceCode: "dc", userCode: "X", verificationUrl: "u", expiresAtMs: 10_000_000, intervalMs: 5000 };
+  const tokens = await pollDeviceToken(http, config, device, { now: () => 0, sleep: async (ms) => void waits.push(ms) });
+  assert.equal(tokens.accessToken, "at");
+  assert.equal(tokens.refreshToken, "rt");
+  assert.deepEqual(waits, [5000, 5000, 10000]);
+  assert.match(http.calls[0]![1].body, /grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code/);
+  assert.match(http.calls[0]![1].body, /client_secret=secret/);
+});
+
+test("device flow: declining, expiry and cancelling end the wait with a clear error", async () => {
+  const device = { deviceCode: "dc", userCode: "X", verificationUrl: "u", expiresAtMs: 10_000_000, intervalMs: 1 };
+  const sleep = async () => undefined;
+  await assert.rejects(
+    pollDeviceToken(scriptedHttp([{ ok: false, status: 403, body: { error: "access_denied" } }]), config, device, { now: () => 0, sleep }),
+    /cancelled/,
+  );
+  await assert.rejects(
+    pollDeviceToken(scriptedHttp([{ ok: false, status: 400, body: { error: "expired_token" } }]), config, device, { now: () => 0, sleep }),
+    /expired/,
+  );
+  await assert.rejects(
+    pollDeviceToken(scriptedHttp([]), config, device, { now: () => 0, sleep, cancelled: () => true }),
+    /cancelled/,
+  );
 });

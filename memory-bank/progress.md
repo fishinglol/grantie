@@ -147,14 +147,17 @@ _Last updated: 2026-09-20_
         `tsc --noEmit` clean for mobile, desktop, live-editor; `expo export` bundles iOS + Android.
   - [ ] **Not run on a phone yet** (WebView, file:// image loading, keyboard, photo picker).
   - [ ] Touch: image resize handle / drag-to-move are mouse-only; no move-note, no paste/drag-in.
-  - [x] Google sign-in + Drive sync wired (user approved `expo-web-browser`, `expo-crypto`): `src/googleLogin.ts`
-        (system browser sheet + PKCE, redirect = reversed client ID scheme via `app.config.js`),
-        `src/stores.ts` (session/index files in `Paths.document/config`, outside the vault),
-        `src/cryptoShim.ts` (Hermes lacks `crypto.subtle`), `VaultSync` in `App.tsx` (on sign-in, 60 s,
-        on foreground, after leaving a note / adding an image; a sync that rewrites the open note reloads it).
-        Bundles for iOS + Android; the not-configured path is verified in the web preview; core-cloud tests pass (29).
-  - [ ] **Sign-in and real Drive sync are unproven**: need `EXPO_PUBLIC_GOOGLE_CLIENT_ID` (iOS/Android OAuth
-        client) and a development build; Expo Go can't use it. Refresh token is plain text in the app sandbox.
+  - [x] Google sign-in + Drive sync wired. Sign-in = Google **device-code flow** (`requestDeviceCode` /
+        `pollDeviceToken` in `core-cloud`, 3 new tests, 32 pass): the app shows a code (`DeviceSignIn`),
+        the user types it at google.com/device. Chosen because the redirect-based flow (first attempt:
+        `expo-web-browser` + PKCE + reversed-client-ID scheme) cannot run in Expo Go; that code and
+        `expo-crypto` were removed. Needs a "TVs and Limited Input devices" OAuth client (id + secret in
+        `apps/mobile/.env`, restart `expo start -c`). Session/index files in `Paths.document/config`
+        (`src/stores.ts`), `VaultSync` in `App.tsx` (on sign-in, 60 s, on foreground, on note switch /
+        image add; a sync that rewrites the open note reloads it).
+        Verified in the web preview against a stubbed Google (code shown, pending, approve, signed in, sync starts).
+  - [ ] **Not yet proven against real Google / on a phone**: needs the user's client id + secret. Refresh
+        token is plain text in the app sandbox.
 - **`apps/mobile` v0.1 (Expo SDK 57)**
   - [x] npm workspaces at repo root; Metro configured for the monorepo
   - [x] `src/expoFs.ts` — `FileSystem` adapter over `expo-file-system` (native)

@@ -1,45 +1,34 @@
-import * as WebBrowser from 'expo-web-browser';
 import {
   GoogleSession,
-  buildAuthUrl,
-  createPkce,
-  exchangeCode,
   fetchUserInfo,
+  pollDeviceToken,
+  requestDeviceCode,
+  type DeviceCode,
   type GoogleAuthConfig,
   type HttpClient,
 } from '@granite/core-cloud';
 
-import { GOOGLE_CLIENT_ID, GOOGLE_REDIRECT_URI, isGoogleConfigured } from './config';
+import { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, isGoogleConfigured } from './config';
 import { sessionStore } from './stores';
 
 /** React Native's `fetch` has no browser-origin (CORS) limits, so it is the `HttpClient` as-is. */
 export const http: HttpClient = (url, init) => fetch(url, init as RequestInit);
 
-const config: GoogleAuthConfig = { clientId: GOOGLE_CLIENT_ID, redirectUri: GOOGLE_REDIRECT_URI };
+// The device flow has no redirect; the field is only there because the config type wants one.
+const config: GoogleAuthConfig = { clientId: GOOGLE_CLIENT_ID, clientSecret: GOOGLE_CLIENT_SECRET, redirectUri: '' };
 
 /**
- * Google's installed-app flow: the system browser sheet (ASWebAuthenticationSession / Custom Tabs),
- * a redirect back on the app's reversed-client-ID scheme, and a PKCE code exchange. The user types
- * their password into the system browser, never into a view Granite controls.
+ * Google's device-code flow: asks Google for a short code, hands it to `onCode` so the app can show
+ * it, then waits while the user types it at google.com/device (in any browser, signed in to any
+ * account) and approves. Works in Expo Go because nothing has to redirect back into the app.
  */
-export async function signInWithGoogle(): Promise<GoogleSession> {
+export async function signInWithGoogle(onCode: (device: DeviceCode) => void, cancelled: () => boolean): Promise<GoogleSession> {
   if (!isGoogleConfigured()) {
     throw new Error('No Google client ID is configured. See apps/mobile/.env.example.');
   }
-  const pkce = await createPkce();
-  const result = await WebBrowser.openAuthSessionAsync(buildAuthUrl(config, pkce), GOOGLE_REDIRECT_URI);
-  if (result.type !== 'success') throw new Error('Sign-in was cancelled.');
-
-  const params = new URL(result.url).searchParams;
-  const error = params.get('error');
-  if (error) throw new Error(error === 'access_denied' ? 'Sign-in was cancelled.' : `Google returned: ${error}`);
-  if (params.get('state') !== pkce.state) {
-    throw new Error('Sign-in state mismatch — the response did not come from the request we made.');
-  }
-  const code = params.get('code');
-  if (!code) throw new Error('Google did not return an authorization code.');
-
-  const tokens = await exchangeCode(http, config, { code, codeVerifier: pkce.verifier });
+  const device = await requestDeviceCode(http, config);
+  onCode(device);
+  const tokens = await pollDeviceToken(http, config, device, { cancelled });
   const user = await fetchUserInfo(http, tokens.accessToken);
   await sessionStore.save({ tokens, user });
   return new GoogleSession({ http, config, store: sessionStore, tokens, user });

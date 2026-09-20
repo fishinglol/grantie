@@ -59,19 +59,22 @@ The app contains **no markdown logic** — it calls `NoteRepository.load()` and
 - No paste/drag-in of files (photo picker only).
 - Moving a note while signed in to Drive: deletes don't sync yet, so the old copy may come back (same known risk as desktop).
 
-## Google Drive sync (needs a development build)
+## Google Drive sync
 
 "Connect Drive" (gear in the sidebar → sheet) signs in with Google and two-way syncs the vault with a
 `Granite Vault` folder in your Drive, using the same engine as desktop (`@granite/core-cloud`),
 so notes and `assets/` images flow between phone and desktop. It syncs on sign-in, every minute
 while the app is open, when you return to the app, and when you switch notes or add an image.
 
-Google only accepts a native app's own client ID, so this **does not work in Expo Go**:
-1. Google Cloud console → Credentials → create an **iOS** (bundle id `ios.bundleIdentifier`) and/or
-   **Android** (package name + SHA-1) OAuth client. Same project/consent screen as the desktop client.
-2. Copy `.env.example` to `.env`, set `EXPO_PUBLIC_GOOGLE_CLIENT_ID`.
-3. Build a dev client: `npx expo run:ios` / `npx expo run:android` (or EAS). `app.config.js`
-   registers the reversed-client-ID redirect scheme.
+Sign-in uses Google's **device-code flow**: the app shows a code, you open google.com/device (any
+browser, any device), type the code and approve. Nothing redirects back into the app, so it works in
+**Expo Go** with no development build.
+
+One-time setup (same Google Cloud project as the desktop client):
+1. Credentials → Create credentials → OAuth client ID → application type **TVs and Limited Input devices**.
+2. Copy `.env.example` to `.env` and paste the client ID and secret.
+3. Restart Expo with a clean cache: `npx expo start -c`.
+4. If the consent screen is in "Testing", add your Google account as a test user.
 
 Without a client ID the app works fully offline; Connect Drive just says it isn't configured.
 The refresh token is kept in a file in the app sandbox (outside the vault), not the Keychain yet.

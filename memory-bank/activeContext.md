@@ -25,7 +25,7 @@ Dropbox/OneDrive providers.
 Goal from the user: "update it for phone version" — same UI as desktop. Confirmed: add
 `react-native-webview`; scope was "everything incl. Google sign-in + sync".
 Done: shared `@granite/live-editor`, WebView editor, notes list/note screens (see `progress.md`
-"`apps/mobile` v0.2"). Sync was then built too (user chose "Build it, test later"). **Constraint:** Google sign-in on a phone needs a native OAuth client
+"`apps/mobile` v0.2"). Sync was then built too (user chose "Build it, test later"). The user ran the app in Expo Go and could not connect Drive, so sign-in was switched to the device-code flow (works in Expo Go). The old constraint, kept for context: a redirect-based Google sign-in on a phone needs a native OAuth client
 (iOS client ID + `com.googleusercontent.apps.…` redirect scheme; Android client) and therefore a
 development build — Expo Go's bundle id cannot use them. There is no full Xcode on this machine.
 Added (approved): `expo-web-browser`, `expo-crypto`.

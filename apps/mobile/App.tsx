@@ -4,7 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import { IMAGE_FILE, basename, dirname, embedImage, join, relocateLinks } from '@granite/core-notes';
-import { GoogleDriveProvider, VaultSync, type GoogleSession } from '@granite/core-cloud';
+import { GoogleDriveProvider, VaultSync, type DeviceCode, type GoogleSession } from '@granite/core-cloud';
 
 import { expoFs } from './src/expoFs';
 import { memFs } from './src/memFs';
@@ -17,6 +17,7 @@ import NoteList from './src/components/NoteList';
 import NoteScreen, { EmptyNote } from './src/components/NoteScreen';
 import ActionSheet from './src/components/ActionSheet';
 import Sidebar from './src/components/Sidebar';
+import DeviceSignIn from './src/components/DeviceSignIn';
 import FolderPicker from './src/components/FolderPicker';
 import { parentOf } from './src/tree';
 import Toast from './src/components/Toast';
@@ -54,6 +55,10 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [session, setSession] = useState<GoogleSession | null>(null);
   const [syncing, setSyncing] = useState(false);
+  /** Set while "Connect Drive" is waiting: the code to type at google.com/device (null = still requesting). */
+  const [signIn, setSignIn] = useState<{ device: DeviceCode | null } | null>(null);
+  /** Counts sign-in attempts, so cancelling (or starting another) stops the old one polling. */
+  const signInAttempt = useRef(0);
   /** Bumped when a sync rewrote the open note, so the editor reloads it. */
   const [revision, setRevision] = useState(0);
   const editor = useRef<NoteEditorHandle>(null);
@@ -189,13 +194,17 @@ export default function App() {
   }, [engine, runSync]);
 
   const connectDrive = useCallback(async () => {
-    say('Waiting for Google…');
+    const attempt = ++signInAttempt.current;
+    const cancelled = () => signInAttempt.current !== attempt;
+    setSignIn({ device: null });
     try {
-      const next = await signInWithGoogle();
+      const next = await signInWithGoogle((device) => setSignIn({ device }), cancelled);
       setSession(next);
       say(`Connected ${next.user.email ?? 'Google Drive'}`);
     } catch (err) {
-      say(`Error: ${err instanceof Error ? err.message : String(err)}`);
+      if (!cancelled()) say(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      if (!cancelled()) setSignIn(null);
     }
   }, [say]);
 
@@ -386,6 +395,15 @@ export default function App() {
             : [[{ label: 'Connect Drive', icon: 'cloud-outline', onPress: connectDrive }]]
         }
       />
+      {signIn && (
+        <DeviceSignIn
+          device={signIn.device}
+          onCancel={() => {
+            signInAttempt.current++;
+            setSignIn(null);
+          }}
+        />
+      )}
       <Toast message={toast} />
     </View>
   );
