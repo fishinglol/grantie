@@ -2,7 +2,9 @@
 
 _Written 2026-09-21 after the user asked: "in the future I wanna make plugins similar to Obsidian, compatible
 with desktop and phone, in one language, because I plan to let community members contribute; it must be
-smooth on both." Not started. The user has not yet decided the trust model (see "Open decisions")._
+smooth on both." The original design follows; v1 was then built the same day (see "Status" above). The types
+package ended up named `@granite/plugins`, not `@granite/plugin-api`. The trust model is still unconfirmed by the
+user (see "Open decisions")._
 
 ## Status: v1 built (2026-09-21)
 The user asked for a "Plugins" row in the desktop account menu and chose "start the real plugin system", on
