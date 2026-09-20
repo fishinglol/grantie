@@ -4,6 +4,7 @@ import {
   readDir,
   readFile,
   readTextFile,
+  remove,
   rename,
   stat,
   writeFile,
@@ -100,6 +101,13 @@ export const tauriFs: VaultFileSystem = {
     }
     const entries = await readDir(path);
     return entries.map((e) => ({ name: e.name, isDirectory: e.isDirectory }));
+  },
+  async removeFile(path) {
+    if (!isTauri()) {
+      memFiles.delete(path);
+      return;
+    }
+    await remove(path);
   },
   async stat(path) {
     if (!isTauri()) {

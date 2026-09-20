@@ -5,6 +5,7 @@ import { basename, dirname, embedImage, join, NoteRepository, relocateLinks } fr
 import { GoogleDriveProvider, VaultSync, type GoogleSession, type SyncResult } from "@granite/core-cloud";
 
 import { REMOTE_FOLDER_NAME, SYNC_INTERVAL_MS } from "./config";
+import DeleteDialog from "./DeleteDialog";
 import { http } from "./googleLogin";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { LiveEditor, IMAGE_FILE, type LiveEditorHandle } from "@granite/live-editor";
@@ -74,6 +75,9 @@ export default function NoteApp({
   /** True once Tauri's native drop listener is live; the DOM drop fallback stays off then. */
   const nativeDrop = useRef(false);
   const [toast, setToast] = useState<string | null>(null);
+  /** Right-click menu on a note, and the note waiting on a "Delete?" answer. */
+  const [menu, setMenu] = useState<{ file: string; x: number; y: number } | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   // Status messages surface as a short-lived toast; routine load/auto-save chatter is skipped.
   useEffect(() => {
@@ -154,29 +158,52 @@ export default function NoteApp({
   const pathRef = useRef(path);
   pathRef.current = path;
 
-  const runSync = useCallback(async () => {
-    if (!engine) return;
-    setSync({ phase: "syncing" });
-    try {
-      const result = await engine.sync((done, total, item) =>
-        setSync({ phase: "syncing", detail: `${item.action} ${item.path} (${done + 1}/${total})` }),
-      );
-      setSync({ phase: "idle", at: new Date(), result });
-      if (result.downloaded + result.conflicted > 0 && pathRef.current) {
-        await load(pathRef.current);
-        if (dir) await refreshVaultFiles(dir);
-      }
-    } catch (e) {
-      setSync({ phase: "error", message: e instanceof Error ? e.message : String(e) });
-    }
-  }, [engine, load, dir, refreshVaultFiles]);
+  const dirtyRef = useRef(isDirty);
+  dirtyRef.current = isDirty;
 
+  /** `poll` = the cheap background check; otherwise a full sync (after a save, on the button, at start). */
+  const doSync = useCallback(
+    async (poll: boolean) => {
+      if (!engine) return;
+      const onProgress = (done: number, total: number, item: { action: string; path: string }) =>
+        setSync({ phase: "syncing", detail: `${item.action} ${item.path} (${done + 1}/${total})` });
+      try {
+        if (!poll) setSync({ phase: "syncing" });
+        const result = poll ? await engine.syncIfChanged(onProgress) : await engine.sync(onProgress);
+        if (poll && result.items.length === 0) return; // nothing changed anywhere
+        setSync({ phase: "idle", at: new Date(), result });
+        if (result.downloaded + result.conflicted + result.deleted > 0 && dir) {
+          await refreshVaultFiles(dir);
+          // Reload the open note only if the sync rewrote or removed it, and never over unsaved edits.
+          const open = pathRef.current;
+          const rel = open?.startsWith(dir) ? open.slice(dir.length).replace(/^[\\/]/, "") : null;
+          const touched = result.items.some(
+            (i) => i.path === rel && !i.error && (i.action === "download" || i.action === "delete-local"),
+          );
+          if (open && touched && !dirtyRef.current) {
+            if (await tauriFs.exists(open)) await load(open);
+            else {
+              setPath(null);
+              setEditorText("");
+            }
+          }
+        }
+      } catch (e) {
+        setSync({ phase: "error", message: e instanceof Error ? e.message : String(e) });
+      }
+    },
+    [engine, load, dir, refreshVaultFiles],
+  );
+  const runSync = useCallback(() => doSync(false), [doSync]);
+
+  // Near-real-time: a cheap change check every few seconds; it only does a full sync when
+  // something changed on Drive or in the vault. Saving also triggers a full sync right away.
   useEffect(() => {
     if (!engine) return;
-    void runSync();
-    const timer = setInterval(() => void runSync(), SYNC_INTERVAL_MS);
+    void doSync(false);
+    const timer = setInterval(() => void doSync(true), SYNC_INTERVAL_MS);
     return () => clearInterval(timer);
-  }, [engine, runSync]);
+  }, [engine, doSync]);
 
   const handleSave = useCallback(async () => {
     if (!path) return;
@@ -265,6 +292,36 @@ export default function NoteApp({
       }
     },
     [creating, dir, activeFolder, refreshVaultFiles, load, runSync],
+  );
+
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMenu(null);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [menu]);
+
+  const deleteNote = useCallback(
+    async (file: string) => {
+      if (!dir) return;
+      const name = file.slice(file.lastIndexOf("/") + 1);
+      const full = join(dir, file);
+      try {
+        await tauriFs.removeFile(full);
+        if (full === path) {
+          // Drop pending edits so auto-save can't bring the file back.
+          setIsDirty(false);
+          setPath(null);
+          setEditorText("");
+        }
+        await refreshVaultFiles(dir);
+        setStatus(`Deleted ${name}`);
+        void runSync();
+      } catch (e) {
+        setStatus(`Error deleting ${name}: ${String(e)}`);
+      }
+    },
+    [dir, path, refreshVaultFiles, runSync],
   );
 
   const moveNote = useCallback(
@@ -533,6 +590,10 @@ export default function NoteApp({
           key={`f:${file}`}
           data-drop={tree.parentOf(file)}
           className={[isActive ? "active" : "", drag?.file === file ? "dragging" : ""].join(" ").trim()}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setMenu({ file, x: e.clientX, y: e.clientY });
+          }}
         >
           <button
             style={indent}
@@ -606,7 +667,7 @@ export default function NoteApp({
               session={session}
               sync={sync}
               busy={busy}
-              onSyncNow={runSync}
+              onSyncNow={() => void runSync()}
               onSignOut={onSignOut}
               onConnectDrive={onConnectDrive}
               onOpenNote={openNote}
@@ -650,6 +711,46 @@ export default function NoteApp({
           </div>
         </main>
       </div>
+      {menu && (
+        <div
+          className="context-backdrop"
+          onClick={() => setMenu(null)}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setMenu(null);
+          }}
+        >
+          <div
+            className="context-menu"
+            role="menu"
+            style={{ left: Math.min(menu.x, window.innerWidth - 170), top: Math.min(menu.y, window.innerHeight - 50) }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              role="menuitem"
+              className="danger"
+              onClick={() => {
+                setDeleting(menu.file);
+                setMenu(null);
+              }}
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
+      {deleting && (
+        <DeleteDialog
+          name={deleting.slice(deleting.lastIndexOf("/") + 1).replace(/\.(md|markdown)$/i, "")}
+          synced={Boolean(session)}
+          onCancel={() => setDeleting(null)}
+          onConfirm={() => {
+            const file = deleting;
+            setDeleting(null);
+            void deleteNote(file);
+          }}
+        />
+      )}
       {toast && <div className="toast">{toast}</div>}
     </div>
   );

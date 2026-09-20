@@ -63,8 +63,9 @@ The app contains **no markdown logic** — it calls `NoteRepository.load()` and
 
 "Connect Drive" (gear in the sidebar → sheet) signs in with Google and two-way syncs the vault with a
 `Granite Vault` folder in your Drive, using the same engine as desktop (`@granite/core-cloud`),
-so notes and `assets/` images flow between phone and desktop. It syncs on sign-in, every minute
-while the app is open, when you return to the app, and when you switch notes or add an image.
+so notes and `assets/` images flow between phone and desktop. It pushes a moment after you stop typing, checks Drive for changes every 5 seconds while the app is open
+(one cheap request; a full sync only runs if something changed), and syncs when you return to the app.
+Deleting a note (⋮ → Delete file) also moves its Drive copy to the Drive trash and removes it on your other devices.
 
 Sign-in uses Google's **device-code flow**: the app shows a code, you open google.com/device (any
 browser, any device), type the code and approve. Nothing redirects back into the app, so it works in

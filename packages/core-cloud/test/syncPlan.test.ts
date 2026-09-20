@@ -56,13 +56,29 @@ test("an edit a fraction of a second after a sync is still caught", () => {
   assert.equal(actionFor(plan, "a.md")?.action, "upload");
 });
 
-test("deletes are not propagated in v0.1 — the file comes back instead", () => {
-  const gone = planSync([local("a.md", 10_000)], [], indexWith("a.md", 10_000, "t1"));
-  assert.equal(actionFor(gone, "a.md")?.action, "upload");
-  assert.equal(actionFor(gone, "a.md")?.reason, "missing-on-remote");
+test("a synced file missing on the remote was deleted there -> delete it locally", () => {
+  const item = actionFor(planSync([local("a.md", 10_000)], [], indexWith("a.md", 10_000, "t1")), "a.md");
+  assert.equal(item?.action, "delete-local");
+  assert.equal(item?.reason, "deleted-on-remote");
+});
 
-  const goneLocally = planSync([], [remote("a.md", "t1")], indexWith("a.md", 10_000, "t1"));
-  assert.equal(actionFor(goneLocally, "a.md")?.action, "download");
+test("a synced file missing locally was deleted here -> trash it on the remote", () => {
+  const item = actionFor(planSync([], [remote("a.md", "t1")], indexWith("a.md", 10_000, "t1")), "a.md");
+  assert.equal(item?.action, "delete-remote");
+  assert.equal(item?.reason, "deleted-locally");
+});
+
+test("an edit beats a deletion on the other side, in both directions", () => {
+  const editedHere = planSync([local("a.md", 20_000)], [], indexWith("a.md", 10_000, "t1"));
+  assert.equal(actionFor(editedHere, "a.md")?.action, "upload");
+
+  const editedThere = planSync([], [remote("a.md", "t2")], indexWith("a.md", 10_000, "t1"));
+  assert.equal(actionFor(editedThere, "a.md")?.action, "download");
+});
+
+test("a file that was never synced and exists on one side is new, not deleted", () => {
+  assert.equal(actionFor(planSync([local("a.md", 1)], [], emptyIndex()), "a.md")?.action, "upload");
+  assert.equal(actionFor(planSync([], [remote("a.md", "t1")], emptyIndex()), "a.md")?.action, "download");
 });
 
 test("conflict copies sit next to the original and keep the extension", () => {

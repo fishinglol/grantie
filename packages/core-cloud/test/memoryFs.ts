@@ -45,6 +45,9 @@ export class MemoryFs implements VaultFileSystem {
   async mkdirp(path: string): Promise<void> {
     this.mkdirpSync(path);
   }
+  async removeFile(path: string): Promise<void> {
+    if (!this.files.delete(path)) throw new Error(`ENOENT ${path}`);
+  }
   async stat(path: string): Promise<FileStat> {
     const f = this.files.get(path);
     if (!f) throw new Error(`ENOENT ${path}`);
@@ -74,11 +77,16 @@ export class FakeProvider implements CloudProvider {
   folderId = "folder-1";
   clock = 0;
   uploads: string[] = [];
+  trashed: string[] = [];
+  listCalls = 0;
+  /** Bumped by every remote mutation; doubles as the change-feed token. */
+  changeCount = 0;
   #nextId = 1;
 
   seed(path: string, text: string, modifiedTime = this.#stamp()): string {
     const id = `id-${this.#nextId++}`;
     this.remote.set(path, { id, data: new TextEncoder().encode(text), modifiedTime });
+    this.changeCount++;
     return id;
   }
 
@@ -90,6 +98,7 @@ export class FakeProvider implements CloudProvider {
     return this.folderId;
   }
   async listVault(): Promise<RemoteFile[]> {
+    this.listCalls++;
     return [...this.remote.entries()].map(([path, f]) => ({
       id: f.id,
       path,
@@ -101,12 +110,29 @@ export class FakeProvider implements CloudProvider {
     for (const f of this.remote.values()) if (f.id === fileId) return f.data;
     throw new Error(`no such remote file ${fileId}`);
   }
+  async trash(fileId: string): Promise<void> {
+    for (const [path, f] of this.remote) {
+      if (f.id === fileId) {
+        this.remote.delete(path);
+        this.trashed.push(path);
+        this.changeCount++;
+        return;
+      }
+    }
+    throw new Error(`no such remote file ${fileId}`);
+  }
+  async changesSince(token: string | undefined): Promise<{ changed: boolean; token: string }> {
+    return token === undefined
+      ? { changed: true, token: String(this.changeCount) }
+      : { changed: Number(token) !== this.changeCount, token };
+  }
   async upload(args: UploadArgs): Promise<RemoteFile> {
     this.uploads.push(args.path);
     const existing = this.remote.get(args.path);
     const id = args.existingId ?? existing?.id ?? `id-${this.#nextId++}`;
     const modifiedTime = this.#stamp();
     this.remote.set(args.path, { id, data: args.data, modifiedTime });
+    this.changeCount++;
     return { id, path: args.path, modifiedTime, size: args.data.length };
   }
 }

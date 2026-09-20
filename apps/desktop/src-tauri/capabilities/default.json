@@ -45,7 +45,7 @@
     },
     {
       "identifier": "fs:allow-remove",
-      "allow": [{ "path": "$APPCONFIG/**" }]
+      "allow": [{ "path": "$HOME/**" }, { "path": "$DOCUMENT/**" }, { "path": "$APPCONFIG/**" }]
     },
     {
       "identifier": "http:default",

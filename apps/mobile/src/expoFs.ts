@@ -41,6 +41,10 @@ export const expoFs: MovableFs = {
     new Directory(path).create({ intermediates: true, idempotent: true });
   },
 
+  async removeFile(path) {
+    new File(path).delete();
+  },
+
   async moveFile(from, to) {
     await new File(from).move(new File(to));
   },

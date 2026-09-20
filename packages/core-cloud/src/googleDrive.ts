@@ -153,6 +153,29 @@ export class GoogleDriveProvider implements CloudProvider {
     return parent;
   }
 
+  async trash(fileId: string): Promise<void> {
+    await this.#req(
+      `${API}/files/${fileId}`,
+      { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trashed: true }) },
+      "Drive trash file",
+    );
+  }
+
+  async changesSince(token: string | undefined): Promise<{ changed: boolean; token: string }> {
+    if (!token) {
+      const json = await (await this.#req(`${API}/changes/startPageToken`, {}, "Drive change token")).json();
+      return { changed: true, token: String(json.startPageToken) };
+    }
+    const params = new URLSearchParams({
+      pageToken: token,
+      pageSize: "1",
+      includeRemoved: "true",
+      fields: "changes(fileId)",
+    });
+    const json = await (await this.#req(`${API}/changes?${params}`, {}, "Drive changes")).json();
+    return { changed: (json.changes?.length ?? 0) > 0, token };
+  }
+
   async download(fileId: string): Promise<Uint8Array> {
     const res = await this.#req(`${API}/files/${fileId}?alt=media`, {}, "Drive download");
     return new Uint8Array(await res.arrayBuffer());

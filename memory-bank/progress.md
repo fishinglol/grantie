@@ -121,6 +121,23 @@ _Last updated: 2026-09-20_
   - [x] Launch bug fixed: sidebar file list was read before the sample note existed
   - [x] Dev-only full page reload when `LiveEditor.tsx` (or what it imports) changes
   - [x] `tsc --noEmit` clean; `tsc -b` reports one pre-existing error (`vite.config.ts`)
+- **Sync v0.2 — deletes + near-real-time** (branch `feat/mobile-live-editor`, 2026-09-21; user asked: sync too slow,
+  add Delete on desktop (right-click) and phone (⋮ menu))
+  - [x] `planSync` now propagates deletions: synced file missing on one side = deleted there → `delete-local` /
+        `delete-remote` (Drive **trash**, recoverable); an edit on the other side always beats a delete.
+        Safety: index reset when the Drive folder id changes; refuses a batch of >5 deletes that is >30 % of
+        tracked files (a bad listing looks like "everything deleted"). `VaultFileSystem.removeFile`, `CloudProvider.trash`.
+  - [x] Speed: `VaultSync.syncIfChanged()` = one Drive `changes` request + local stat check, full sync only if something
+        changed; failed runs drop the token so they retry. Apps poll every 5 s (`SYNC_INTERVAL_MS`), and push right
+        after saving (desktop autosave 1.5 s, phone 0.7 s + sync). True push (webhooks) needs a server: not done.
+        After our own uploads the first poll does one no-op full sync (change feed includes our own writes).
+  - [x] Sync no longer reloads the open note unless the sync rewrote/removed that note and there are no unsaved edits.
+  - [x] Desktop: right-click a note → Delete → `DeleteDialog`; needs `fs:allow-remove` for `$HOME`/`$DOCUMENT`
+        (capability changed → `tauri dev` must rebuild). Phone: red "Delete file" in ⋮ menu + native confirm.
+  - [x] Tests: core-cloud 42 pass (10 new: plan deletes, engine deletes, breaker, folder reset, probe, retry).
+        Verified: desktop + phone delete flows in the browser preview; `expo export` bundles.
+  - [ ] Not run against real Drive / on devices. Known: two devices both starting with a different `welcome.md`
+        produce a "(Drive copy …)" conflict file (now deletable). Identical files that were never synced still conflict.
 - **`apps/mobile` v0.2 — phone version of the desktop UI** (branch `feat/mobile-live-editor`)
   - [x] New shared package `packages/live-editor` (`@granite/live-editor`): the CodeMirror live-preview
         editor + image viewer + CSS, moved out of `apps/desktop`. Platform-neutral: `toUrl` prop turns a

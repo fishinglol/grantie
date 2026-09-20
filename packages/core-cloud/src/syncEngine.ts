@@ -43,6 +43,13 @@ export async function listLocalFiles(
   return out;
 }
 
+/** A batch of deletions this small is applied without question; larger ones must also be a minority of the vault. */
+const MAX_UNATTENDED_DELETES = 5;
+
+function emptyResult(): SyncResult {
+  return { uploaded: 0, downloaded: 0, conflicted: 0, deleted: 0, skipped: 0, failed: 0, items: [] };
+}
+
 export interface VaultSyncOptions {
   fs: VaultFileSystem;
   provider: CloudProvider;
@@ -80,6 +87,34 @@ export class VaultSync {
     this.#now = opts.now ?? (() => new Date());
   }
 
+  /**
+   * The poll: does a full sync only if something changed remotely (one cheap request) or locally
+   * (stat calls only). Any doubt, such as a failing probe or no saved token, falls back to a full sync.
+   */
+  async syncIfChanged(onProgress?: (done: number, total: number, item: SyncPlanItem) => void): Promise<SyncResult> {
+    if (this.#running) return this.#running;
+    try {
+      const index = (await this.#indexStore.load()) ?? emptyIndex();
+      if (index.changesToken && index.folderId) {
+        const probe = await this.#provider.changesSince(index.changesToken);
+        if (!probe.changed && !(await this.#localChanged(index))) return emptyResult();
+      }
+    } catch {
+      // Fall through to a full sync, which reports real errors.
+    }
+    return this.sync(onProgress);
+  }
+
+  async #localChanged(index: SyncIndex): Promise<boolean> {
+    const local = await listLocalFiles(this.#fs, this.#vaultDir);
+    const seen = new Set<string>();
+    for (const l of local) {
+      seen.add(l.path);
+      if (index.files[l.path]?.localModifiedMs !== l.modifiedMs) return true;
+    }
+    return Object.keys(index.files).some((path) => !seen.has(path));
+  }
+
   /** Concurrent callers (timer + button + post-edit) share one run. */
   sync(onProgress?: (done: number, total: number, item: SyncPlanItem) => void): Promise<SyncResult> {
     this.#running ??= this.#sync(onProgress).finally(() => {
@@ -91,7 +126,13 @@ export class VaultSync {
   async #sync(onProgress?: (done: number, total: number, item: SyncPlanItem) => void): Promise<SyncResult> {
     const index = (await this.#indexStore.load()) ?? emptyIndex();
     const folderId = await this.#provider.ensureVaultFolder(this.#folderName, index.folderId);
+    // A different Drive folder (the old one was trashed, or this is another account) means the
+    // records describe files that aren't there. Trusting them would read as "everything was
+    // deleted remotely", so start over instead.
+    if (index.folderId !== folderId) index.files = {};
     index.folderId = folderId;
+    // Taken before listing, so a change that lands during this sync is caught by the next poll.
+    const { token: changesToken } = await this.#provider.changesSince(undefined);
 
     await this.#fs.mkdirp(this.#vaultDir);
     const local = await listLocalFiles(this.#fs, this.#vaultDir);
@@ -99,6 +140,14 @@ export class VaultSync {
     const remoteByPath = new Map(remote.map((r) => [r.path, r]));
 
     const plan = planSync(local, remote, index);
+    const deletions = plan.filter((p) => p.action === "delete-local" || p.action === "delete-remote").length;
+    const tracked = Object.keys(index.files).length;
+    if (deletions > MAX_UNATTENDED_DELETES && deletions > tracked * 0.3) {
+      // A failed or partial listing looks exactly like "everything was deleted"; never act on it.
+      throw new Error(
+        `Sync stopped: it would delete ${deletions} of ${tracked} files at once, which looks like a mistake. Nothing was changed.`,
+      );
+    }
     const actionable = plan.filter((p) => p.action !== "skip");
     const items: SyncOutcome[] = [];
     let done = 0;
@@ -121,14 +170,19 @@ export class VaultSync {
       await this.#indexStore.save(index);
     }
 
+    const failed = items.filter((i) => i.error).length;
+    // Only trust the change token after a clean run, so a failed file is retried by the next poll.
+    if (failed === 0) index.changesToken = changesToken;
+    else delete index.changesToken;
     await this.#indexStore.save(index);
 
     return {
       uploaded: items.filter((i) => i.action === "upload" && !i.error).length,
       downloaded: items.filter((i) => i.action === "download" && !i.error).length,
       conflicted: items.filter((i) => i.action === "conflict" && !i.error).length,
+      deleted: items.filter((i) => (i.action === "delete-local" || i.action === "delete-remote") && !i.error).length,
       skipped: items.filter((i) => i.action === "skip").length,
-      failed: items.filter((i) => i.error).length,
+      failed,
       items,
     };
   }
@@ -143,6 +197,19 @@ export class VaultSync {
 
     if (item.action === "upload") {
       await this.#push(item.path, folderId, remote?.id, index);
+      return undefined;
+    }
+
+    if (item.action === "delete-local") {
+      await this.#fs.removeFile(join(this.#vaultDir, item.path));
+      delete index.files[item.path];
+      return undefined;
+    }
+
+    if (item.action === "delete-remote") {
+      if (!remote) throw new Error(`no remote file for ${item.path}`);
+      await this.#provider.trash(remote.id);
+      delete index.files[item.path];
       return undefined;
     }
 

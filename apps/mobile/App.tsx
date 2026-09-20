@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AppState, BackHandler, Platform, Share, StyleSheet, View } from 'react-native';
+import { Alert, AppState, BackHandler, Platform, Share, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
@@ -66,6 +66,8 @@ export default function App() {
   const pending = useRef<string | null>(null);
   /** The note's current text, for sharing. */
   const latest = useRef('');
+  /** Always the current full-sync function, for callers declared before it. */
+  const syncNow = useRef<() => Promise<void>>(async () => undefined);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -106,7 +108,8 @@ export default function App() {
       latest.current = text;
       setDirty(true);
       if (saveTimer.current) clearTimeout(saveTimer.current);
-      saveTimer.current = setTimeout(flush, SAVE_DELAY_MS);
+      // Save shortly after typing stops, then push to Drive straight away.
+      saveTimer.current = setTimeout(() => void flush().then(() => syncNow.current()), SAVE_DELAY_MS);
     },
     [flush],
   );
@@ -155,43 +158,61 @@ export default function App() {
     [session],
   );
 
-  const runSync = useCallback(async () => {
-    if (!engine) return;
-    setSyncing(true);
-    try {
-      await flush(); // the engine reads the file from disk
-      const result = await engine.sync();
-      if (result.downloaded + result.conflicted > 0) {
-        await refresh();
-        const rel = openRel.current;
-        if (rel && pending.current === null) {
-          const text = await fs.readTextFile(join(VAULT_DIR, rel)).catch(() => null);
-          if (text !== null) {
-            setOpen({ rel, text });
-            setRevision((r) => r + 1);
+  /** `poll` = the cheap background check; otherwise a full sync (after a save, button, foreground). */
+  const doSync = useCallback(
+    async (poll: boolean) => {
+      if (!engine) return;
+      try {
+        if (!poll) setSyncing(true);
+        await flush(); // the engine reads the file from disk
+        const onProgress = () => setSyncing(true);
+        const result = poll ? await engine.syncIfChanged(onProgress) : await engine.sync(onProgress);
+        if (poll && result.items.length === 0) return; // nothing changed anywhere
+        if (result.downloaded + result.conflicted + result.deleted > 0) {
+          await refresh();
+          // Reload the open note only if the sync rewrote or removed it, and never over unsaved edits.
+          const rel = openRel.current;
+          const touched = result.items.some(
+            (i) => i.path === rel && !i.error && (i.action === 'download' || i.action === 'delete-local'),
+          );
+          if (rel && touched && pending.current === null) {
+            const text = await fs.readTextFile(join(VAULT_DIR, rel)).catch(() => null);
+            if (text !== null) {
+              latest.current = text;
+              setOpen({ rel, text });
+              setRevision((r) => r + 1);
+            } else {
+              openRel.current = null;
+              setOpen(null);
+            }
           }
         }
+        if (result.failed > 0) say(`Sync: ${result.failed} file(s) failed`);
+      } catch (err) {
+        say(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        setSyncing(false);
       }
-      if (result.failed > 0) say(`Sync: ${result.failed} file(s) failed`);
-    } catch (err) {
-      say(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setSyncing(false);
-    }
-  }, [engine, flush, refresh, say]);
+    },
+    [engine, flush, refresh, say],
+  );
+  const runSync = useCallback(() => doSync(false), [doSync]);
+  syncNow.current = runSync;
 
+  // Near-real-time: a cheap change check every few seconds; a full sync only runs when something
+  // changed on Drive or on the phone. Typing triggers a full sync right after it stops.
   useEffect(() => {
     if (!engine) return;
-    void runSync();
-    const timer = setInterval(() => void runSync(), SYNC_INTERVAL_MS);
+    void doSync(false);
+    const timer = setInterval(() => void doSync(true), SYNC_INTERVAL_MS);
     const appState = AppState.addEventListener('change', (state) => {
-      if (state === 'active') void runSync();
+      if (state === 'active') void doSync(false);
     });
     return () => {
       clearInterval(timer);
       appState.remove();
     };
-  }, [engine, runSync]);
+  }, [engine, doSync]);
 
   const connectDrive = useCallback(async () => {
     const attempt = ++signInAttempt.current;
@@ -240,6 +261,43 @@ export default function App() {
     void runSync();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openedRel]);
+
+  /** Remove a note (after the user confirmed). Sync then removes it from Drive and other devices. */
+  const deleteNote = useCallback(
+    async (rel: string) => {
+      try {
+        if (openRel.current === rel) {
+          // Drop pending edits first so autosave can't bring the file back.
+          if (saveTimer.current) clearTimeout(saveTimer.current);
+          pending.current = null;
+          openRel.current = null;
+          setDirty(false);
+          setOpen(null);
+          setSidebar(true);
+        }
+        await fs.removeFile(join(VAULT_DIR, rel));
+        await refresh();
+        say(`Deleted ${basename(rel)}`);
+        void runSync();
+      } catch (err) {
+        say(`Error: ${String(err)}`);
+      }
+    },
+    [refresh, runSync, say],
+  );
+
+  const askDelete = (rel: string) => {
+    const name = basename(rel).replace(/\.(md|markdown)$/i, '');
+    const message = `“${name}” is deleted from this phone${email ? ', moved to the Drive trash and removed from your other devices' : ''}. This can't be undone here.`;
+    if (isWeb) {
+      if (window.confirm(`Delete “${name}”?\n\n${message}`)) void deleteNote(rel);
+      return;
+    }
+    Alert.alert(`Delete “${name}”?`, message, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => void deleteNote(rel) },
+    ]);
+  };
 
   /** Move a note into `folder` ("" = vault root), keeping its relative image links pointing at the same files. */
   const moveNote = useCallback(
@@ -370,6 +428,7 @@ export default function App() {
             { label: 'Move file', icon: 'folder-move-outline', onPress: () => setPicking(true) },
             { label: 'Share note', icon: 'share-variant-outline', onPress: shareNote },
           ],
+          [{ label: 'Delete file', icon: 'trash-can-outline', danger: true, onPress: () => open && askDelete(open.rel) }],
         ]}
       />
       {open && (

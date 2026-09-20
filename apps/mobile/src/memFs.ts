@@ -34,6 +34,9 @@ export const memFs: MovableFs = {
   async mkdirp(path) {
     dirs.add(path);
   },
+  async removeFile(path) {
+    files.delete(path);
+  },
   async moveFile(from, to) {
     const v = files.get(from);
     if (v === undefined) throw new Error(`memFs: not found — ${from}`);

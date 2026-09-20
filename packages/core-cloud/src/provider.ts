@@ -13,7 +13,7 @@ export interface UploadArgs {
 
 /**
  * Cloud storage "port". Google Drive is the only implementation today; Dropbox
- * and OneDrive are the same four calls against a different REST API.
+ * and OneDrive are the same handful of calls against a different REST API.
  */
 export interface CloudProvider {
   /** Resolve the vault folder by name, creating it if it isn't there. */
@@ -22,4 +22,11 @@ export interface CloudProvider {
   listVault(folderId: string): Promise<RemoteFile[]>;
   download(fileId: string): Promise<Uint8Array>;
   upload(args: UploadArgs): Promise<RemoteFile>;
+  /** Move a file to the provider's trash, where the user can still recover it. */
+  trash(fileId: string): Promise<void>;
+  /**
+   * Cheap "did anything in the vault change since `token`?" check, so a poll doesn't have to list
+   * everything. With no token it just returns a fresh one (and `changed: true`).
+   */
+  changesSince(token: string | undefined): Promise<{ changed: boolean; token: string }>;
 }

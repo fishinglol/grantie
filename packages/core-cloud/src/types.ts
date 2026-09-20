@@ -32,6 +32,8 @@ export interface SyncRecord {
 export interface SyncIndex {
   /** Drive id of the vault folder, cached so we don't re-resolve it every run. */
   folderId?: string;
+  /** Provider change-feed position taken before the last clean sync; lets a poll skip a full listing. */
+  changesToken?: string;
   files: Record<string, SyncRecord>;
 }
 
@@ -39,7 +41,7 @@ export function emptyIndex(): SyncIndex {
   return { files: {} };
 }
 
-export type SyncAction = "upload" | "download" | "conflict" | "skip";
+export type SyncAction = "upload" | "download" | "conflict" | "skip" | "delete-local" | "delete-remote";
 
 export interface SyncPlanItem {
   path: string;
@@ -60,6 +62,8 @@ export interface SyncResult {
   uploaded: number;
   downloaded: number;
   conflicted: number;
+  /** Files removed on either side because they were deleted on the other. */
+  deleted: number;
   skipped: number;
   failed: number;
   items: SyncOutcome[];

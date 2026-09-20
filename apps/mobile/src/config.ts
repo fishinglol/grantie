@@ -11,5 +11,8 @@ export const isGoogleConfigured = (): boolean => GOOGLE_CLIENT_ID.length > 0;
 /** Folder Granite creates in the user's Drive (same as the desktop app). */
 export const REMOTE_FOLDER_NAME = 'Granite Vault';
 
-/** How often to sync in the background while the app is open. */
-export const SYNC_INTERVAL_MS = 60_000;
+/**
+ * How often the app checks for changes while it is open. The check is one cheap request; a full
+ * sync only runs when something actually changed (see `VaultSync.syncIfChanged`).
+ */
+export const SYNC_INTERVAL_MS = 5_000;

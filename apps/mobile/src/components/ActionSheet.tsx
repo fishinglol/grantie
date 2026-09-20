@@ -6,6 +6,8 @@ export interface SheetItem {
   label: string;
   icon: Parameters<typeof Icon>[0]['name'];
   onPress: () => void;
+  /** Drawn in red, for actions that destroy something. */
+  danger?: boolean;
 }
 
 export interface ActionSheetProps {
@@ -36,8 +38,8 @@ export default function ActionSheet({ visible, caption, groups, onClose }: Actio
                 }}
                 style={({ pressed }) => [styles.item, i > 0 && styles.divider, pressed && styles.pressed]}
               >
-                <Icon name={item.icon} size={22} color={colors.textDim} />
-                <Text style={styles.label}>{item.label}</Text>
+                <Icon name={item.icon} size={22} color={item.danger ? colors.danger : colors.textDim} />
+                <Text style={[styles.label, item.danger && { color: colors.danger }]}>{item.label}</Text>
               </Pressable>
             ))}
           </View>

@@ -175,3 +175,105 @@ test("concurrent sync() calls collapse into a single run", async () => {
   assert.equal(r1, r2);
   assert.equal(provider.uploads.filter((p) => p === "a.md").length, 1);
 });
+
+/** Sync once so both sides hold `files` and the index records them. */
+async function synced(files: Record<string, string>) {
+  const ctx = setup();
+  for (const [path, content] of Object.entries(files)) await ctx.fs.writeTextFile(`/vault/${path}`, content);
+  await ctx.sync.sync();
+  return ctx;
+}
+
+test("deleting a note locally trashes it on the remote and forgets it", async () => {
+  const { fs, provider, indexStore, sync } = await synced({ "a.md": "A", "b.md": "B" });
+  await fs.removeFile("/vault/a.md");
+
+  const res = await sync.sync();
+
+  assert.equal(res.deleted, 1);
+  assert.deepEqual(provider.trashed, ["a.md"]);
+  assert.equal(provider.remote.has("a.md"), false);
+  assert.equal(indexStore.current.files["a.md"], undefined);
+  assert.equal(provider.remote.has("b.md"), true);
+});
+
+test("a note deleted on another device is removed locally", async () => {
+  const { fs, provider, sync } = await synced({ "a.md": "A", "b.md": "B" });
+  provider.remote.delete("a.md");
+
+  const res = await sync.sync();
+
+  assert.equal(res.deleted, 1);
+  assert.equal(await fs.exists("/vault/a.md"), false);
+  assert.equal(await fs.exists("/vault/b.md"), true);
+});
+
+test("a note edited here but deleted there is kept and re-uploaded", async () => {
+  const { fs, provider, sync } = await synced({ "a.md": "A" });
+  provider.remote.delete("a.md");
+  await fs.writeTextFile("/vault/a.md", "A edited");
+
+  const res = await sync.sync();
+
+  assert.equal(res.deleted, 0);
+  assert.equal(text(provider.remote.get("a.md")!.data), "A edited");
+});
+
+test("a sync that would delete most of the vault stops instead of doing it", async () => {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < 10; i++) files[`n${i}.md`] = `note ${i}`;
+  const { fs, provider, sync } = await synced(files);
+  provider.remote.clear(); // e.g. a failed or partial remote listing
+
+  await assert.rejects(sync.sync(), /Nothing was changed/);
+  assert.equal((await listLocalFiles(fs, vaultDir)).length, 10);
+});
+
+test("a different Drive folder resets the records instead of deleting local notes", async () => {
+  const { fs, provider, sync } = await synced({ "a.md": "A" });
+  provider.folderId = "folder-2";
+  provider.remote.clear();
+
+  await sync.sync();
+
+  assert.equal(await fs.exists("/vault/a.md"), true);
+  assert.equal(text(provider.remote.get("a.md")!.data), "A");
+});
+
+test("syncIfChanged skips the full listing when nothing changed, and runs it when something did", async () => {
+  const { fs, provider, sync } = await synced({ "a.md": "A" });
+  // The change feed also reports our own uploads, so the first poll after uploading does one no-op
+  // sync (which takes a fresh token); after that a quiet vault costs a single cheap request.
+  await sync.syncIfChanged();
+  const listsAfterSettling = provider.listCalls;
+
+  await sync.syncIfChanged();
+  assert.equal(provider.listCalls, listsAfterSettling, "nothing changed: no listing");
+
+  provider.seed("b.md", "from another device");
+  const remoteRes = await sync.syncIfChanged();
+  assert.equal(remoteRes.downloaded, 1);
+  assert.equal(await fs.readTextFile("/vault/b.md"), "from another device");
+
+  await fs.writeTextFile("/vault/a.md", "A edited");
+  const localRes = await sync.syncIfChanged();
+  assert.equal(localRes.uploaded, 1);
+});
+
+test("a failed file is retried by the next poll, not hidden by the change token", async () => {
+  const { fs, provider, sync } = setup();
+  await fs.writeTextFile("/vault/a.md", "A");
+  const realUpload = provider.upload.bind(provider);
+  let fail = true;
+  provider.upload = async (args) => {
+    if (fail) throw new Error("network down");
+    return realUpload(args);
+  };
+
+  const first = await sync.syncIfChanged();
+  assert.equal(first.failed, 1);
+
+  fail = false;
+  const second = await sync.syncIfChanged();
+  assert.equal(second.uploaded, 1);
+});
