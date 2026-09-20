@@ -131,9 +131,13 @@ _Last updated: 2026-09-20_
         git-ignored `src/editorHtml.ts` (runs before `npm start|web|ios|android`). App ↔ page over
         `postMessage` (protocol in `editor-web/main.tsx`). WebView base URL = the note's folder so
         `![](assets/x.png)` loads from disk.
-  - [x] Notes list (folders/notes tree, "+ Note", "+ Folder"), full-screen note with back, save dot,
-        "Image" button (photo → `<note dir>/assets/` → link at cursor), account chip + bottom sheet, toast.
-        Autosave 700 ms after typing, flushed on back / app backgrounding / Android back.
+  - [x] UI restyled to the mobile Obsidian layout (user sent screenshots): full-screen note with round
+        sidebar + ⋮ buttons and the note title above the editor; slide-in `Sidebar` (tree, pencil / folder-plus
+        icons, vault name + "N files, M folders" + gear); `ActionSheet` bottom sheets for ⋮ (Add image, Share
+        note) and the gear (Connect Drive / Sync now / Sign out). Icons: `@expo/vector-icons` (user approved).
+        Deliberately left out: Delete file (Drive sync doesn't propagate deletes, the note would come back),
+        Find/Replace, Copy path, version history, reading view, rename (title is display-only).
+        Autosave 700 ms after typing, flushed on note switch / app backgrounding.
   - [x] `expoFs` / `memFs` are now `VaultFileSystem` (readBinaryFile, listDir, stat) — what sync needs.
   - [x] Verified: web preview (create note, edit, autosave, reopen, live preview looks like desktop),
         `tsc --noEmit` clean for mobile, desktop, live-editor; `expo export` bundles iOS + Android.

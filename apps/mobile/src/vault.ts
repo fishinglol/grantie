@@ -25,9 +25,9 @@ is on that line.
 
 ## Try it
 
-- Tap the **image** button to add a photo. It is copied into \`assets/\`.
-- Tap **+** on the notes list to add a note or a folder.
-- Tap your account chip and choose **Connect Drive** to sync with the desktop app.
+- Open the sidebar (top left) to switch notes, or tap the pencil / folder icons to add one.
+- Tap the **⋮** menu (top right) and choose **Add image** to add a photo. It is copied into \`assets/\`.
+- Tap the gear at the bottom of the sidebar and choose **Connect Drive** to sync with the desktop app.
 
 See [the project brief](https://example.com/granite) for the bigger picture.
 `;

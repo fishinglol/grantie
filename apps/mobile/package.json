@@ -4,6 +4,7 @@
   "main": "index.ts",
   "dependencies": {
     "@expo/metro-runtime": "~57.0.14",
+    "@expo/vector-icons": "^15.0.2",
     "@granite/core-cloud": "*",
     "@granite/core-notes": "*",
     "@granite/live-editor": "*",

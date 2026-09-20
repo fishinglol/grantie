@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AppState, BackHandler, Platform, StyleSheet, View } from 'react-native';
+import { AppState, BackHandler, Platform, Share, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
@@ -14,8 +14,9 @@ import { indexStore } from './src/stores';
 import { VAULT_DIR, ensureSampleVault, scanVault, type VaultScan } from './src/vault';
 import { colors } from './src/theme';
 import NoteList from './src/components/NoteList';
-import NoteScreen from './src/components/NoteScreen';
-import AccountSheet from './src/components/AccountSheet';
+import NoteScreen, { EmptyNote } from './src/components/NoteScreen';
+import ActionSheet from './src/components/ActionSheet';
+import Sidebar from './src/components/Sidebar';
 import Toast from './src/components/Toast';
 import type { NoteEditorHandle } from './src/components/NoteEditor.types';
 
@@ -44,7 +45,9 @@ export default function App() {
   /** The open note: its vault-relative path and its text as it was opened (edits live in the editor). */
   const [open, setOpen] = useState<{ rel: string; text: string } | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [sheet, setSheet] = useState(false);
+  const [sidebar, setSidebar] = useState(true);
+  const [menu, setMenu] = useState(false);
+  const [settings, setSettings] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [session, setSession] = useState<GoogleSession | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -53,6 +56,8 @@ export default function App() {
   const editor = useRef<NoteEditorHandle>(null);
   const openRel = useRef<string | null>(null);
   const pending = useRef<string | null>(null);
+  /** The note's current text, for sharing. */
+  const latest = useRef('');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -69,10 +74,6 @@ export default function App() {
       say(`Error: ${String(err)}`);
     }
   }, [say]);
-
-  useEffect(() => {
-    ensureSampleVault(fs).then(refresh, (err) => say(`Error: ${String(err)}`));
-  }, [refresh, say]);
 
   /** Write the pending edit to disk now. */
   const flush = useCallback(async () => {
@@ -94,6 +95,7 @@ export default function App() {
   const onChange = useCallback(
     (text: string) => {
       pending.current = text;
+      latest.current = text;
       setDirty(true);
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(flush, SAVE_DELAY_MS);
@@ -104,17 +106,28 @@ export default function App() {
   const openNote = useCallback(
     async (rel: string) => {
       try {
+        await flush(); // finish saving the note we are leaving
         const text = await fs.readTextFile(join(VAULT_DIR, rel));
         openRel.current = rel;
         pending.current = null;
+        latest.current = text;
         setDirty(false);
         setOpen({ rel, text });
+        setSidebar(false);
       } catch (err) {
         say(`Error: ${String(err)}`);
       }
     },
-    [say],
+    [flush, say],
   );
+
+  // First launch: make sure there is a vault, list it, and open the welcome note.
+  useEffect(() => {
+    ensureSampleVault(fs)
+      .then(refresh)
+      .then(() => openNote('welcome.md'))
+      .catch((err) => say(`Error: ${String(err)}`));
+  }, [refresh, openNote, say]);
 
   useEffect(() => {
     restoreGoogleSession().then(setSession, () => undefined);
@@ -189,16 +202,8 @@ export default function App() {
     say('Signed out — notes stay on this phone');
   }, [session, say]);
 
-  const closeNote = useCallback(async () => {
-    await flush();
-    openRel.current = null;
-    setOpen(null);
-    void refresh();
-    void runSync();
-  }, [flush, refresh, runSync]);
-
-  // Never lose an edit: write it out when the app leaves the foreground, and let the
-  // Android back button leave the note instead of the app.
+  // Never lose an edit: write it out when the app leaves the foreground. The Android back
+  // button closes the sidebar before it leaves the app.
   useEffect(() => {
     const appState = AppState.addEventListener('change', (state) => {
       if (state !== 'active') void flush();
@@ -206,15 +211,23 @@ export default function App() {
     const back = isWeb
       ? null
       : BackHandler.addEventListener('hardwareBackPress', () => {
-          if (!openRel.current) return false;
-          void closeNote();
+          if (!sidebar || !openRel.current) return false;
+          setSidebar(false);
           return true;
         });
     return () => {
       appState.remove();
       back?.remove();
     };
-  }, [flush, closeNote]);
+  }, [flush, sidebar]);
+
+  // Sync when the user switches notes (the previous one was just saved).
+  const openedRel = open?.rel;
+  useEffect(() => {
+    void refresh();
+    void runSync();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openedRel]);
 
   const create = useCallback(
     async (kind: 'note' | 'folder', folder: string, name: string) => {
@@ -269,11 +282,9 @@ export default function App() {
     }
   }, [say, runSync]);
 
-  const account = {
-    email: session?.user.email ?? null,
-    syncing,
-    onPress: () => setSheet(true),
-  };
+  const email = session?.user.email ?? null;
+
+  const shareNote = () => Share.share({ message: latest.current }).catch(() => say('Sharing is not available here'));
 
   return (
     <View style={styles.screen}>
@@ -288,26 +299,48 @@ export default function App() {
           title={basename(open.rel).replace(/\.(md|markdown)$/i, '')}
           dirty={dirty}
           onChange={onChange}
-          onBack={closeNote}
-          onAddImage={addImage}
+          onOpenSidebar={() => setSidebar(true)}
+          onOpenMenu={() => setMenu(true)}
         />
       ) : (
+        <EmptyNote onOpenSidebar={() => setSidebar(true)} />
+      )}
+
+      <Sidebar open={sidebar} onClose={() => setSidebar(false)}>
         <NoteList
           notes={scan.notes}
           folders={scan.folders}
-          dirtyNote={null}
-          account={account}
+          selected={open?.rel ?? null}
+          title={email ?? 'Local vault'}
+          syncing={syncing}
           onOpen={openNote}
           onCreate={create}
+          onOpenSettings={() => setSettings(true)}
         />
-      )}
-      <AccountSheet
-        visible={sheet}
-        email={account.email}
-        onClose={() => setSheet(false)}
-        onConnectDrive={connectDrive}
-        onSyncNow={runSync}
-        onSignOut={signOut}
+      </Sidebar>
+
+      <ActionSheet
+        visible={menu}
+        onClose={() => setMenu(false)}
+        groups={[
+          [
+            { label: 'Add image', icon: 'image-outline', onPress: addImage },
+            { label: 'Share note', icon: 'share-variant-outline', onPress: shareNote },
+          ],
+        ]}
+      />
+      <ActionSheet
+        visible={settings}
+        onClose={() => setSettings(false)}
+        caption={email ?? 'Working locally — notes stay on this phone'}
+        groups={
+          email
+            ? [
+                [{ label: 'Sync now', icon: 'sync', onPress: runSync }],
+                [{ label: 'Sign out', icon: 'logout', onPress: signOut }],
+              ]
+            : [[{ label: 'Connect Drive', icon: 'cloud-outline', onPress: connectDrive }]]
+        }
       />
       <Toast message={toast} />
     </View>

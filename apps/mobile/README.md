@@ -1,12 +1,13 @@
 # Granite — mobile (Expo / React Native)
 
 A phone version of the desktop app:
-1. **Notes list** — the vault's folders and notes, "+ Note" / "+ Folder", and an
-   account chip at the bottom (bottom sheet instead of the desktop hover menu).
+1. **Sidebar** — slides in from the left (round button, top left): the vault's folders and notes,
+   new-note / new-folder icons, and the vault name with a gear that opens the account sheet.
+   The layout follows the mobile Obsidian app.
 2. **Live-preview editor** — the *same* editor as desktop (`@granite/live-editor`,
    CodeMirror 6) running inside a WebView. Edits autosave to the vault.
-3. **Add an image** — pick a photo; it is copied to `<note folder>/assets/` and
-   linked at the cursor.
+3. **⋮ menu** (top right) — *Add image* (pick a photo; it is copied to `<note folder>/assets/`
+   and linked at the cursor) and *Share note*.
 
 ## Run it
 
@@ -56,10 +57,10 @@ The app contains **no markdown logic** — it calls `NoteRepository.load()` and
 
 ## Google Drive sync (needs a development build)
 
-"Connect Drive" (account chip → sheet) signs in with Google and two-way syncs the vault with a
+"Connect Drive" (gear in the sidebar → sheet) signs in with Google and two-way syncs the vault with a
 `Granite Vault` folder in your Drive, using the same engine as desktop (`@granite/core-cloud`),
 so notes and `assets/` images flow between phone and desktop. It syncs on sign-in, every minute
-while the app is open, when you return to the app, and after you leave a note or add an image.
+while the app is open, when you return to the app, and when you switch notes or add an image.
 
 Google only accepts a native app's own client ID, so this **does not work in Expo Go**:
 1. Google Cloud console → Credentials → create an **iOS** (bundle id `ios.bundleIdentifier`) and/or

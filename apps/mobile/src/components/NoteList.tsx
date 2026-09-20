@@ -1,24 +1,28 @@
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { colors } from '../theme';
-import AccountChip, { type AccountChipProps } from './AccountChip';
+import Icon from './Icon';
 
 export interface NoteListProps {
   notes: string[];
   folders: string[];
-  /** Note path (relative to the vault) with unsaved changes, if any. */
-  dirtyNote: string | null;
-  account: AccountChipProps;
+  /** Open note (relative to the vault), highlighted in the list. */
+  selected: string | null;
+  /** "Local vault" or the signed-in account. */
+  title: string;
+  syncing: boolean;
   onOpen: (note: string) => void;
   /** Create a note or folder called `name` inside `folder` ("" = vault root). */
   onCreate: (kind: 'note' | 'folder', folder: string, name: string) => void;
+  onOpenSettings: () => void;
 }
 
 const basename = (p: string) => p.slice(p.lastIndexOf('/') + 1);
 const parent = (p: string) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-/** The notes tree: same folders-and-notes layout as the desktop sidebar, sized for a thumb. */
-export default function NoteList({ notes, folders, dirtyNote, account, onOpen, onCreate }: NoteListProps) {
+/** Sidebar content: the notes tree, then new-note / new-folder buttons, then the vault footer. */
+export default function NoteList({ notes, folders, selected, title, syncing, onOpen, onCreate, onOpenSettings }: NoteListProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   /** Folder new notes/folders land in: the last one tapped, "" = vault root. */
   const [activeFolder, setActiveFolder] = useState('');
@@ -32,12 +36,11 @@ export default function NoteList({ notes, folders, dirtyNote, account, onOpen, o
     setName('');
   };
 
-  const renderDir = (dir: string, depth: number) => {
-    const subfolders = folders.filter((f) => parent(f) === dir);
-    const inHere = notes.filter((n) => parent(n) === dir);
-    return (
-      <>
-        {subfolders.map((folder) => {
+  const renderDir = (dir: string, depth: number) => (
+    <>
+      {folders
+        .filter((f) => parent(f) === dir)
+        .map((folder) => {
           const open = !collapsed.has(folder);
           return (
             <View key={folder}>
@@ -51,10 +54,10 @@ export default function NoteList({ notes, folders, dirtyNote, account, onOpen, o
                     return next;
                   });
                 }}
-                style={({ pressed }) => [styles.row, { paddingLeft: 16 + depth * 18 }, pressed && styles.pressed]}
+                style={({ pressed }) => [styles.row, { marginLeft: depth * 16 }, pressed && styles.pressed]}
               >
-                <Text style={styles.chevron}>{open ? '▾' : '▸'}</Text>
-                <Text style={[styles.folder, activeFolder === folder && { color: colors.accent }]} numberOfLines={1}>
+                <Icon name={open ? 'folder-open-outline' : 'folder-outline'} size={22} color={activeFolder === folder ? colors.accent : colors.textDim} />
+                <Text style={[styles.label, activeFolder === folder && { color: colors.accent }]} numberOfLines={1}>
                   {basename(folder)}
                 </Text>
               </Pressable>
@@ -62,89 +65,89 @@ export default function NoteList({ notes, folders, dirtyNote, account, onOpen, o
             </View>
           );
         })}
-        {inHere.map((note) => (
+      {notes
+        .filter((n) => parent(n) === dir)
+        .map((note) => (
           <Pressable
             key={note}
             onPress={() => onOpen(note)}
-            style={({ pressed }) => [styles.row, { paddingLeft: 16 + depth * 18 + 18 }, pressed && styles.pressed]}
+            style={({ pressed }) => [styles.row, { marginLeft: depth * 16 }, selected === note && styles.selected, pressed && styles.pressed]}
           >
-            <Text style={styles.note} numberOfLines={1}>
+            <Text style={[styles.label, { marginLeft: 4 }]} numberOfLines={1}>
               {basename(note).replace(/\.(md|markdown)$/i, '')}
             </Text>
-            {dirtyNote === note && <View style={styles.dirty} />}
           </Pressable>
         ))}
-      </>
-    );
-  };
+    </>
+  );
 
   return (
     <View style={styles.screen}>
-      <View style={styles.header}>
-        <Text style={styles.title}>NOTES</Text>
-        <View style={styles.actions}>
-          <Pressable onPress={() => setCreating('note')} hitSlop={8} style={styles.action}>
-            <Text style={styles.actionText}>+ Note</Text>
-          </Pressable>
-          <Pressable onPress={() => setCreating('folder')} hitSlop={8} style={styles.action}>
-            <Text style={styles.actionText}>+ Folder</Text>
-          </Pressable>
-        </View>
-      </View>
-
-      <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
-        {creating && (
-          <View style={[styles.row, { paddingLeft: 16 }]}>
-            <TextInput
-              autoFocus
-              value={name}
-              onChangeText={setName}
-              onSubmitEditing={commit}
-              placeholder={creating === 'note' ? 'Note name' : 'Folder name'}
-              placeholderTextColor={colors.textFaint}
-              style={styles.input}
-              returnKeyType="done"
-            />
-          </View>
-        )}
-        {notes.length === 0 && folders.length === 0 && !creating && <Text style={styles.empty}>No notes in this vault yet</Text>}
+      <ScrollView style={styles.list} contentContainerStyle={styles.listContent} keyboardShouldPersistTaps="handled">
         {renderDir('', 0)}
+        {creating && (
+          <TextInput
+            autoFocus
+            value={name}
+            onChangeText={setName}
+            onSubmitEditing={commit}
+            placeholder={creating === 'note' ? 'Note name' : 'Folder name'}
+            placeholderTextColor={colors.textFaint}
+            style={styles.input}
+            returnKeyType="done"
+          />
+        )}
+        {notes.length === 0 && folders.length === 0 && !creating && <Text style={styles.empty}>No notes yet — tap the pencil to add one</Text>}
       </ScrollView>
 
-      <AccountChip {...account} />
+      <View style={styles.toolbar}>
+        <Pressable onPress={() => setCreating(creating === 'note' ? null : 'note')} hitSlop={10} style={styles.tool}>
+          <Icon name="square-edit-outline" size={26} color={creating === 'note' ? colors.accent : colors.text} />
+        </Pressable>
+        <Pressable onPress={() => setCreating(creating === 'folder' ? null : 'folder')} hitSlop={10} style={styles.tool}>
+          <Icon name="folder-plus-outline" size={26} color={creating === 'folder' ? colors.accent : colors.text} />
+        </Pressable>
+      </View>
+
+      <View style={styles.footer}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.vault} numberOfLines={1}>
+            {title}
+          </Text>
+          <Text style={styles.counts}>
+            {syncing ? 'syncing…' : `${plural(notes.length, 'file')}, ${plural(folders.length, 'folder')}`}
+          </Text>
+        </View>
+        <Pressable onPress={onOpenSettings} hitSlop={10} style={styles.gear}>
+          <Icon name="cog-outline" size={26} />
+        </Pressable>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
-  header: {
-    paddingTop: 64,
-    paddingHorizontal: 16,
-    paddingBottom: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  title: { color: colors.accent, fontSize: 12, fontWeight: '700', letterSpacing: 1 },
-  actions: { flexDirection: 'row', gap: 8 },
-  action: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, backgroundColor: colors.panel },
-  actionText: { color: colors.text, fontSize: 13, fontWeight: '600' },
+  screen: { flex: 1, paddingTop: 56 },
   list: { flex: 1 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 13, paddingRight: 16 },
-  pressed: { backgroundColor: colors.panel },
-  chevron: { color: colors.textDim, width: 12, fontSize: 12 },
-  folder: { color: colors.text, fontSize: 16, fontWeight: '600', flex: 1 },
-  note: { color: colors.text, fontSize: 16, flex: 1 },
-  dirty: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.accent },
+  listContent: { paddingHorizontal: 12, paddingBottom: 12 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 14, paddingHorizontal: 16, borderRadius: 24 },
+  selected: { backgroundColor: colors.panel },
+  pressed: { backgroundColor: colors.panelHover },
+  label: { color: colors.text, fontSize: 20, flex: 1 },
+  empty: { color: colors.textFaint, padding: 16, fontSize: 15 },
   input: {
-    flex: 1,
     color: colors.text,
-    fontSize: 16,
+    fontSize: 20,
     backgroundColor: colors.panel,
-    borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
+    borderRadius: 24,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    marginTop: 4,
   },
-  empty: { color: colors.textFaint, padding: 16 },
+  toolbar: { flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 14, paddingHorizontal: 20 },
+  tool: { padding: 8 },
+  footer: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 22, paddingTop: 6, paddingBottom: 30 },
+  vault: { color: colors.heading, fontSize: 24, fontWeight: '700' },
+  counts: { color: colors.textDim, fontSize: 14, marginTop: 2 },
+  gear: { width: 52, height: 52, borderRadius: 26, backgroundColor: colors.panel, alignItems: 'center', justifyContent: 'center' },
 });
