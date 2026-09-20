@@ -42,6 +42,9 @@ State: the user runs the phone app in **Expo Go** on a Samsung phone (Mac and ph
   a WebSocket relay (`y-websocket`/Cloudflare/Fly, or `y-webrtc` peer-to-peer), Google-token auth on the
   server, `.md` files stay the source of truth with Drive sync as backup. Own-devices-only is the smaller scope;
   sharing with other people adds invites/permissions. Each new library needs the user's approval first.
+- **Plugin system idea (2026-09-21):** the user plans Obsidian-style community plugins that run on desktop and
+  phone in one language. Verdict: TypeScript/JS, a small async plugin API, run in web views. Full design, risks and
+  the open trust-model question are in `pluginDesign.md`. Not started; user said "in the future".
 - Next candidates: open the PR into `main`; real-Drive test of moving/deleting notes across two devices;
   refresh token → secure storage; standalone Android install (EAS `.apk`); a `.env.example` note that the
   desktop and phone clients are different types.

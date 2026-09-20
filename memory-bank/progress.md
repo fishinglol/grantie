@@ -226,6 +226,7 @@ _Last updated: 2026-09-20_
 ### Separate future milestones (NOT now)
 - [ ] `packages/core-sync` — Yjs CRDT doc <-> markdown binding; prove merge with
       2 clients headless before any cloud
+- [ ] Plugin system (TS/JS, works on desktop + phone, community contributions): designed, not started; see `pluginDesign.md`
 - [ ] Fold `conflict_cleaner` in as the pre-CRDT fallback
 - [x] Login + sync on mobile (done via Google's device-code flow instead of `expo-auth-session`)
 - [ ] Real-time collaborative typing (Yjs + relay server): discussed, user declined for now; see activeContext

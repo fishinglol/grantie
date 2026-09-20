@@ -12,3 +12,4 @@ across sessions. Read these in order at the start of a session; update
 | `techContext.md` | Tech stack, setup, tooling, dependencies | on stack changes |
 | `activeContext.md` | What we're working on right now, open decisions | every session |
 | `progress.md` | What's done, what's left, known issues | every session |
+| `pluginDesign.md` | Planned plugin system (TS/JS, desktop + phone): design, risks, open decisions. Nothing built | when the plan changes |
