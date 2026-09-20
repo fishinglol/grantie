@@ -38,6 +38,8 @@ export interface NoteAppProps {
   session: GoogleSession | null;
   vaultDir?: string;
   onSignOut: () => void;
+  /** Sign in to Drive without leaving the current note / vault. */
+  onConnectDrive: () => void;
   onOpenVaultSetup: () => void;
 }
 
@@ -45,6 +47,7 @@ export default function NoteApp({
   session,
   vaultDir: vaultDirProp,
   onSignOut,
+  onConnectDrive,
   onOpenVaultSetup,
 }: NoteAppProps) {
   const [path, setPath] = useState<string | null>(null);
@@ -70,6 +73,15 @@ export default function NoteApp({
   const [fileHover, setFileHover] = useState(false);
   /** True once Tauri's native drop listener is live; the DOM drop fallback stays off then. */
   const nativeDrop = useRef(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  // Status messages surface as a short-lived toast; routine load/auto-save chatter is skipped.
+  useEffect(() => {
+    if (/^(Starting|Saved |Read \+ parsed )/.test(status)) return;
+    setToast(status);
+    const timer = setTimeout(() => setToast(null), /error|failed|already exists/i.test(status) ? 6000 : 3000);
+    return () => clearTimeout(timer);
+  }, [status]);
 
   const refreshVaultFiles = useCallback(async (vaultDirectory: string) => {
     try {
@@ -442,33 +454,6 @@ export default function NoteApp({
     void readBrowserFiles([...clip.files]).then((files) => attachFiles(files));
   };
 
-  const insertImage = useCallback(async () => {
-    if (!path) return;
-    const picked = await open({
-      multiple: false,
-      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "heic", "avif"] }],
-    });
-    if (typeof picked !== "string") return;
-
-    setBusy(true);
-    try {
-      const data = await readFile(picked);
-      const res = await repo.insertImage({
-        notePath: path,
-        image: { fileName: basename(picked), data },
-        altText: basename(picked),
-      });
-      setEditorText(res.note.raw);
-      setIsDirty(false);
-      setStatus(`Inserted ${res.markdown}`);
-    } catch (e) {
-      setStatus(`Error: ${String(e)}`);
-    } finally {
-      setBusy(false);
-    }
-    void runSync();
-  }, [path, runSync]);
-
   const openNote = useCallback(async () => {
     const picked = await open({
       multiple: false,
@@ -563,6 +548,7 @@ export default function NoteApp({
             <span className="chevron" />
             <span className="file-icon"><FileIcon /></span>
             <span className="file-name">{file.slice(file.lastIndexOf("/") + 1)}</span>
+            {isActive && isDirty && <span className="dirty-dot" title="Unsaved changes" />}
           </button>
         </li>,
       );
@@ -572,41 +558,6 @@ export default function NoteApp({
 
   return (
     <div className={drag ? "app is-dragging" : "app"}>
-      <header>
-        <h1>Granite</h1>
-        <span className="path" title={path ?? ""}>
-          {path ? `${basename(path)} — ${path}` : "—"}
-        </span>
-        <AccountChip session={session} sync={sync} onSignOut={onSignOut} onSyncNow={runSync} />
-      </header>
-
-      <div className="toolbar">
-        <button
-          className="icon-btn"
-          onClick={() => setShowSidebar(!showSidebar)}
-          title={showSidebar ? "Hide notes sidebar" : "Show notes sidebar"}
-        >
-          {showSidebar ? "◀ Notes" : "▶ Notes"}
-        </button>
-        <button onClick={() => startCreate("note")} disabled={busy}>+ New Note</button>
-        <button
-          onClick={handleSave}
-          disabled={busy || !path || !isDirty}
-          className={isDirty ? "save-btn dirty" : "save-btn"}
-        >
-          {isDirty ? "Save *" : "Saved"}
-        </button>
-        <button onClick={insertImage} disabled={busy || !path}>Insert image</button>
-        <button onClick={openNote} disabled={busy}>Open note…</button>
-        <button onClick={onOpenVaultSetup}>Vault / Import…</button>
-      </div>
-
-      <div className="status">
-        {busy ? "… " : ""}
-        {status}
-        {isDirty && <span className="unsaved-badge"> (Unsaved changes)</span>}
-      </div>
-
       {drag && (
         <div className="drag-ghost" style={{ left: drag.x + 12, top: drag.y + 12 }}>
           <FileIcon />
@@ -615,12 +566,20 @@ export default function NoteApp({
       )}
 
       <div className="workspace-container">
+        {!showSidebar && (
+          <button className="sidebar-expand" title="Show sidebar" aria-label="Show sidebar" onClick={() => setShowSidebar(true)}>
+            <ExpandIcon />
+          </button>
+        )}
         {showSidebar && (
           <aside className="vault-sidebar">
             <div className="sidebar-header">
-              <h3>Vault Notes</h3>
+              <h3>Notes</h3>
               <div className="sidebar-right">
                 <div className="sidebar-actions">
+                  <button title="Hide sidebar" aria-label="Hide sidebar" onClick={() => setShowSidebar(false)}>
+                    <CollapseIcon />
+                  </button>
                   <button title="New note" aria-label="New note" onClick={() => startCreate("note")} disabled={busy}>
                     <NewNoteIcon />
                   </button>
@@ -643,6 +602,16 @@ export default function NoteApp({
                 <p className="dim empty-hint">No notes in vault</p>
               )}
             </ul>
+            <UserMenu
+              session={session}
+              sync={sync}
+              busy={busy}
+              onSyncNow={runSync}
+              onSignOut={onSignOut}
+              onConnectDrive={onConnectDrive}
+              onOpenNote={openNote}
+              onOpenVault={onOpenVaultSetup}
+            />
           </aside>
         )}
 
@@ -680,40 +649,73 @@ export default function NoteApp({
           </div>
         </main>
       </div>
+      {toast && <div className="toast">{toast}</div>}
     </div>
   );
 }
 
-function AccountChip({
+/** Small user/settings chip at the bottom of the sidebar; the menu opens on hover (or focus). */
+function UserMenu({
   session,
   sync,
-  onSignOut,
+  busy,
   onSyncNow,
+  onSignOut,
+  onConnectDrive,
+  onOpenNote,
+  onOpenVault,
 }: {
   session: GoogleSession | null;
   sync: SyncState;
-  onSignOut: () => void;
+  busy: boolean;
   onSyncNow: () => void;
+  onSignOut: () => void;
+  onConnectDrive: () => void;
+  onOpenNote: () => void;
+  onOpenVault: () => void;
 }) {
-  if (!session) {
-    return (
-      <div className="account">
-        <span className="sync-dot local" title="Not connected to any cloud" />
-        <span className="account-name">Local only</span>
-        <button className="link" onClick={onSignOut}>Connect Drive</button>
-      </div>
-    );
-  }
-
+  const name = session ? (session.user.email ?? "Google Drive") : "Local vault";
+  const item = (icon: ReactNode, label: string, onClick: () => void, opts: { disabled?: boolean; danger?: boolean } = {}) => (
+    <button
+      className={opts.danger ? "user-item danger" : "user-item"}
+      disabled={opts.disabled}
+      onClick={(e) => {
+        e.currentTarget.blur(); // a mouse-clicked row must not keep the menu open
+        onClick();
+      }}
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
   return (
-    <div className="account">
-      <span className={`sync-dot ${sync.phase}`} />
-      <span className="account-name" title={session.user.email ?? ""}>
-        {session.user.email ?? "Google Drive"}
-      </span>
-      <span className="sync-text">{describeSync(sync)}</span>
-      <button className="link" onClick={onSyncNow} disabled={sync.phase === "syncing"}>Sync now</button>
-      <button className="link" onClick={onSignOut}>Sign out</button>
+    <div className="user-menu">
+      <div className="user-popup" role="menu">
+        <div className="user-popup-head">
+          <span className={`sync-dot ${session ? sync.phase : "local"}`} />
+          <div>
+            <div className="user-popup-name" title={name}>{name}</div>
+            <div className="user-popup-sub">{session ? describeSync(sync) || "Signed in" : "Notes stay on this Mac"}</div>
+          </div>
+        </div>
+        {session
+          ? item(<SyncIcon />, "Sync now", onSyncNow, { disabled: sync.phase === "syncing" })
+          : item(<CloudIcon />, "Connect Drive", onConnectDrive)}
+        <div className="user-sep" />
+        {item(<FolderIcon />, "Open note…", onOpenNote, { disabled: busy })}
+        {item(<ImportIcon />, "Vault / Import…", onOpenVault)}
+        {session && (
+          <>
+            <div className="user-sep" />
+            {item(<SignOutIcon />, "Sign out", onSignOut, { danger: true })}
+          </>
+        )}
+      </div>
+      <button className="user-chip" aria-haspopup="menu">
+        <span className="user-avatar">{session ? (session.user.email ?? "G")[0]!.toUpperCase() : "G"}</span>
+        <span className="user-name">{name}</span>
+        <GearIcon />
+      </button>
     </div>
   );
 }
@@ -760,4 +762,28 @@ const NewNoteIcon = () => (
 );
 const NewFolderIcon = () => (
   <svg {...svgProps}><path d={FOLDER_PATH} /><path d="M12 11v6M9 14h6" /></svg>
+);
+const CollapseIcon = () => (
+  <svg {...svgProps}><path d="M11 17l-5-5 5-5M18 17l-5-5 5-5" /></svg>
+);
+const ExpandIcon = () => (
+  <svg {...svgProps}><path d="M13 17l5-5-5-5M6 17l5-5-5-5" /></svg>
+);
+const SyncIcon = () => (
+  <svg {...svgProps}><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16M3 12a9 9 0 0 1 15.5-6.2L21 8M21 3v5h-5M3 21v-5h5" /></svg>
+);
+const CloudIcon = () => (
+  <svg {...svgProps}><path d="M18 10a6 6 0 0 0-11.7-1.5A4.5 4.5 0 0 0 7 17.5h10.5a3.5 3.5 0 0 0 .5-7z" /></svg>
+);
+const ImportIcon = () => (
+  <svg {...svgProps}><path d="M4 7h16v4H4zM6 11v8h12v-8M10 15h4" /></svg>
+);
+const SignOutIcon = () => (
+  <svg {...svgProps}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" /></svg>
+);
+const GearIcon = () => (
+  <svg {...svgProps}>
+    <circle cx="12" cy="12" r="3" />
+    <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3 1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8 1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
+  </svg>
 );

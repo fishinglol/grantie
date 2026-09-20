@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { GoogleSession } from "@granite/core-cloud";
 
+import ConnectDialog from "./ConnectDialog";
 import LoginPage from "./LoginPage";
 import VaultSetupPage from "./VaultSetupPage";
 import NoteApp from "./NoteApp";
-import { restoreGoogleSession } from "./googleLogin";
+import { isGoogleConfigured } from "./config";
+import { restoreGoogleSession, signInWithGoogle } from "./googleLogin";
 import { getStoredVaultDir } from "./vault";
 import "./App.css";
 
@@ -20,8 +22,13 @@ type Gate =
   | { kind: "setup"; session: GoogleSession | null; previousVaultDir?: string }
   | { kind: "ready"; session: GoogleSession | null; vaultDir: string };
 
+type Connect = null | { phase: "waiting" | "unconfigured" } | { phase: "error"; message: string };
+
 export default function App() {
   const [gate, setGate] = useState<Gate>({ kind: "checking" });
+  const [connect, setConnect] = useState<Connect>(null);
+  /** Bumped on cancel so a sign-in that finishes later is ignored. */
+  const connectAttempt = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -47,6 +54,33 @@ export default function App() {
     };
   }, []);
 
+  /** "Connect Drive" from inside the app: sign in, then stay in the same note and vault. */
+  const connectDrive = useCallback(async (vaultDir: string) => {
+    if (!isGoogleConfigured()) return setConnect({ phase: "unconfigured" });
+    const attempt = ++connectAttempt.current;
+    setConnect({ phase: "waiting" });
+    try {
+      const session = await signInWithGoogle();
+      if (connectAttempt.current !== attempt) return;
+      setGate({ kind: "ready", session, vaultDir });
+      setConnect(null);
+    } catch (e) {
+      if (connectAttempt.current !== attempt) return;
+      setConnect({ phase: "error", message: e instanceof Error ? e.message : String(e) });
+    }
+  }, []);
+
+  const cancelConnect = useCallback(() => {
+    connectAttempt.current++;
+    setConnect(null);
+  }, []);
+
+  /** After login/skip: an existing vault goes straight to the notes; only a first run needs setup. */
+  const enter = useCallback(async (session: GoogleSession | null) => {
+    const vaultDir = await getStoredVaultDir();
+    setGate(vaultDir ? { kind: "ready", session, vaultDir } : { kind: "setup", session });
+  }, []);
+
   const signOut = useCallback(async (session: GoogleSession | null) => {
     await session?.signOut().catch(() => undefined);
     setGate({ kind: "login" });
@@ -66,8 +100,8 @@ export default function App() {
   if (gate.kind === "login") {
     return (
       <LoginPage
-        onSignedIn={(session) => setGate({ kind: "setup", session })}
-        onSkip={() => setGate({ kind: "setup", session: null })}
+        onSignedIn={(session) => void enter(session)}
+        onSkip={() => void enter(null)}
       />
     );
   }
@@ -86,13 +120,24 @@ export default function App() {
   }
 
   return (
-    <NoteApp
-      session={gate.session}
-      vaultDir={gate.vaultDir}
-      onSignOut={() => signOut(gate.session)}
-      onOpenVaultSetup={() =>
-        setGate({ kind: "setup", session: gate.session, previousVaultDir: gate.vaultDir })
-      }
-    />
+    <>
+      <NoteApp
+        session={gate.session}
+        vaultDir={gate.vaultDir}
+        onSignOut={() => signOut(gate.session)}
+        onConnectDrive={() => void connectDrive(gate.vaultDir)}
+        onOpenVaultSetup={() =>
+          setGate({ kind: "setup", session: gate.session, previousVaultDir: gate.vaultDir })
+        }
+      />
+      {connect && (
+        <ConnectDialog
+          phase={connect.phase}
+          message={connect.phase === "error" ? connect.message : undefined}
+          onCancel={cancelConnect}
+          onRetry={() => void connectDrive(gate.vaultDir)}
+        />
+      )}
+    </>
   );
 }
