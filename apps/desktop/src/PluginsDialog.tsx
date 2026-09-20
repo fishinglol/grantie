@@ -8,7 +8,7 @@ export interface PluginsDialogProps {
 
 /** Lists the plugins in the vault, lets the user switch them on, and runs their commands. */
 export default function PluginsDialog({ plugins, onClose }: PluginsDialogProps) {
-  const { installed, enabled, failed, commands, refresh, toggle, run } = plugins;
+  const { installed, enabled, failed, commands, loadError, refresh, toggle, run } = plugins;
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -21,7 +21,8 @@ export default function PluginsDialog({ plugins, onClose }: PluginsDialogProps) 
       >
         <h2>Plugins</h2>
         {installed === null && <p>Looking for plugins…</p>}
-        {installed?.length === 0 && (
+        {loadError && <p className="modal-error">Couldn't read the plugins folder: {loadError}</p>}
+        {installed?.length === 0 && !loadError && (
           <p>
             No plugins installed. Put a plugin folder in <code>{PLUGINS_DIR}/</code> inside your vault (see{" "}
             <code>examples/plugins/hello-granite</code>), then press Refresh.

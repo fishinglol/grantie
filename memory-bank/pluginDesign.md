@@ -44,6 +44,13 @@ declared permissions, explicit per-device enable**.
 - **Gotcha (phone editor page)**: the editor HTML is one inline `<script>`. `</script` must be escaped AND so must `<!--`
   (the plugin host code contains both `<!--` and `<script`, which puts the HTML parser in "double escaped" state so the
   real `</script>` no longer ends the script and the page renders blank). `scripts/build-editor.mjs` escapes both.
+- **Gotcha (Tauri hidden folders)**: Tauri's fs scope has `requireLiteralLeadingDot` (default true on macOS/Linux), so
+  `$HOME/**` / `$DOCUMENT/**` do NOT match `.granite`. Every vault-facing `fs:*` permission in
+  `apps/desktop/src-tauri/capabilities/default.json` therefore also lists `$HOME/**/.granite(/**)` and the `$DOCUMENT`
+  equivalents. Without them the real desktop Plugins dialog sat on "Looking for plugins…" forever (an unhandled read
+  error; the browser preview's in-memory fs never enforces scopes, so it hid this) and sync would have failed once it
+  started listing `.granite`. Now `usePlugins.refresh` shows the error, and `listLocalFiles` skips an unreadable
+  `.granite` so notes still sync. Capability changes need a `tauri dev` rebuild.
 - **First plugin: Sheet** (`examples/plugins/sheet`, id `sheet`, permission `editor.style` only): ruled index-card
   paper after the r/ObsidianMD "real notecards" post (Slipbox Desk CSS: paper #fafafa, rules #72aaff every 24px, 8:5
   card, 24px line height, bold 18px headings). Properties box forced to whole 24px lines so rules align with text.

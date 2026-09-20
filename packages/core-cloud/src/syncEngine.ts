@@ -38,7 +38,12 @@ export async function listLocalFiles(
     const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
     const abs = join(dir, entry.name);
     if (entry.isDirectory) {
-      out.push(...(await listLocalFiles(fs, abs, rel)));
+      try {
+        out.push(...(await listLocalFiles(fs, abs, rel)));
+      } catch (e) {
+        // Plugins are secondary: a folder the app isn't allowed to read must not stop the notes syncing.
+        if (entry.name !== ".granite") throw e;
+      }
     } else {
       const st = await fs.stat(abs);
       out.push({ path: rel, modifiedMs: st.modifiedMs, size: st.size });

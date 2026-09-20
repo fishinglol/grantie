@@ -27,6 +27,8 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
   const [enabled, setEnabled] = useState<string[]>([]);
   const [failed, setFailed] = useState<Record<string, string>>({});
   const [commands, setCommands] = useState<CommandInfo[]>([]);
+  /** Why the plugin list could not be read (shown instead of an endless "Looking for plugins…"). */
+  const [loadError, setLoadError] = useState<string | null>(null);
   const host = useRef<PluginHost | null>(null);
   const latest = useRef({ hasNote, notes, notify, onWroteNote });
   latest.current = { hasNote, notes, notify, onWroteNote };
@@ -79,11 +81,17 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
   /** Discover the plugins in the vault, then (re)start whatever this device has enabled. */
   const refresh = useCallback(async () => {
     if (!vaultDir) return;
-    const [plugins, settings] = await Promise.all([discoverPlugins(tauriFs, vaultDir), pluginStore.load()]);
-    const on = settings?.enabled ?? [];
-    setInstalled(plugins);
-    setEnabled(on);
-    for (const plugin of plugins) if (plugin.manifest && on.includes(plugin.manifest.id)) await start(plugin);
+    try {
+      const [plugins, settings] = await Promise.all([discoverPlugins(tauriFs, vaultDir), pluginStore.load()]);
+      const on = settings?.enabled ?? [];
+      setInstalled(plugins);
+      setEnabled(on);
+      setLoadError(null);
+      for (const plugin of plugins) if (plugin.manifest && on.includes(plugin.manifest.id)) await start(plugin);
+    } catch (e) {
+      setInstalled([]);
+      setLoadError(e instanceof Error ? e.message : String(e));
+    }
   }, [vaultDir, start]);
 
   useEffect(() => {
@@ -113,7 +121,7 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
     [notify],
   );
 
-  return { installed, enabled, failed, commands, refresh, toggle, run };
+  return { installed, enabled, failed, commands, loadError, refresh, toggle, run };
 }
 
 export type PluginsState = ReturnType<typeof usePlugins>;

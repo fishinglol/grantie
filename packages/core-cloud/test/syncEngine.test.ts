@@ -279,3 +279,20 @@ test("a failed file is retried by the next poll, not hidden by the change token"
   const second = await sync.syncIfChanged();
   assert.equal(second.uploaded, 1);
 });
+
+test("an unreadable .granite folder is skipped instead of stopping the notes from syncing", async () => {
+  const { fs, provider, sync } = setup();
+  await fs.writeTextFile("/vault/a.md", "A");
+  await fs.writeTextFile("/vault/.granite/plugins/x/main.js", "//");
+  const realList = fs.listDir.bind(fs);
+  fs.listDir = async (path: string) => {
+    if (path.endsWith("/.granite")) throw new Error("forbidden path");
+    return realList(path);
+  };
+
+  const res = await sync.sync();
+
+  assert.equal(res.failed, 0);
+  assert.equal(text(provider.remote.get("a.md")!.data), "A");
+  assert.equal(provider.remote.has(".granite/plugins/x/main.js"), false);
+});
