@@ -162,7 +162,8 @@ _Last updated: 2026-09-20_
   - [x] `expoFs` / `memFs` are now `VaultFileSystem` (readBinaryFile, listDir, stat) — what sync needs.
   - [x] Verified: web preview (create note, edit, autosave, reopen, live preview looks like desktop),
         `tsc --noEmit` clean for mobile, desktop, live-editor; `expo export` bundles iOS + Android.
-  - [ ] **Not run on a phone yet** (WebView, file:// image loading, keyboard, photo picker).
+  - [x] Run on a real phone (Samsung, Expo Go) by the user on 2026-09-21: editor, sidebar, Move file, Drive connect and sync work.
+  - [ ] Still unchecked on a device: photo picker / Add image, Share, the drag-to-move gesture, iPhone.
   - [ ] Touch: image resize handle / drag-to-move are mouse-only; no move-note, no paste/drag-in.
   - [x] Google sign-in + Drive sync wired. Sign-in = Google **device-code flow** (`requestDeviceCode` /
         `pollDeviceToken` in `core-cloud`, 3 new tests, 32 pass): the app shows a code (`DeviceSignIn`),
@@ -201,8 +202,8 @@ _Last updated: 2026-09-20_
 - [ ] **End-to-end run against a real Google account** (user creates the OAuth
       client; then: sign in, edit on two machines, confirm both directions)
 - [ ] Move the refresh token out of plain-text JSON into the system keychain
-- [ ] Propagate deletions safely (needs tombstones, not just "file is missing")
-- [ ] Drive changes feed / push notifications instead of a 60s poll
+- [x] Propagate deletions (done 2026-09-21 via index records + a >5 / >30 % circuit breaker; no tombstones)
+- [x] Drive changes feed instead of a 60s full poll (5 s cheap probe; true push needs a server, not done)
 - [ ] Sync while the app is closed (background task / login item)
 - [ ] Dropbox + OneDrive providers behind the same `CloudProvider` port
 
@@ -210,14 +211,14 @@ _Last updated: 2026-09-20_
 - [ ] **Verify in the real Tauri window**: native Finder drop (marker position, insert),
       note-move (`fs:allow-rename`), paste of a Finder-copied file. Windows position
       scaling is untested.
-- [ ] Rename + delete for notes and folders; drag folders (needs recursive link fixes)
+- [x] Delete notes (desktop right-click, phone menu). [ ] Rename notes, delete folders; drag folders (needs recursive link fixes)
 - [ ] Show images in the sidebar / rename an image and update every note that links to it
       (user only asked for "note moved → links follow", which is done)
 - [ ] `![[note]]` embeds and `[[wiki links]]` (currently plain text); task-list checkboxes;
       code-block syntax highlighting
 - [ ] Unit tests for the pure helpers (`splitRow`, `findTables`, `relocateLinks`,
       `splitSize`) — none exist yet; extract them out of `LiveEditor.tsx` first
-- [ ] Editor for mobile (CodeMirror needs a WebView there)
+- [x] Editor for mobile (WebView, shared `@granite/live-editor`)
 - [ ] Fix the pre-existing `vite.config.ts` `@ts-expect-error` so `tsc -b` is clean
 - [ ] Windows path support in `@granite/core-notes` (`\` separators)
 - [ ] `npm run tauri build` for a distributable `.app` (only `dev` run so far)
@@ -226,8 +227,8 @@ _Last updated: 2026-09-20_
 - [ ] `packages/core-sync` — Yjs CRDT doc <-> markdown binding; prove merge with
       2 clients headless before any cloud
 - [ ] Fold `conflict_cleaner` in as the pre-CRDT fallback
-- [ ] Login + sync on mobile (`expo-auth-session`; the app-scheme redirect
-      replaces the loopback listener, everything in `core-cloud` is reusable)
+- [x] Login + sync on mobile (done via Google's device-code flow instead of `expo-auth-session`)
+- [ ] Real-time collaborative typing (Yjs + relay server): discussed, user declined for now; see activeContext
 
 Note: the old "`SyncTransport` port + GoogleDriveTransport" item is **done**,
 under the name `CloudProvider` in `packages/core-cloud`.
@@ -242,9 +243,8 @@ under the name `CloudProvider` in `packages/core-cloud`.
 - **Regex lookbehind must not be used** in the frontend — older macOS WebKit
   (Ventura-era `WKWebView`) can't parse it and the whole module fails to load.
 - Same-named images in different folders: `![[name.png]]` resolves to the first one found.
-- **Moving a note while signed in to Drive is unsafe until deletes propagate.** The move
-  uploads the note at its new path, but the old remote copy is never deleted, so the next
-  sync downloads it back to the old path (a duplicate). Untested against real Drive.
+- **Moving a note while signed in to Drive** should now work (new path uploads, the old path is seen as
+  deleted locally and its Drive copy is trashed) but is untested against real Drive.
   Empty folders probably don't sync either (sync is file-based; unverified).
 - The user's real vault contains a 550 MB `.md` (`archive (2).md`) — opening it in the
   editor will hurt; no size guard yet.
