@@ -4,3 +4,11 @@ __pycache__/
 build/
 dist/
 .pytest_cache/
+
+# node
+node_modules/
+.DS_Store
+
+# local OAuth client credentials
+.env
+*.tsbuildinfo

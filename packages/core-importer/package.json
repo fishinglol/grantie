@@ -1,0 +1,22 @@
+{
+  "name": "@granite/core-importer",
+  "version": "0.1.0",
+  "description": "Pure note importer and format converter for Granite (Obsidian, Joplin, OneNote, Evernote, Notion).",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test 'test/**/*.test.ts'",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@granite/core-notes": "*",
+    "@granite/core-cloud": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  }
+}

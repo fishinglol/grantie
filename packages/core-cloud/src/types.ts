@@ -1,0 +1,66 @@
+/** Shared value types for cloud sync. Pure data — no IO, no platform imports. */
+
+/** A file that exists in the remote vault folder. */
+export interface RemoteFile {
+  id: string;
+  /** Path relative to the vault root, always "/"-separated. e.g. `assets/a.png` */
+  path: string;
+  /** RFC 3339 timestamp, as returned by the provider. Opaque: only compared for equality. */
+  modifiedTime: string;
+  size?: number;
+}
+
+/** A file that exists in the local vault folder. */
+export interface LocalFile {
+  /** Path relative to the vault root, always "/"-separated. */
+  path: string;
+  modifiedMs: number;
+  size: number;
+}
+
+/**
+ * What we believed about a file the last time it synced cleanly. This is how we
+ * tell "changed since last sync" from "was already like that", which is what
+ * makes the sync two-way instead of last-one-to-run-wins.
+ */
+export interface SyncRecord {
+  remoteId: string;
+  remoteModified: string;
+  localModifiedMs: number;
+}
+
+export interface SyncIndex {
+  /** Drive id of the vault folder, cached so we don't re-resolve it every run. */
+  folderId?: string;
+  files: Record<string, SyncRecord>;
+}
+
+export function emptyIndex(): SyncIndex {
+  return { files: {} };
+}
+
+export type SyncAction = "upload" | "download" | "conflict" | "skip";
+
+export interface SyncPlanItem {
+  path: string;
+  action: SyncAction;
+  /** Short machine-ish tag explaining why, for the status line and tests. */
+  reason: string;
+}
+
+export interface SyncOutcome {
+  path: string;
+  action: SyncAction;
+  /** Set when `action` was "conflict": where the remote copy was written. */
+  conflictCopy?: string;
+  error?: string;
+}
+
+export interface SyncResult {
+  uploaded: number;
+  downloaded: number;
+  conflicted: number;
+  skipped: number;
+  failed: number;
+  items: SyncOutcome[];
+}
