@@ -1,0 +1,23 @@
+{
+  "name": "@granite/plugins",
+  "version": "0.1.0",
+  "description": "Granite plugin system: manifest, plugin API types, discovery in the vault, and the sandboxed host. Shared by the desktop and phone apps.",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./host": "./src/host.ts"
+  },
+  "scripts": {
+    "test": "node --test 'test/**/*.test.ts'",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@granite/core-cloud": "*",
+    "@granite/core-notes": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  }
+}

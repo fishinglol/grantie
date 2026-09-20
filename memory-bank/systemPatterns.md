@@ -9,6 +9,8 @@ apps/
 packages/
   core-notes/   parsing, image embedding, note repository   (pure + port)  BUILT v0.1
   core-cloud/   OAuth, cloud provider port, two-way sync engine (pure + ports) BUILT v0.1
+  live-editor/  CodeMirror live-preview editor shared by both apps                BUILT
+  plugins/      plugin manifest, API types, discovery, sandboxed host             BUILT v1
   core-sync/    Yjs CRDT doc <-> markdown file  (PLANNED, not built)
 conflict_cleaner/   standalone Python CLI, unrelated to the app runtime
 ```

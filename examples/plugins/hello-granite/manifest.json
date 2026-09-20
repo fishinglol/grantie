@@ -1,0 +1,8 @@
+{
+  "id": "hello-granite",
+  "name": "Hello Granite",
+  "version": "1.0.0",
+  "description": "Sample plugin: insert today's date, count words, upper-case the selection.",
+  "author": "Granite",
+  "permissions": ["editor.read", "editor.write"]
+}

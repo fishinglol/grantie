@@ -41,9 +41,11 @@ test("listLocalFiles walks subfolders and skips dotfiles", async () => {
   await fs.writeTextFile("/vault/welcome.md", "hi");
   await fs.writeBinaryFile("/vault/assets/a.png", new Uint8Array([1, 2, 3]));
   await fs.writeTextFile("/vault/.DS_Store", "junk");
+  await fs.writeTextFile("/vault/.obsidian/app.json", "{}");
+  await fs.writeTextFile("/vault/.granite/plugins/hello/main.js", "// plugin");
 
   const files = (await listLocalFiles(fs, vaultDir)).map((f) => f.path).sort();
-  assert.deepEqual(files, ["assets/a.png", "welcome.md"]);
+  assert.deepEqual(files, [".granite/plugins/hello/main.js", "assets/a.png", "welcome.md"]);
 });
 
 test("first sync pushes local notes and images to the remote", async () => {

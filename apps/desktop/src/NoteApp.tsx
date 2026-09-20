@@ -6,6 +6,7 @@ import { GoogleDriveProvider, VaultSync, type GoogleSession, type SyncResult } f
 
 import { REMOTE_FOLDER_NAME, SYNC_INTERVAL_MS } from "./config";
 import DeleteDialog from "./DeleteDialog";
+import PluginsDialog from "./PluginsDialog";
 import { http } from "./googleLogin";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { LiveEditor, IMAGE_FILE, type LiveEditorHandle } from "@granite/live-editor";
@@ -78,6 +79,7 @@ export default function NoteApp({
   /** Right-click menu on a note, and the note waiting on a "Delete?" answer. */
   const [menu, setMenu] = useState<{ file: string; x: number; y: number } | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [showPlugins, setShowPlugins] = useState(false);
 
   // Status messages surface as a short-lived toast; routine load/auto-save chatter is skipped.
   useEffect(() => {
@@ -672,6 +674,7 @@ export default function NoteApp({
               onConnectDrive={onConnectDrive}
               onOpenNote={openNote}
               onOpenVault={onOpenVaultSetup}
+              onOpenPlugins={() => setShowPlugins(true)}
             />
           </aside>
         )}
@@ -751,6 +754,20 @@ export default function NoteApp({
           }}
         />
       )}
+      {showPlugins && dir && (
+        <PluginsDialog
+          vaultDir={dir}
+          editor={editorRef}
+          hasNote={path !== null}
+          notes={vaultFiles}
+          notify={setStatus}
+          onWroteNote={() => {
+            void refreshVaultFiles(dir);
+            void runSync();
+          }}
+          onClose={() => setShowPlugins(false)}
+        />
+      )}
       {toast && <div className="toast">{toast}</div>}
     </div>
   );
@@ -766,6 +783,7 @@ function UserMenu({
   onConnectDrive,
   onOpenNote,
   onOpenVault,
+  onOpenPlugins,
 }: {
   session: GoogleSession | null;
   sync: SyncState;
@@ -775,6 +793,7 @@ function UserMenu({
   onConnectDrive: () => void;
   onOpenNote: () => void;
   onOpenVault: () => void;
+  onOpenPlugins: () => void;
 }) {
   const name = session ? (session.user.email ?? "Google Drive") : "Local vault";
   const item = (icon: ReactNode, label: string, onClick: () => void, opts: { disabled?: boolean; danger?: boolean } = {}) => (
@@ -806,6 +825,7 @@ function UserMenu({
         <div className="user-sep" />
         {item(<FolderIcon />, "Open note…", onOpenNote, { disabled: busy })}
         {item(<ImportIcon />, "Vault / Import…", onOpenVault)}
+        {item(<PuzzleIcon />, "Plugins", onOpenPlugins)}
         {session && (
           <>
             <div className="user-sep" />
@@ -879,6 +899,9 @@ const CloudIcon = () => (
 );
 const ImportIcon = () => (
   <svg {...svgProps}><path d="M4 7h16v4H4zM6 11v8h12v-8M10 15h4" /></svg>
+);
+const PuzzleIcon = () => (
+  <svg {...svgProps}><path d="M19.4 11H18V7a2 2 0 0 0-2-2h-4V3.6a2.1 2.1 0 0 0-4.2 0V5H4a2 2 0 0 0-2 2v3.8h1.4a2.2 2.2 0 0 1 0 4.4H2V19a2 2 0 0 0 2 2h3.8v-1.4a2.2 2.2 0 0 1 4.4 0V21H16a2 2 0 0 0 2-2v-4h1.4a2.1 2.1 0 0 0 0-4z" /></svg>
 );
 const SignOutIcon = () => (
   <svg {...svgProps}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" /></svg>

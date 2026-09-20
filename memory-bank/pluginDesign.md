@@ -1,8 +1,39 @@
-# Plugin system — design note (PLANNED, nothing built)
+# Plugin system — design note (v1 BUILT 2026-09-21, see "Status")
 
 _Written 2026-09-21 after the user asked: "in the future I wanna make plugins similar to Obsidian, compatible
 with desktop and phone, in one language, because I plan to let community members contribute; it must be
 smooth on both." Not started. The user has not yet decided the trust model (see "Open decisions")._
+
+## Status: v1 built (2026-09-21)
+The user asked for a "Plugins" row in the desktop account menu and chose "start the real plugin system", on
+desktop and phone. The trust model was not answered, so v1 uses the recommended default: **sandboxed,
+declared permissions, explicit per-device enable**.
+- **`packages/plugins` (`@granite/plugins`)**: `manifest.ts` (`parseManifest`, permissions, `API_VERSION`=1),
+  `api.ts` (`GraniteApi` types for authors, `METHOD_PERMISSION`, `safeNotePath`), `discover.ts`
+  (`discoverPlugins` / `readPluginCode`, folder `<vault>/.granite/plugins/<id>/{manifest.json,main.js}`),
+  `host.ts` (`PluginHost`, DOM only; imported as `@granite/plugins/host`). 5 tests (`npm test`).
+- **Sandbox**: each plugin runs in a hidden `<iframe sandbox="allow-scripts">` (no `allow-same-origin` → opaque
+  origin) whose CSP blocks all requests unless the manifest asks for `network` (then `connect-src https:`). Only
+  `postMessage` to the host gets out. Verified with a hostile plugin: parent DOM, storage, network, the Tauri
+  bridge are all blocked, and calls without the permission are refused. Commands time out after 15 s and the plugin
+  is killed. Known limit: an infinite loop in a plugin can still stall its frame's thread.
+- **API v1**: `commands.add`, `editor.getText / getSelection / replaceSelection` (added to `LiveEditorHandle`),
+  `vault.list / read / write` (vault-relative `.md` only, never hidden folders), `notice`. No editor extensions,
+  events or settings API yet.
+- **Enable per device**: `plugins.json` in the app config dir (desktop `stores.ts`, phone `Paths.document/config`),
+  outside the vault, so a plugin synced from another device never runs unasked.
+- **Distribution**: `.granite/` is now the one dot-folder that syncs (`isIgnored` in `core-cloud`), so installing a
+  plugin on the desktop delivers it to the phone (still needs enabling there).
+- **UI**: desktop account menu → Plugins → `PluginsDialog` (list, toggle, permission chips, Run buttons, broken
+  plugins shown with the reason). Phone gear sheet → Plugins → `PluginsSheet`; the host runs inside the editor
+  WebView page (`editor-web/main.tsx`) and talks to the app over the existing bridge (`editorBridge.ts`); vault
+  calls go WebView → RN → `expo-file-system`. The sheet closes on Run because RN toasts sit behind modals.
+- **Sample / template**: `examples/plugins/hello-granite` (insert date, word count, uppercase selection).
+- **Verified**: both flows in the browser previews (enable, commands, edits, permission denial, sandbox attack),
+  `tsc` clean, `expo export` bundles. **Not verified**: on a real phone / in the real Tauri window.
+- **Next**: command palette (Cmd+P) so commands aren't only reachable from the Plugins screen; CodeMirror
+  extension / event / settings APIs; plugin registry + install-from-URL; docs site; a Worker layer for hangs;
+  `desktopOnly` plugins are hidden on the phone but never exercised.
 
 ## Verdict
 Feasible with **one language: TypeScript/JavaScript**, the same as Obsidian plugins. It fits Granite because

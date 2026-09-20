@@ -59,6 +59,12 @@ The app contains **no markdown logic** — it calls `NoteRepository.load()` and
 - No paste/drag-in of files (photo picker only).
 - Moving a note while signed in to Drive: deletes don't sync yet, so the old copy may come back (same known risk as desktop).
 
+## Plugins
+
+Gear → **Plugins** lists plugins found in `<vault>/.granite/plugins/` (they arrive through Drive sync from your
+computer). Switch a plugin on (per device) and run its commands; they run in a sandbox inside the editor page and
+need the permissions shown on the card. Try `examples/plugins/hello-granite`. Details: `memory-bank/pluginDesign.md`.
+
 ## Google Drive sync
 
 "Connect Drive" (gear in the sidebar → sheet) signs in with Google and two-way syncs the vault with a

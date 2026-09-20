@@ -817,7 +817,7 @@ button.skip:disabled { opacity: 0.4; cursor: default; }
   left: 50%;
   bottom: 24px;
   transform: translateX(-50%);
-  z-index: 900;
+  z-index: 3500; /* above dialogs, so a plugin's message is readable */
   max-width: 70vw;
   padding: 8px 16px;
   border-radius: 10px;
@@ -903,3 +903,26 @@ button.skip:disabled { opacity: 0.4; cursor: default; }
 .context-menu button.danger { color: #e07a7a; }
 .modal-actions button.danger { background: #c9605f; color: #fff; }
 .modal-actions button.danger:hover { background: #d97170; }
+
+/* Plugins dialog */
+.modal-card.plugins-card { max-width: 520px; text-align: left; max-height: 80vh; overflow-y: auto; }
+.plugin-list { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.plugin { padding: 12px; border-radius: 10px; background: var(--panel); }
+.plugin p { margin: 6px 0 8px; }
+.plugin.broken { background: rgba(224, 122, 122, 0.12); }
+.plugin-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--h); }
+.plugin-version { color: var(--text-dim); font-size: 12px; }
+.plugin-switch { display: flex; align-items: center; gap: 6px; color: var(--text-dim); font-size: 12px; cursor: pointer; }
+.plugin-perms { display: flex; flex-wrap: wrap; gap: 6px; }
+.plugin-perm { padding: 2px 9px; border-radius: 999px; background: var(--bg); color: var(--text-dim); font-size: 11px; }
+.plugin-commands { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.plugin-commands button {
+  padding: 5px 12px;
+  border: none;
+  border-radius: 6px;
+  background: var(--panel-hover);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.plugin-commands button:hover { background: var(--accent); color: #0f1219; }

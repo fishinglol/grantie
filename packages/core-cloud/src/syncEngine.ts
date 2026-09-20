@@ -17,9 +17,13 @@ export interface IndexStore {
   save(index: SyncIndex): Promise<void>;
 }
 
-/** Files that are ours, not the user's. */
+/**
+ * Files that are ours, not the user's. The one dot-folder that does sync is `.granite`, which holds
+ * plugins: that is how a plugin installed on one device reaches the others (it is still switched
+ * on separately on each device).
+ */
 function isIgnored(name: string): boolean {
-  return name.startsWith(".") || name === "Icon\r";
+  return (name.startsWith(".") && name !== ".granite") || name === "Icon\r";
 }
 
 /** Every file under `dir`, recursively, with paths relative to `dir`. */

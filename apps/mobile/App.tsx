@@ -4,13 +4,14 @@ import { StatusBar } from 'expo-status-bar';
 import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import { IMAGE_FILE, basename, dirname, embedImage, join, relocateLinks } from '@granite/core-notes';
+import { discoverPlugins, readPluginCode, type CommandInfo, type InstalledPlugin } from '@granite/plugins';
 import { GoogleDriveProvider, VaultSync, type DeviceCode, type GoogleSession } from '@granite/core-cloud';
 
 import { expoFs } from './src/expoFs';
 import { memFs } from './src/memFs';
 import { REMOTE_FOLDER_NAME, SYNC_INTERVAL_MS } from './src/config';
 import { http, restoreGoogleSession, signInWithGoogle } from './src/googleLogin';
-import { indexStore } from './src/stores';
+import { indexStore, pluginStore } from './src/stores';
 import { VAULT_DIR, ensureSampleVault, scanVault, type VaultScan } from './src/vault';
 import { colors } from './src/theme';
 import NoteList from './src/components/NoteList';
@@ -19,9 +20,10 @@ import ActionSheet from './src/components/ActionSheet';
 import Sidebar from './src/components/Sidebar';
 import DeviceSignIn from './src/components/DeviceSignIn';
 import FolderPicker from './src/components/FolderPicker';
+import PluginsSheet from './src/components/PluginsSheet';
 import { parentOf } from './src/tree';
 import Toast from './src/components/Toast';
-import type { NoteEditorHandle } from './src/components/NoteEditor.types';
+import type { NoteEditorHandle, PluginVaultRequest } from './src/components/NoteEditor.types';
 
 const isWeb = Platform.OS === 'web';
 const fs = isWeb ? memFs : expoFs;
@@ -52,6 +54,13 @@ export default function App() {
   const [menu, setMenu] = useState(false);
   const [settings, setSettings] = useState(false);
   const [picking, setPicking] = useState(false);
+  const [pluginsOpen, setPluginsOpen] = useState(false);
+  const [installed, setInstalled] = useState<InstalledPlugin[]>([]);
+  const [enabledPlugins, setEnabledPlugins] = useState<string[]>([]);
+  /** Code of the enabled plugins, by id, read from the vault. */
+  const [pluginCode, setPluginCode] = useState<Record<string, string>>({});
+  const [pluginCommands, setPluginCommands] = useState<CommandInfo[]>([]);
+  const [pluginErrors, setPluginErrors] = useState<Record<string, string>>({});
   const [toast, setToast] = useState<string | null>(null);
   const [session, setSession] = useState<GoogleSession | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -299,6 +308,65 @@ export default function App() {
     ]);
   };
 
+  /** Look for plugins in the vault and load the code of the ones this phone has switched on. */
+  const refreshPlugins = useCallback(async () => {
+    try {
+      const [found, settings] = await Promise.all([discoverPlugins(fs, VAULT_DIR), pluginStore.load()]);
+      const on = settings?.enabled ?? [];
+      const code: Record<string, string> = {};
+      for (const p of found) {
+        if (p.manifest && !p.manifest.desktopOnly && on.includes(p.manifest.id)) {
+          code[p.manifest.id] = await readPluginCode(fs, VAULT_DIR, p.manifest.id).catch(() => '');
+        }
+      }
+      setInstalled(found);
+      setEnabledPlugins(on);
+      setPluginCode(code);
+    } catch (err) {
+      say(`Error: ${String(err)}`);
+    }
+  }, [say]);
+
+  useEffect(() => {
+    void refreshPlugins();
+  }, [refreshPlugins]);
+
+  const togglePlugin = useCallback(
+    async (id: string, on: boolean) => {
+      const next = on ? [...enabledPlugins, id] : enabledPlugins.filter((e) => e !== id);
+      setEnabledPlugins(next);
+      await pluginStore.save({ enabled: next });
+      await refreshPlugins();
+    },
+    [enabledPlugins, refreshPlugins],
+  );
+
+  /** Plugins the editor page should be running right now. */
+  const runningPlugins = useMemo(
+    () =>
+      installed.flatMap((p) =>
+        p.manifest && enabledPlugins.includes(p.manifest.id) && pluginCode[p.manifest.id]
+          ? [{ manifest: p.manifest, code: pluginCode[p.manifest.id]! }]
+          : [],
+      ),
+    [installed, enabledPlugins, pluginCode],
+  );
+
+  /** A plugin's request for the vault. The page already limited it to vault-relative Markdown paths. */
+  const pluginVault = useCallback(
+    async (request: PluginVaultRequest): Promise<unknown> => {
+      if (request.op === 'list') return (await scanVault(fs)).notes;
+      const abs = join(VAULT_DIR, request.path);
+      if (request.op === 'read') return fs.readTextFile(abs);
+      await fs.mkdirp(dirname(abs));
+      await fs.writeTextFile(abs, request.text);
+      await refresh();
+      void syncNow.current();
+      return null;
+    },
+    [refresh],
+  );
+
   /** Move a note into `folder` ("" = vault root), keeping its relative image links pointing at the same files. */
   const moveNote = useCallback(
     async (rel: string, folder: string) => {
@@ -383,6 +451,15 @@ export default function App() {
 
   const email = session?.user.email ?? null;
 
+  const pluginsRow = {
+    label: 'Plugins',
+    icon: 'puzzle-outline' as const,
+    onPress: () => {
+      void refreshPlugins();
+      setPluginsOpen(true);
+    },
+  };
+
   const shareNote = () => Share.share({ message: latest.current }).catch(() => say('Sharing is not available here'));
 
   return (
@@ -398,6 +475,16 @@ export default function App() {
           title={basename(open.rel).replace(/\.(md|markdown)$/i, '')}
           dirty={dirty}
           onChange={onChange}
+          plugins={runningPlugins}
+          onNotice={say}
+          onVault={pluginVault}
+          onPluginCommands={setPluginCommands}
+          onPluginStatus={(id, error) =>
+            setPluginErrors((prev) => {
+              const { [id]: _gone, ...rest } = prev;
+              return error ? { ...rest, [id]: error } : rest;
+            })
+          }
           onOpenSidebar={() => setSidebar(true)}
           onOpenMenu={() => setMenu(true)}
         />
@@ -449,9 +536,10 @@ export default function App() {
           email
             ? [
                 [{ label: 'Sync now', icon: 'sync', onPress: runSync }],
+                [pluginsRow],
                 [{ label: 'Sign out', icon: 'logout', onPress: signOut }],
               ]
-            : [[{ label: 'Connect Drive', icon: 'cloud-outline', onPress: connectDrive }]]
+            : [[{ label: 'Connect Drive', icon: 'cloud-outline', onPress: connectDrive }], [pluginsRow]]
         }
       />
       {signIn && (
@@ -463,6 +551,21 @@ export default function App() {
           }}
         />
       )}
+      <PluginsSheet
+        visible={pluginsOpen}
+        installed={installed}
+        enabled={enabledPlugins}
+        errors={pluginErrors}
+        commands={open ? pluginCommands : []}
+        hasNote={open !== null}
+        onToggle={(id, on) => void togglePlugin(id, on)}
+        onRun={(c) => {
+          setPluginsOpen(false); // the message it shows would sit behind this sheet
+          void editor.current?.runPluginCommand(c.pluginId, c.id).catch((e: unknown) => say(e instanceof Error ? e.message : String(e)));
+        }}
+        onRefresh={() => void refreshPlugins()}
+        onClose={() => setPluginsOpen(false)}
+      />
       <Toast message={toast} />
     </View>
   );

@@ -121,6 +121,11 @@ _Last updated: 2026-09-20_
   - [x] Launch bug fixed: sidebar file list was read before the sample note existed
   - [x] Dev-only full page reload when `LiveEditor.tsx` (or what it imports) changes
   - [x] `tsc --noEmit` clean; `tsc -b` reports one pre-existing error (`vite.config.ts`)
+- **Plugins v1** (`packages/plugins`, desktop `PluginsDialog`, phone `PluginsSheet`, sample in `examples/plugins/hello-granite`)
+  - [x] Manifest + permissions, discovery in `<vault>/.granite/plugins`, sandboxed iframe host, API v1 (commands,
+        editor get/replace, vault list/read/write, notice); `.granite/` now syncs; enabled state per device.
+  - [x] Verified in browser previews incl. a hostile-plugin test; 5 plugin tests + 42 core-cloud tests pass; `expo export` OK.
+  - [ ] Not run in the real Tauri window / on a phone; full details in `pluginDesign.md`.
 - **Sync v0.2 — deletes + near-real-time** (branch `feat/mobile-live-editor`, 2026-09-21; user asked: sync too slow,
   add Delete on desktop (right-click) and phone (⋮ menu))
   - [x] `planSync` now propagates deletions: synced file missing on one side = deleted there → `delete-local` /
@@ -226,7 +231,7 @@ _Last updated: 2026-09-20_
 ### Separate future milestones (NOT now)
 - [ ] `packages/core-sync` — Yjs CRDT doc <-> markdown binding; prove merge with
       2 clients headless before any cloud
-- [ ] Plugin system (TS/JS, works on desktop + phone, community contributions): designed, not started; see `pluginDesign.md`
+- [x] Plugin system v1 (TS/JS, sandboxed, works on desktop + phone; see `pluginDesign.md` "Status"). [ ] Command palette, editor-extension API, registry/install-from-URL, device verification
 - [ ] Fold `conflict_cleaner` in as the pre-CRDT fallback
 - [x] Login + sync on mobile (done via Google's device-code flow instead of `expo-auth-session`)
 - [ ] Real-time collaborative typing (Yjs + relay server): discussed, user declined for now; see activeContext

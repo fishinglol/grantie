@@ -51,3 +51,16 @@ export const indexStore: IndexStore = {
   load: () => readJson<SyncIndex>(INDEX_FILE),
   save: (index) => writeJson(INDEX_FILE, index),
 };
+
+/**
+ * Which plugins the user switched on, on this phone. Kept outside the vault on purpose: a plugin that
+ * syncs in from another device must never start running without this device's owner saying so.
+ */
+export interface PluginSettings {
+  enabled: string[];
+}
+
+export const pluginStore = {
+  load: () => readJson<PluginSettings>('plugins.json'),
+  save: (settings: PluginSettings) => writeJson('plugins.json', settings),
+};

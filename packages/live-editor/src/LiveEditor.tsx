@@ -715,6 +715,12 @@ export interface LiveEditorHandle {
   insertBlock(text: string, at?: { x: number; y: number }): void;
   /** Show (or with null, hide) a caret where a file dragged to `at` would be inserted. */
   showDropIndicator(at: { x: number; y: number } | null): void;
+  /** The whole note as it is in the editor right now. */
+  getText(): string;
+  /** The selected text, or "" when nothing is selected. */
+  getSelection(): string;
+  /** Replace the selection, or insert at the cursor when nothing is selected (used by plugins). */
+  replaceSelection(text: string): void;
 }
 
 export interface LiveEditorProps {
@@ -817,6 +823,17 @@ export default function LiveEditor({ ref, value, embeds, notePath, toUrl, onChan
           selection: { anchor: pos + insert.length },
           scrollIntoView: true,
         });
+        view.focus();
+      },
+      getText: () => viewRef.current?.state.doc.toString() ?? "",
+      getSelection() {
+        const state = viewRef.current?.state;
+        return state ? state.sliceDoc(state.selection.main.from, state.selection.main.to) : "";
+      },
+      replaceSelection(text) {
+        const view = viewRef.current;
+        if (!view) return;
+        view.dispatch(view.state.replaceSelection(text), { scrollIntoView: true, userEvent: "input.plugin" });
         view.focus();
       },
       showDropIndicator(at) {
