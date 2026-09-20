@@ -154,3 +154,18 @@ after flushing any unsaved edits and refusing to overwrite an existing file.
 - No regex lookbehind (older WKWebView). No `window.prompt` (unreliable in Tauri).
 - Capability changes (`src-tauri/capabilities/default.json`) are compiled in — `tauri dev`
   must rebuild/restart before they take effect.
+
+## Pattern: chrome-free shell — sidebar footer menu, toast, in-place connect
+- The desktop window has **no header/toolbar/status bar**. Global actions live in a user
+  chip at the bottom of the sidebar (`UserMenu` in `NoteApp.tsx`); its popup opens upward,
+  flush against the chip's padding so the pointer never crosses a gap, via
+  `:hover` and `:has(:focus-visible)` (not `:focus-within`, which keeps the menu open after a
+  mouse click). Menu buttons `blur()` on click for the same reason.
+- `status` strings from anywhere in `NoteApp` become a toast, except routine
+  `Saved …` / `Read + parsed …` / `Starting…`, which would flash on every auto-save.
+- **Connecting Drive is a state on `App`, not a page**: `connectDrive(vaultDir)` runs
+  `signInWithGoogle()` behind `ConnectDialog` and then swaps `session` into the *same*
+  `NoteApp` (same element position → no remount → note and vault survive). A
+  `connectAttempt` counter makes Cancel safe: a late sign-in result is ignored. The Rust
+  loopback listener can't be cancelled; it just times out (5 min).
+- The login/skip paths use `enter()`: stored vault → straight to `ready`; otherwise `setup`.

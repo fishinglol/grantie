@@ -40,6 +40,19 @@ Decisions confirmed with the user this session:
   lines); drops insert at that character.
 - Image click **selects** (Obsidian behavior); zoom lives on the toolbar; dragging moves.
 
+UI-shell decisions (later in the same session, all user-driven from screenshots):
+- Header ("Granite" title, note path, account line), the button toolbar and the status line
+  were **deleted**; a small user/settings chip at the bottom of the sidebar opens a
+  hover menu instead (reference: a chat-app account menu). Status messages became a toast,
+  the save state became a dot on the sidebar row, sidebar hide/show is an icon.
+- **"Connect Drive" signs in in place** (dialog over the notes, same note + vault) instead
+  of bouncing through the login and vault-setup pages; after login/skip an existing vault
+  skips setup. The user chose this over a modal or a "keep the login page" variant.
+- Menu polish: no blue focus ring (a clicked row blurs), and **"Insert image" was removed**
+  from the menu (asked to "delete this one"; paste/drag-in replaced it).
+- The branch `feat/desktop-live-editor` is pushed to `origin` (`fishinglol/grantie`);
+  it is **not merged to `main`**.
+
 Lessons worth keeping (also in `systemPatterns.md`): hot-reload leaves a stale
 CodeMirror instance; Tauri drag positions differ per OS; verify in a *fresh page load*;
 `tsc --noEmit` is valid for `apps/desktop` (its tsconfig includes `src`) but `tsc -b` is

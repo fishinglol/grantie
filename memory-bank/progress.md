@@ -99,6 +99,25 @@ _Last updated: 2026-09-20_
         a vault image index: click to select (outline, toolbar with zoom + `</>` source,
         size readout), zoom viewer (`imageViewer.ts`: wheel/pan/fit/100%), drag the
         corner to resize (writes `|width`), drag the picture to move it, Delete removes it
+  - [x] **Header, toolbar and status line removed.** Replaced by a user/settings chip at the
+        bottom of the sidebar whose menu opens on hover (Sync now / Connect Drive,
+        Open note…, Vault / Import…, Sign out); sidebar hide/show via header icon +
+        an arrow when hidden; status messages are now a toast (routine "Saved …" /
+        "Read + parsed …" are suppressed); an orange dot marks the note with unsaved edits.
+        The signed-in menu variant is typechecked but was not exercised (no session in preview).
+  - [x] **"Connect Drive" from the menu no longer round-trips through the login + vault-setup
+        pages.** `App.tsx` `connectDrive()` runs Google sign-in in place (small
+        `ConnectDialog`: waiting / error / "one-time setup needed") and swaps the session
+        into the same `NoteApp` (same note + vault). After login/skip, an existing stored
+        vault goes straight to the notes (`enter()`); only a first run shows vault setup.
+        Cancel bumps an attempt counter so a late sign-in is ignored (the Rust loopback
+        listener can't be cancelled and just times out after 5 min). Real Google sign-in +
+        the success transition are **unverified** (preview has no Tauri backend).
+  - [x] **"Insert image" removed** (menu row + the `insertImage` function/`ImageIcon`):
+        paste and drag-in cover it. `NoteRepository.insertImage` stays in `core-notes`
+        (mobile still uses it, and it has tests).
+  - [x] Menu rows: removed the blue focus ring; a mouse-clicked row blurs so the menu
+        closes when the pointer leaves (keyboard focus still opens it via `:has(:focus-visible)`)
   - [x] Launch bug fixed: sidebar file list was read before the sample note existed
   - [x] Dev-only full page reload when `LiveEditor.tsx` (or what it imports) changes
   - [x] `tsc --noEmit` clean; `tsc -b` reports one pre-existing error (`vite.config.ts`)
