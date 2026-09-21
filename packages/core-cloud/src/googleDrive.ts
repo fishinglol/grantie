@@ -105,6 +105,8 @@ export class GoogleDriveProvider implements CloudProvider {
   }
 
   async listVault(folderId: string): Promise<RemoteFile[]> {
+    // Start from a clean map, so a folder trashed elsewhere isn't remembered (or reused for uploads).
+    this.#folders.clear();
     this.#folders.set("", folderId);
     const files: RemoteFile[] = [];
     const queue: Array<{ id: string; prefix: string }> = [{ id: folderId, prefix: "" }];
@@ -126,6 +128,16 @@ export class GoogleDriveProvider implements CloudProvider {
       }
     }
     return files;
+  }
+
+  async listFolders(folderId: string): Promise<{ id: string; path: string }[]> {
+    // `listVault` just walked every folder (the engine always lists files first); walk again only if it didn't.
+    if (this.#folders.get("") !== folderId) await this.listVault(folderId);
+    return [...this.#folders].filter(([path]) => path !== "").map(([path, id]) => ({ id, path }));
+  }
+
+  async ensureFolder(folderId: string, path: string): Promise<void> {
+    await this.#folderIdFor(folderId, path);
   }
 
   async #folderIdFor(rootId: string, relDir: string): Promise<string> {

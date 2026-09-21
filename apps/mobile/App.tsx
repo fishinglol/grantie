@@ -3,7 +3,7 @@ import { Alert, AppState, BackHandler, Platform, Share, StyleSheet, View } from 
 import { StatusBar } from 'expo-status-bar';
 import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
-import { IMAGE_FILE, basename, dirname, embedImage, join, relocateLinks } from '@granite/core-notes';
+import { IMAGE_FILE, basename, dirname, embedImage, join, moveFolder, noteTitle, relocateLinks, renamedNoteFile } from '@granite/core-notes';
 import { discoverPlugins, readPluginCode, type CommandInfo, type InstalledPlugin } from '@granite/plugins';
 import { GoogleDriveProvider, VaultSync, type DeviceCode, type GoogleSession } from '@granite/core-cloud';
 
@@ -21,7 +21,7 @@ import Sidebar from './src/components/Sidebar';
 import DeviceSignIn from './src/components/DeviceSignIn';
 import FolderPicker from './src/components/FolderPicker';
 import PluginsSheet from './src/components/PluginsSheet';
-import { parentOf } from './src/tree';
+import { nameOf, parentOf } from './src/tree';
 import Toast from './src/components/Toast';
 import type { NoteEditorHandle, PluginVaultRequest } from './src/components/NoteEditor.types';
 
@@ -49,11 +49,16 @@ export default function App() {
   const [scan, setScan] = useState<VaultScan>({ notes: [], folders: [], images: new Map() });
   /** The open note: its vault-relative path and its text as it was opened (edits live in the editor). */
   const [open, setOpen] = useState<{ rel: string; text: string } | null>(null);
+  /** Changes when a different note (or a moved one) is shown, so the editor page is rebuilt; a rename keeps it. */
+  const [docId, setDocId] = useState(0);
   const [dirty, setDirty] = useState(false);
   const [sidebar, setSidebar] = useState(true);
   const [menu, setMenu] = useState(false);
   const [settings, setSettings] = useState(false);
   const [picking, setPicking] = useState(false);
+  /** Folder whose menu (long-press) is open, and the one waiting for a destination in the picker. */
+  const [folderMenu, setFolderMenu] = useState<string | null>(null);
+  const [movingFolder, setMovingFolder] = useState<string | null>(null);
   const [pluginsOpen, setPluginsOpen] = useState(false);
   const [installed, setInstalled] = useState<InstalledPlugin[]>([]);
   const [enabledPlugins, setEnabledPlugins] = useState<string[]>([]);
@@ -135,6 +140,7 @@ export default function App() {
         latest.current = text;
         setDirty(false);
         setOpen({ rel, text });
+        setDocId((d) => d + 1);
         setSidebar(false);
       } catch (err) {
         say(`Error: ${String(err)}`);
@@ -146,8 +152,10 @@ export default function App() {
   // First launch: make sure there is a vault, list it, and open the welcome note.
   useEffect(() => {
     ensureSampleVault(fs)
-      .then(refresh)
-      .then(() => openNote('welcome.md'))
+      .then(async (welcome) => {
+        await refresh();
+        if (welcome) await openNote(welcome);
+      })
       .catch((err) => say(`Error: ${String(err)}`));
   }, [refresh, openNote, say]);
 
@@ -179,7 +187,7 @@ export default function App() {
         const onProgress = () => setSyncing(true);
         const result = poll ? await engine.syncIfChanged(onProgress) : await engine.sync(onProgress);
         if (poll && result.items.length === 0) return; // nothing changed anywhere
-        if (result.downloaded + result.conflicted + result.deleted > 0) {
+        if (result.downloaded + result.conflicted + result.deleted + result.folders > 0) {
           await refresh();
           // A plugin arrived from (or was removed on) another device: pick it up without a manual refresh.
           if (result.items.some((i) => i.path.startsWith('.granite/plugins/') && !i.error && i.action !== 'skip')) void rescanPlugins.current();
@@ -300,7 +308,7 @@ export default function App() {
   );
 
   const askDelete = (rel: string) => {
-    const name = basename(rel).replace(/\.(md|markdown)$/i, '');
+    const name = noteTitle(basename(rel));
     const message = `“${name}” is deleted from this phone${email ? ', moved to the Drive trash and removed from your other devices' : ''}. This can't be undone here.`;
     if (isWeb) {
       if (window.confirm(`Delete “${name}”?\n\n${message}`)) void deleteNote(rel);
@@ -309,6 +317,75 @@ export default function App() {
     Alert.alert(`Delete “${name}”?`, message, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: () => void deleteNote(rel) },
+    ]);
+  };
+
+  /** Rename the open note's file from its title (it stays in its folder). Returns whether it happened. */
+  const renameNote = useCallback(
+    async (title: string): Promise<boolean> => {
+      const rel = openRel.current;
+      if (!rel) return false;
+      const next = renamedNoteFile(basename(rel), title);
+      if (!next) return false;
+      const to = parentOf(rel) ? `${parentOf(rel)}/${next}` : next;
+      const from = join(VAULT_DIR, rel);
+      const dest = join(VAULT_DIR, to);
+      try {
+        // A change of letter case alone is the same file on some systems, not a clash.
+        if (from.toLowerCase() !== dest.toLowerCase() && (await fs.exists(dest))) {
+          say(`"${next}" already exists`);
+          return false;
+        }
+        await flush(); // the pending edit is written to the old name before it moves
+        await fs.moveFile(from, dest);
+        openRel.current = to;
+        setOpen((o) => o && { ...o, rel: to });
+        await refresh();
+        say(`Renamed to ${noteTitle(next)}`);
+        void runSync();
+        return true;
+      } catch (err) {
+        say(`Error: ${String(err)}`);
+        return false;
+      }
+    },
+    [flush, refresh, runSync, say],
+  );
+
+  /** Remove a folder and everything in it (after the user confirmed). Sync then removes its files from Drive and other devices. */
+  const deleteFolder = useCallback(
+    async (rel: string) => {
+      try {
+        if (openRel.current?.startsWith(`${rel}/`)) {
+          // Drop pending edits first so autosave can't bring the note back.
+          if (saveTimer.current) clearTimeout(saveTimer.current);
+          pending.current = null;
+          openRel.current = null;
+          setDirty(false);
+          setOpen(null);
+          setSidebar(true);
+        }
+        await fs.removeDir(join(VAULT_DIR, rel));
+        await refresh();
+        say(`Deleted folder ${basename(rel)}`);
+        void runSync();
+      } catch (err) {
+        say(`Error: ${String(err)}`);
+      }
+    },
+    [refresh, runSync, say],
+  );
+
+  const askDeleteFolder = (rel: string) => {
+    const name = basename(rel);
+    const message = `“${name}” and everything in it are deleted from this phone${email ? ', moved to the Drive trash and removed from your other devices' : ''}. This can't be undone here.`;
+    if (isWeb) {
+      if (window.confirm(`Delete folder “${name}”?\n\n${message}`)) void deleteFolder(rel);
+      return;
+    }
+    Alert.alert(`Delete folder “${name}”?`, message, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => void deleteFolder(rel) },
     ]);
   };
 
@@ -392,9 +469,39 @@ export default function App() {
           openRel.current = to;
           latest.current = fixed;
           setOpen({ rel: to, text: fixed });
+          setDocId((d) => d + 1);
         }
         await refresh();
         say(`Moved to ${folder ? basename(folder) : 'the vault'}`);
+      } catch (err) {
+        say(`Error: ${String(err)}`);
+      }
+    },
+    [flush, refresh, say],
+  );
+
+  /** Move a folder into `target` ("" = vault root), keeping links from its notes to things outside it working. */
+  const moveFolderTo = useCallback(
+    async (rel: string, target: string) => {
+      const name = basename(rel);
+      const to = target ? `${target}/${name}` : name;
+      if (to === rel) return;
+      const where = target ? basename(target) : 'the vault';
+      try {
+        if (await fs.exists(join(VAULT_DIR, to))) return say(`"${name}" already exists in ${where}`);
+        const inside = openRel.current?.startsWith(`${rel}/`) ? openRel.current : null;
+        if (inside) await flush();
+        await moveFolder(fs, join(VAULT_DIR, rel), join(VAULT_DIR, to));
+        if (inside) {
+          const moved = `${to}/${inside.slice(rel.length + 1)}`;
+          const text = await fs.readTextFile(join(VAULT_DIR, moved));
+          openRel.current = moved;
+          latest.current = text;
+          setOpen({ rel: moved, text });
+          setDocId((d) => d + 1);
+        }
+        await refresh();
+        say(`Moved ${name} to ${where}`);
       } catch (err) {
         say(`Error: ${String(err)}`);
       }
@@ -474,11 +581,12 @@ export default function App() {
       {open ? (
         <NoteScreen
           ref={editor}
-          key={`${open.rel}:${revision}`}
+          key={`${docId}:${revision}`}
           path={join(VAULT_DIR, open.rel)}
           initialText={open.text}
           embeds={scan.images}
-          title={basename(open.rel).replace(/\.(md|markdown)$/i, '')}
+          title={noteTitle(basename(open.rel))}
+          onRename={renameNote}
           dirty={dirty}
           onChange={onChange}
           plugins={runningPlugins}
@@ -508,6 +616,7 @@ export default function App() {
           onOpen={openNote}
           onCreate={create}
           onMove={moveNote}
+          onFolderMenu={setFolderMenu}
           onOpenSettings={() => setSettings(true)}
         />
       </Sidebar>
@@ -524,10 +633,27 @@ export default function App() {
           [{ label: 'Delete file', icon: 'trash-can-outline', danger: true, onPress: () => open && askDelete(open.rel) }],
         ]}
       />
+      <ActionSheet
+        visible={folderMenu !== null}
+        onClose={() => setFolderMenu(null)}
+        caption={folderMenu ? nameOf(folderMenu) : undefined}
+        groups={[
+          [{ label: 'Move folder', icon: 'folder-move-outline', onPress: () => setMovingFolder(folderMenu) }],
+          [{ label: 'Delete folder', icon: 'trash-can-outline', danger: true, onPress: () => folderMenu && askDeleteFolder(folderMenu) }],
+        ]}
+      />
+      <FolderPicker
+        visible={movingFolder !== null}
+        noteName={movingFolder ? nameOf(movingFolder) : ''}
+        current={movingFolder ? parentOf(movingFolder) : ''}
+        folders={scan.folders.filter((f) => f !== movingFolder && !f.startsWith(`${movingFolder}/`))}
+        onPick={(target) => movingFolder && void moveFolderTo(movingFolder, target)}
+        onClose={() => setMovingFolder(null)}
+      />
       {open && (
         <FolderPicker
           visible={picking}
-          noteName={basename(open.rel).replace(/\.(md|markdown)$/i, '')}
+          noteName={noteTitle(basename(open.rel))}
           current={parentOf(open.rel)}
           folders={scan.folders}
           onPick={(folder) => void moveNote(open.rel, folder)}

@@ -1,12 +1,12 @@
-import { join } from "@granite/core-notes";
+import { dirname, join } from "@granite/core-notes";
 import type { VaultFileSystem } from "./fs.ts";
 import type { CloudProvider } from "./provider.ts";
-import { conflictCopyName, planSync } from "./syncPlan.ts";
+import { conflictCopyName, countDeletionUnits, planSync } from "./syncPlan.ts";
 import {
   emptyIndex,
   type LocalFile,
-  type SyncIndex,
   type SyncOutcome,
+  type SyncIndex,
   type SyncPlanItem,
   type SyncResult,
 } from "./types.ts";
@@ -52,11 +52,25 @@ export async function listLocalFiles(
   return out;
 }
 
+/** Every folder under `dir` (recursively, vault-relative), skipping dot-folders such as `.granite`. */
+export async function listLocalFolders(fs: VaultFileSystem, dir: string, prefix = ""): Promise<string[]> {
+  const out: string[] = [];
+  for (const entry of await fs.listDir(dir)) {
+    if (!entry.isDirectory || entry.name.startsWith(".")) continue;
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    out.push(rel, ...(await listLocalFolders(fs, join(dir, entry.name), rel)));
+  }
+  return out;
+}
+
+/** Is anything in `paths` inside the folder `dir`? */
+const under = (paths: Iterable<string>, dir: string) => [...paths].some((p) => p.startsWith(`${dir}/`));
+
 /** A batch of deletions this small is applied without question; larger ones must also be a minority of the vault. */
 const MAX_UNATTENDED_DELETES = 5;
 
 function emptyResult(): SyncResult {
-  return { uploaded: 0, downloaded: 0, conflicted: 0, deleted: 0, skipped: 0, failed: 0, items: [] };
+  return { uploaded: 0, downloaded: 0, conflicted: 0, deleted: 0, skipped: 0, failed: 0, folders: 0, items: [] };
 }
 
 export interface VaultSyncOptions {
@@ -121,7 +135,10 @@ export class VaultSync {
       seen.add(l.path);
       if (index.files[l.path]?.localModifiedMs !== l.modifiedMs) return true;
     }
-    return Object.keys(index.files).some((path) => !seen.has(path));
+    if (Object.keys(index.files).some((path) => !seen.has(path))) return true;
+    // A folder made or removed here (even an empty one) needs a sync too.
+    const folders = new Set(await listLocalFolders(this.#fs, this.#vaultDir));
+    return index.folders === undefined || folders.size !== index.folders.length || index.folders.some((f) => !folders.has(f));
   }
 
   /** Concurrent callers (timer + button + post-edit) share one run. */
@@ -134,6 +151,8 @@ export class VaultSync {
 
   async #sync(onProgress?: (done: number, total: number, item: SyncPlanItem) => void): Promise<SyncResult> {
     const index = (await this.#indexStore.load()) ?? emptyIndex();
+    /** A device that has never synced a file: it only copies what Drive has, it never cleans anything up. */
+    const freshDevice = Object.keys(index.files).length === 0;
     const folderId = await this.#provider.ensureVaultFolder(this.#folderName, index.folderId);
     // A different Drive folder (the old one was trashed, or this is another account) means the
     // records describe files that aren't there. Trusting them would read as "everything was
@@ -149,7 +168,7 @@ export class VaultSync {
     const remoteByPath = new Map(remote.map((r) => [r.path, r]));
 
     const plan = planSync(local, remote, index);
-    const deletions = plan.filter((p) => p.action === "delete-local" || p.action === "delete-remote").length;
+    const deletions = countDeletionUnits(plan);
     const tracked = Object.keys(index.files).length;
     if (deletions > MAX_UNATTENDED_DELETES && deletions > tracked * 0.3) {
       // A failed or partial listing looks exactly like "everything was deleted"; never act on it.
@@ -179,9 +198,17 @@ export class VaultSync {
       await this.#indexStore.save(index);
     }
 
+    let folders = 0;
+    let folderError = false;
+    try {
+      folders = await this.#syncFolders(folderId, remote, items, index, freshDevice);
+    } catch {
+      folderError = true; // retried by the next sync; files are what matter
+    }
+
     const failed = items.filter((i) => i.error).length;
     // Only trust the change token after a clean run, so a failed file is retried by the next poll.
-    if (failed === 0) index.changesToken = changesToken;
+    if (failed === 0 && !folderError) index.changesToken = changesToken;
     else delete index.changesToken;
     await this.#indexStore.save(index);
 
@@ -192,8 +219,69 @@ export class VaultSync {
       deleted: items.filter((i) => (i.action === "delete-local" || i.action === "delete-remote") && !i.error).length,
       skipped: items.filter((i) => i.action === "skip").length,
       failed,
+      folders,
       items,
     };
+  }
+
+  /**
+   * Folders, after the files are done, so that an empty folder (which has no file to carry it) is created and
+   * deleted on the other side too. Compared the same way as files, against the folders both sides had last time.
+   * A folder is only ever removed when it is empty, on either side, so nothing inside one can be lost here.
+   * Returns how many folders were created or removed locally.
+   */
+  async #syncFolders(
+    folderId: string,
+    remoteFiles: { path: string }[],
+    items: SyncOutcome[],
+    index: SyncIndex,
+    freshDevice: boolean,
+  ): Promise<number> {
+    // Upgrading from the file-only sync: there is no folder history yet. The old sync never created an empty
+    // folder anywhere, so an empty folder on one side only is one it left behind when the notes inside were
+    // deleted, and it is cleaned up. (A brand-new device has nothing to clean up and just copies Drive.)
+    const upgrading = index.folders === undefined && !freshDevice;
+    const known = new Set(index.folders ?? []);
+    const local = new Set(await listLocalFolders(this.#fs, this.#vaultDir));
+    const remote = new Map(
+      (await this.#provider.listFolders(folderId)).filter((f) => !f.path.split("/").some((s) => s.startsWith("."))).map((f) => [f.path, f.id]),
+    );
+    const localFiles = (await listLocalFiles(this.#fs, this.#vaultDir)).map((f) => f.path);
+    const trashedRemote = new Set(items.filter((i) => i.action === "delete-remote" && !i.error).map((i) => i.path));
+    const remoteFileSet = remoteFiles.map((f) => f.path).filter((p) => !trashedRemote.has(p));
+    const localEmpty = (dir: string) => !under(localFiles, dir);
+    const remoteEmpty = (dir: string) => !under(remoteFileSet, dir) && !under(remote.keys(), dir);
+    let changed = 0;
+
+    // Deepest first, so a subfolder that goes away no longer keeps its parent from being empty.
+    const all = [...new Set([...local, ...remote.keys()])].sort((x, y) => y.split("/").length - x.split("/").length);
+    const synced = new Set<string>();
+    for (const dir of all) {
+      const here = local.has(dir);
+      const there = remote.has(dir);
+      // On one side only: it was deleted on the side that lacks it if both had it last time.
+      const deleted = known.has(dir) || upgrading;
+      if (here && there) {
+        synced.add(dir);
+      } else if (here) {
+        if (deleted && localEmpty(dir)) {
+          await this.#fs.removeDir(join(this.#vaultDir, dir));
+          changed++;
+        } else {
+          await this.#provider.ensureFolder(folderId, dir);
+          synced.add(dir);
+        }
+      } else if (deleted && remoteEmpty(dir)) {
+        await this.#provider.trash(remote.get(dir)!);
+        remote.delete(dir);
+      } else {
+        await this.#fs.mkdirp(join(this.#vaultDir, dir));
+        synced.add(dir);
+        changed++;
+      }
+    }
+    index.folders = [...synced].sort();
+    return changed;
   }
 
   async #apply(
@@ -212,6 +300,7 @@ export class VaultSync {
     if (item.action === "delete-local") {
       await this.#fs.removeFile(join(this.#vaultDir, item.path));
       delete index.files[item.path];
+      await this.#pruneEmptyFolders(dirname(item.path));
       return undefined;
     }
 
@@ -235,6 +324,20 @@ export class VaultSync {
     await this.#pull(remote.id, copyPath, undefined, remote.modifiedTime, index);
     await this.#push(item.path, folderId, remote.id, index);
     return copyPath;
+  }
+
+  /** After a note is deleted here because it was deleted elsewhere, drop the folders it leaves empty. */
+  async #pruneEmptyFolders(relDir: string): Promise<void> {
+    try {
+      for (let dir = relDir; dir !== "." && dir !== ""; dir = dirname(dir)) {
+        const abs = join(this.#vaultDir, dir);
+        const left = (await this.#fs.listDir(abs)).filter((e) => e.name !== ".DS_Store");
+        if (left.length > 0) return;
+        await this.#fs.removeDir(abs);
+      }
+    } catch {
+      // Tidying up is optional; the deletion itself already succeeded.
+    }
   }
 
   async #push(relPath: string, folderId: string, existingId: string | undefined, index: SyncIndex): Promise<void> {

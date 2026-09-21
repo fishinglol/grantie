@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { PanResponder, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { colors } from '../theme';
+import { noteTitle } from '@granite/core-notes';
 import { nameOf, parentOf, visibleRows } from '../tree';
 import Icon from './Icon';
 
@@ -17,6 +18,8 @@ export interface NoteListProps {
   onCreate: (kind: 'note' | 'folder', folder: string, name: string) => void;
   /** A note was dragged into `folder` ("" = vault root). */
   onMove: (note: string, folder: string) => void;
+  /** A folder was long-pressed: the app offers to move or delete it. */
+  onFolderMenu: (folder: string) => void;
   onOpenSettings: () => void;
 }
 
@@ -26,18 +29,22 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /**
  * Sidebar content: the notes tree, then new-note / new-folder buttons, then the vault footer.
- * Long-press a note and drag it onto a folder (or onto the list's background for the vault root).
+ * Long-press a note and drag it onto a folder (or onto the list's background for the vault root);
+ * long-press a folder for its move / delete menu.
  */
-export default function NoteList({ notes, folders, selected, title, syncing, onOpen, onCreate, onMove, onOpenSettings }: NoteListProps) {
+export default function NoteList({ notes, folders, selected, title, syncing, onOpen, onCreate, onMove, onFolderMenu, onOpenSettings }: NoteListProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   /** Folder new notes/folders land in: the last one tapped, "" = vault root. */
-  const [activeFolder, setActiveFolder] = useState('');
+  const [tapped, setActiveFolder] = useState('');
+  /** A folder that was moved or deleted no longer counts as the target for new notes. */
+  const activeFolder = tapped === '' || folders.includes(tapped) ? tapped : '';
   const [creating, setCreating] = useState<'note' | 'folder' | null>(null);
   const [name, setName] = useState('');
   /** Note being dragged, where the finger is, and the folder ("" = root) it would land in. */
   const [dragging, setDragging] = useState<{ note: string; x: number; y: number; over: string } | null>(null);
 
   const rows = visibleRows(notes, folders, collapsed);
+  const allCollapsed = folders.length > 0 && folders.every((f) => collapsed.has(f));
   const wrap = useRef<View>(null);
   const scrollY = useRef(0);
   const listTop = useRef(0);
@@ -117,6 +124,8 @@ export default function NoteList({ notes, folders, selected, title, syncing, onO
               <Pressable
                 key={row.rel}
                 onPress={() => toggle(row.rel)}
+                onLongPress={() => onFolderMenu(row.rel)}
+                delayLongPress={350}
                 style={({ pressed }) => [styles.row, { marginLeft: row.depth * 16 }, dragging?.over === row.rel && styles.dropTarget, pressed && styles.pressed]}
               >
                 <Icon name={row.open ? 'folder-open-outline' : 'folder-outline'} size={22} color={activeFolder === row.rel ? colors.accent : colors.textDim} />
@@ -140,7 +149,7 @@ export default function NoteList({ notes, folders, selected, title, syncing, onO
                 ]}
               >
                 <Text style={[styles.label, { marginLeft: 4 }]} numberOfLines={1}>
-                  {nameOf(row.rel).replace(/\.(md|markdown)$/i, '')}
+                  {noteTitle(nameOf(row.rel))}
                 </Text>
               </Pressable>
             ),
@@ -168,6 +177,11 @@ export default function NoteList({ notes, folders, selected, title, syncing, onO
         <Pressable onPress={() => setCreating(creating === 'folder' ? null : 'folder')} hitSlop={10} style={styles.tool}>
           <Icon name="folder-plus-outline" size={26} color={creating === 'folder' ? colors.accent : colors.text} />
         </Pressable>
+        {folders.length > 0 && (
+          <Pressable onPress={() => setCollapsed(allCollapsed ? new Set() : new Set(folders))} hitSlop={10} style={styles.tool}>
+            <Icon name={allCollapsed ? 'expand-all-outline' : 'collapse-all-outline'} size={26} />
+          </Pressable>
+        )}
       </View>
 
       <View style={styles.footer}>
@@ -187,7 +201,7 @@ export default function NoteList({ notes, folders, selected, title, syncing, onO
       {dragging && (
         <View style={[styles.ghost, { left: dragging.x - 70, top: dragging.y - 70 }]} pointerEvents="none">
           <Text style={styles.ghostText} numberOfLines={1}>
-            {nameOf(dragging.note).replace(/\.(md|markdown)$/i, '')}
+            {noteTitle(nameOf(dragging.note))}
           </Text>
         </View>
       )}

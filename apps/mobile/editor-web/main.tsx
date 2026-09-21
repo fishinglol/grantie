@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { LiveEditor, type LiveEditorHandle } from "@granite/live-editor";
+import type { InlineFormat } from "@granite/core-notes";
 import { PluginHost } from "@granite/plugins/host";
 import type { PluginManifest } from "@granite/plugins";
 import "@granite/live-editor/live-editor.css";
@@ -62,6 +63,53 @@ function vault(request: object): Promise<unknown> {
     vaultCalls.set(id, { resolve, reject });
     send({ type: "vault", id, request });
   });
+}
+
+const FORMATS: { kind: InlineFormat; label: string; title: string }[] = [
+  { kind: "bold", label: "B", title: "Bold" },
+  { kind: "italic", label: "I", title: "Italic" },
+  { kind: "strike", label: "S", title: "Strikethrough" },
+];
+
+/**
+ * Bold / italic / strikethrough buttons that sit right above the keyboard while the note is being edited.
+ * It lives in this page (not the app) so it always ends up directly above the keyboard, however the app
+ * makes room for it. Buttons act on `pointerdown` and stop it from going further, so the editor keeps
+ * its focus and its selection and the keyboard stays up.
+ */
+function FormatBar({ onFormat }: { onFormat: (kind: InlineFormat) => void }) {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const inEditor = (t: EventTarget | null) => t instanceof Element && t.closest(".cm-editor") !== null;
+    const onIn = (e: FocusEvent) => inEditor(e.target) && setShown(true);
+    const onOut = (e: FocusEvent) => inEditor(e.target) && !(e.relatedTarget instanceof Element && e.relatedTarget.closest(".format-bar")) && setShown(false);
+    document.addEventListener("focusin", onIn);
+    document.addEventListener("focusout", onOut);
+    return () => {
+      document.removeEventListener("focusin", onIn);
+      document.removeEventListener("focusout", onOut);
+    };
+  }, []);
+  if (!shown) return null;
+  return (
+    <div className="format-bar" role="toolbar" aria-label="Text formatting">
+      {FORMATS.map(({ kind, label, title }) => (
+        <button
+          key={kind}
+          type="button"
+          className={`format-${kind}`}
+          title={title}
+          aria-label={title}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            onFormat(kind);
+          }}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function Page() {
@@ -154,17 +202,20 @@ function Page() {
   }
 
   return (
-    <LiveEditor
-      ref={editor}
-      value={value}
-      embeds={embeds}
-      notePath={notePath}
-      toUrl={toUrl}
-      onChange={(text) => {
-        setValue(text);
-        send({ type: "change", value: text });
-      }}
-    />
+    <div className="page">
+      <LiveEditor
+        ref={editor}
+        value={value}
+        embeds={embeds}
+        notePath={notePath}
+        toUrl={toUrl}
+        onChange={(text) => {
+          setValue(text);
+          send({ type: "change", value: text });
+        }}
+      />
+      <FormatBar onFormat={(kind) => editor.current?.format(kind)} />
+    </div>
   );
 }
 

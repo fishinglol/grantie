@@ -20,9 +20,13 @@ export interface CloudProvider {
   ensureVaultFolder(name: string, cachedId?: string): Promise<string>;
   /** Every file under the vault folder, recursively, with vault-relative paths. */
   listVault(folderId: string): Promise<RemoteFile[]>;
+  /** Every folder under the vault folder, recursively (vault-relative paths). */
+  listFolders(folderId: string): Promise<{ id: string; path: string }[]>;
+  /** Make sure the folder at `path` (vault-relative) exists, creating it and its parents if needed. */
+  ensureFolder(folderId: string, path: string): Promise<void>;
   download(fileId: string): Promise<Uint8Array>;
   upload(args: UploadArgs): Promise<RemoteFile>;
-  /** Move a file to the provider's trash, where the user can still recover it. */
+  /** Move a file (or an empty folder) to the provider's trash, where the user can still recover it. */
   trash(fileId: string): Promise<void>;
   /**
    * Cheap "did anything in the vault change since `token`?" check, so a poll doesn't have to list

@@ -1,18 +1,19 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
-import { basename, dirname, embedImage, join, NoteRepository, relocateLinks } from "@granite/core-notes";
+import { basename, dirname, embedImage, join, moveFolder, noteTitle, NoteRepository, relocateLinks, renamedNoteFile } from "@granite/core-notes";
 import { GoogleDriveProvider, VaultSync, type GoogleSession, type SyncResult } from "@granite/core-cloud";
 
 import { REMOTE_FOLDER_NAME, SYNC_INTERVAL_MS } from "./config";
 import DeleteDialog from "./DeleteDialog";
+import NoteTitle from "./NoteTitle";
 import PluginsDialog from "./PluginsDialog";
 import { usePlugins } from "./usePlugins";
 import { http } from "./googleLogin";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { LiveEditor, IMAGE_FILE, type LiveEditorHandle } from "@granite/live-editor";
 import { indexStore } from "./stores";
-import { moveFile, tauriFs } from "./tauriFs";
+import { folderFs, moveFile, tauriFs } from "./tauriFs";
 import { ensureSampleVault, vaultDir } from "./vault";
 
 const repo = new NoteRepository(tauriFs);
@@ -69,17 +70,17 @@ export default function NoteApp({
   const [activeFolder, setActiveFolder] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState<"note" | "folder" | null>(null);
-  /** Note being dragged in the sidebar, and the folder ("" = root) it is hovering over. */
-  const [drag, setDrag] = useState<{ file: string; x: number; y: number; over: string | null } | null>(null);
+  /** Note or folder being dragged in the sidebar, and the folder ("" = root) it is hovering over. */
+  const [drag, setDrag] = useState<{ file: string; folder: boolean; x: number; y: number; over: string | null } | null>(null);
   const justDragged = useRef(false);
   const editorRef = useRef<LiveEditorHandle>(null);
   const [fileHover, setFileHover] = useState(false);
   /** True once Tauri's native drop listener is live; the DOM drop fallback stays off then. */
   const nativeDrop = useRef(false);
   const [toast, setToast] = useState<string | null>(null);
-  /** Right-click menu on a note, and the note waiting on a "Delete?" answer. */
-  const [menu, setMenu] = useState<{ file: string; x: number; y: number } | null>(null);
-  const [deleting, setDeleting] = useState<string | null>(null);
+  /** Right-click menu on a note or folder, and the one waiting on a "Delete?" answer. */
+  const [menu, setMenu] = useState<{ file: string; folder: boolean; x: number; y: number } | null>(null);
+  const [deleting, setDeleting] = useState<{ file: string; folder: boolean } | null>(null);
   const [showPlugins, setShowPlugins] = useState(false);
 
   // Status messages surface as a short-lived toast; routine load/auto-save chatter is skipped.
@@ -142,7 +143,7 @@ export default function NoteApp({
       setDir(activeDir);
       const defaultNote = await ensureSampleVault(tauriFs, activeDir);
       await refreshVaultFiles(activeDir);
-      await load(defaultNote);
+      if (defaultNote) await load(defaultNote);
     }
     initVault().catch((e) => setStatus(`Error: ${String(e)}`));
   }, [vaultDirProp, load, refreshVaultFiles]);
@@ -177,7 +178,7 @@ export default function NoteApp({
         const result = poll ? await engine.syncIfChanged(onProgress) : await engine.sync(onProgress);
         if (poll && result.items.length === 0) return; // nothing changed anywhere
         setSync({ phase: "idle", at: new Date(), result });
-        if (result.downloaded + result.conflicted + result.deleted > 0 && dir) {
+        if (result.downloaded + result.conflicted + result.deleted + result.folders > 0 && dir) {
           await refreshVaultFiles(dir);
           // A plugin arrived from (or was removed on) another device: pick it up without a manual refresh.
           if (result.items.some((i) => i.path.startsWith(".granite/plugins/") && !i.error && i.action !== "skip")) {
@@ -389,18 +390,119 @@ export default function NoteApp({
     [dir, path, isDirty, editorText, refreshVaultFiles, load, runSync],
   );
 
+  /** Rename the open note's file (it stays in its folder). Returns whether it happened. */
+  const renameNote = useCallback(
+    async (title: string): Promise<boolean> => {
+      if (!dir || !path) return false;
+      const next = renamedNoteFile(basename(path), title);
+      if (!next) return false;
+      const to = join(dirname(path), next);
+      try {
+        // A change of letter case alone is the same file on macOS, not a clash.
+        if (to.toLowerCase() !== path.toLowerCase() && (await tauriFs.exists(to))) {
+          setStatus(`"${next}" already exists`);
+          return false;
+        }
+        if (isDirty) {
+          // Flush pending edits so they land in the renamed file and auto-save can't recreate the old one.
+          await repo.save(path, editorText);
+          setIsDirty(false);
+        }
+        await moveFile(path, to);
+        setPath(to);
+        await refreshVaultFiles(dir);
+        setStatus(`Renamed to ${noteTitle(next)}`);
+        void runSync();
+        return true;
+      } catch (e) {
+        setStatus(`Error renaming: ${String(e)}`);
+        return false;
+      }
+    },
+    [dir, path, isDirty, editorText, refreshVaultFiles, runSync],
+  );
+
+  /** Delete a folder with everything in it; sync then trashes its files on Drive and removes them from other devices. */
+  const deleteFolder = useCallback(
+    async (folder: string) => {
+      if (!dir) return;
+      const name = folder.slice(folder.lastIndexOf("/") + 1);
+      const full = join(dir, folder);
+      try {
+        if (path?.startsWith(`${full}/`)) {
+          // Drop pending edits so auto-save can't bring the note back.
+          setIsDirty(false);
+          setPath(null);
+          setEditorText("");
+        }
+        await tauriFs.removeDir(full);
+        const parent = folder.includes("/") ? folder.slice(0, folder.lastIndexOf("/")) : "";
+        setActiveFolder((cur) => (cur === folder || cur.startsWith(`${folder}/`) ? parent : cur));
+        await refreshVaultFiles(dir);
+        setStatus(`Deleted folder ${name}`);
+        void runSync();
+      } catch (e) {
+        setStatus(`Error deleting ${name}: ${String(e)}`);
+      }
+    },
+    [dir, path, refreshVaultFiles, runSync],
+  );
+
+  /** Move a folder (with everything in it) into `targetFolder` ("" = vault root), keeping links out of it working. */
+  const moveFolderTo = useCallback(
+    async (folder: string, targetFolder: string) => {
+      if (!dir) return;
+      const name = folder.slice(folder.lastIndexOf("/") + 1);
+      const to = targetFolder ? `${targetFolder}/${name}` : name;
+      if (to === folder) return;
+      const from = join(dir, folder);
+      const where = targetFolder || "vault root";
+      try {
+        if (await tauriFs.exists(join(dir, to))) {
+          setStatus(`"${name}" already exists in ${where}`);
+          return;
+        }
+        const openInside = path?.startsWith(`${from}/`) ?? false;
+        if (openInside && isDirty) {
+          // Flush pending edits so the move doesn't lose them or let auto-save recreate the old file.
+          await repo.save(path!, editorText);
+          setIsDirty(false);
+        }
+        await moveFolder(folderFs, from, join(dir, to));
+        setActiveFolder(to);
+        setCollapsed((prev) => {
+          if (!prev.has(targetFolder)) return prev;
+          const next = new Set(prev);
+          next.delete(targetFolder);
+          return next;
+        });
+        await refreshVaultFiles(dir);
+        if (openInside) await load(join(dir, to, path!.slice(from.length + 1)));
+        setStatus(`Moved ${name} → ${where}`);
+        void runSync();
+      } catch (e) {
+        setStatus(`Error moving ${name}: ${String(e)}`);
+      }
+    },
+    [dir, path, isDirty, editorText, refreshVaultFiles, load, runSync],
+  );
+
   /** Mouse-based drag (not HTML5 DnD, which Tauri's window-level file-drop handling can swallow). */
-  const beginDrag = (e: React.MouseEvent, file: string) => {
+  const beginDrag = (e: React.MouseEvent, file: string, folder = false) => {
     if (e.button !== 0) return;
     const startX = e.clientX;
     const startY = e.clientY;
     let started = false;
-    const dropTarget = (ev: MouseEvent) =>
-      (document.elementFromPoint(ev.clientX, ev.clientY)?.closest("[data-drop]") as HTMLElement | null)?.dataset.drop ?? null;
+    const dropTarget = (ev: MouseEvent) => {
+      const target =
+        (document.elementFromPoint(ev.clientX, ev.clientY)?.closest("[data-drop]") as HTMLElement | null)?.dataset.drop ?? null;
+      // A folder can't be dropped onto itself or something inside it.
+      return folder && target !== null && (target === file || target.startsWith(`${file}/`)) ? null : target;
+    };
     const onMove = (ev: MouseEvent) => {
       if (!started && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 5) return;
       started = true;
-      setDrag({ file, x: ev.clientX, y: ev.clientY, over: dropTarget(ev) });
+      setDrag({ file, folder, x: ev.clientX, y: ev.clientY, over: dropTarget(ev) });
     };
     const onUp = (ev: MouseEvent) => {
       window.removeEventListener("mousemove", onMove);
@@ -410,7 +512,7 @@ export default function NoteApp({
       setTimeout(() => (justDragged.current = false), 0);
       const target = dropTarget(ev);
       setDrag(null);
-      if (target !== null) void moveNote(file, target);
+      if (target !== null) void (folder ? moveFolderTo : moveNote)(file, target);
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
@@ -558,6 +660,8 @@ export default function NoteApp({
     return { dirs, parentOf };
   }, [vaultFiles, vaultFolders]);
 
+  const allCollapsed = vaultFolders.length > 0 && vaultFolders.every((f) => collapsed.has(f));
+
   const renderDir = (rel: string, depth: number): ReactNode[] => {
     const rows: ReactNode[] = [];
     const indent = { paddingLeft: 10 + depth * 14 };
@@ -582,12 +686,22 @@ export default function NoteApp({
     for (const folder of children?.folders ?? []) {
       const isCollapsed = collapsed.has(folder);
       rows.push(
-        <li key={`d:${folder}`} data-drop={folder} className={drag?.over === folder ? "drop-target" : ""}>
+        <li
+          key={`d:${folder}`}
+          data-drop={folder}
+          className={[drag?.over === folder ? "drop-target" : "", drag?.file === folder ? "dragging" : ""].join(" ").trim()}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setMenu({ file: folder, folder: true, x: e.clientX, y: e.clientY });
+          }}
+        >
           <button
             style={indent}
             title={folder}
             className={folder === activeFolder ? "active" : ""}
+            onMouseDown={(e) => beginDrag(e, folder, true)}
             onClick={() => {
+              if (justDragged.current) return;
               setActiveFolder(folder);
               setCollapsed((prev) => {
                 const next = new Set(prev);
@@ -615,7 +729,7 @@ export default function NoteApp({
           className={[isActive ? "active" : "", drag?.file === file ? "dragging" : ""].join(" ").trim()}
           onContextMenu={(e) => {
             e.preventDefault();
-            setMenu({ file, x: e.clientX, y: e.clientY });
+            setMenu({ file, folder: false, x: e.clientX, y: e.clientY });
           }}
         >
           <button
@@ -631,7 +745,7 @@ export default function NoteApp({
           >
             <span className="chevron" />
             <span className="file-icon"><FileIcon /></span>
-            <span className="file-name">{file.slice(file.lastIndexOf("/") + 1)}</span>
+            <span className="file-name">{noteTitle(file.slice(file.lastIndexOf("/") + 1))}</span>
             {isActive && isDirty && <span className="dirty-dot" title="Unsaved changes" />}
           </button>
         </li>,
@@ -644,8 +758,8 @@ export default function NoteApp({
     <div className={drag ? "app is-dragging" : "app"}>
       {drag && (
         <div className="drag-ghost" style={{ left: drag.x + 12, top: drag.y + 12 }}>
-          <FileIcon />
-          <span>{drag.file.slice(drag.file.lastIndexOf("/") + 1)}</span>
+          {drag.folder ? <FolderIcon /> : <FileIcon />}
+          <span>{drag.folder ? drag.file.slice(drag.file.lastIndexOf("/") + 1) : noteTitle(drag.file.slice(drag.file.lastIndexOf("/") + 1))}</span>
         </div>
       )}
 
@@ -670,6 +784,15 @@ export default function NoteApp({
                   <button title="New folder" aria-label="New folder" onClick={() => startCreate("folder")} disabled={busy}>
                     <NewFolderIcon />
                   </button>
+                  {vaultFolders.length > 0 && (
+                    <button
+                      title={allCollapsed ? "Expand all folders" : "Collapse all folders"}
+                      aria-label={allCollapsed ? "Expand all folders" : "Collapse all folders"}
+                      onClick={() => setCollapsed(allCollapsed ? new Set() : new Set(vaultFolders))}
+                    >
+                      {allCollapsed ? <ExpandAllIcon /> : <CollapseAllIcon />}
+                    </button>
+                  )}
                 </div>
                 <span className="count-chip">{vaultFiles.length}</span>
               </div>
@@ -721,6 +844,7 @@ export default function NoteApp({
               void readBrowserFiles([...e.dataTransfer.files]).then((files) => attachFiles(files, at));
             }}
           >
+            {path && <NoteTitle key={path} name={noteTitle(basename(path))} onRename={renameNote} />}
             <LiveEditor
               ref={editorRef}
               embeds={vaultImages}
@@ -754,7 +878,7 @@ export default function NoteApp({
               role="menuitem"
               className="danger"
               onClick={() => {
-                setDeleting(menu.file);
+                setDeleting({ file: menu.file, folder: menu.folder });
                 setMenu(null);
               }}
             >
@@ -765,13 +889,14 @@ export default function NoteApp({
       )}
       {deleting && (
         <DeleteDialog
-          name={deleting.slice(deleting.lastIndexOf("/") + 1).replace(/\.(md|markdown)$/i, "")}
+          name={deleting.file.slice(deleting.file.lastIndexOf("/") + 1).replace(/\.(md|markdown)$/i, "")}
+          folderNotes={deleting.folder ? vaultFiles.filter((f) => f.startsWith(`${deleting.file}/`)).length : undefined}
           synced={Boolean(session)}
           onCancel={() => setDeleting(null)}
           onConfirm={() => {
-            const file = deleting;
+            const { file, folder } = deleting;
             setDeleting(null);
-            void deleteNote(file);
+            void (folder ? deleteFolder(file) : deleteNote(file));
           }}
         />
       )}
@@ -892,6 +1017,12 @@ const NewNoteIcon = () => (
 );
 const NewFolderIcon = () => (
   <svg {...svgProps}><path d={FOLDER_PATH} /><path d="M12 11v6M9 14h6" /></svg>
+);
+const CollapseAllIcon = () => (
+  <svg {...svgProps}><path d="M7 20l5-5 5 5M7 4l5 5 5-5" /></svg>
+);
+const ExpandAllIcon = () => (
+  <svg {...svgProps}><path d="M7 15l5 5 5-5M7 9l5-5 5 5" /></svg>
 );
 const CollapseIcon = () => (
   <svg {...svgProps}><path d="M11 17l-5-5 5-5M18 17l-5-5 5-5" /></svg>

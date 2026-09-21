@@ -86,12 +86,13 @@
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: var(--text);
+  /* The bar is always dark, so its colours can't come from the theme (a light theme would make them dark-on-dark). */
+  color: #e6e9f0;
   font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   cursor: pointer;
 }
-.live-editor .cm-img-bar button:hover { background: var(--panel-hover); }
+.live-editor .cm-img-bar button:hover { background: rgba(255, 255, 255, 0.16); }
 .live-editor .cm-img-size {
   position: absolute;
   right: 12px;
@@ -99,7 +100,7 @@
   padding: 1px 6px;
   border-radius: 4px;
   background: rgba(15, 18, 25, 0.8);
-  color: var(--text-dim);
+  color: #b4bac8;
   font-size: 11px;
   opacity: 0;
   pointer-events: none;

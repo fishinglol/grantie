@@ -45,6 +45,10 @@ export const expoFs: MovableFs = {
     new File(path).delete();
   },
 
+  async removeDir(path) {
+    new Directory(path).delete(); // also deletes everything inside
+  },
+
   async moveFile(from, to) {
     await new File(from).move(new File(to));
   },

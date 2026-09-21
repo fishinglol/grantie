@@ -25,4 +25,6 @@ export interface VaultFileSystem extends FileSystem {
   stat(path: string): Promise<FileStat>;
   /** Delete one file. Sync uses it to apply a deletion that happened on another device. */
   removeFile(path: string): Promise<void>;
+  /** Delete a folder and everything in it. */
+  removeDir(path: string): Promise<void>;
 }

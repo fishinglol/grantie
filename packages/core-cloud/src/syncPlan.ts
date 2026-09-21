@@ -58,6 +58,36 @@ export function planSync(local: LocalFile[], remote: RemoteFile[], index: SyncIn
 }
 
 /**
+ * How many separate deletions the plan makes, for the engine's "is this a mistake?" check.
+ * A folder whose every file is being deleted counts once, however many files it holds, so
+ * deleting or moving a big folder is not mistaken for a broken listing, while scattered deletions
+ * still add up file by file.
+ */
+export function countDeletionUnits(plan: SyncPlanItem[]): number {
+  const isDelete = (a: SyncPlanItem["action"]) => a === "delete-local" || a === "delete-remote";
+  const ancestors = (path: string) => {
+    const parts = path.split("/").slice(0, -1);
+    return parts.map((_, i) => parts.slice(0, i + 1).join("/"));
+  };
+  const dirs = new Map<string, { total: number; deleted: number }>();
+  for (const item of plan) {
+    for (const dir of ancestors(item.path)) {
+      const counts = dirs.get(dir) ?? { total: 0, deleted: 0 };
+      counts.total += 1;
+      if (isDelete(item.action)) counts.deleted += 1;
+      dirs.set(dir, counts);
+    }
+  }
+  const units = new Set<string>();
+  for (const item of plan) {
+    if (!isDelete(item.action)) continue;
+    const wholeFolder = ancestors(item.path).find((dir) => dirs.get(dir)!.total === dirs.get(dir)!.deleted);
+    units.add(wholeFolder ?? item.path);
+  }
+  return units.size;
+}
+
+/**
  * Name for the copy we keep when both sides changed: `note (Drive copy
  * 2026-09-03 14-05).md`. Sits next to the original so it is impossible to miss.
  */

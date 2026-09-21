@@ -210,6 +210,97 @@ test("a note deleted on another device is removed locally", async () => {
   assert.equal(await fs.exists("/vault/b.md"), true);
 });
 
+test("deleting a whole folder is allowed even when it is most of the vault, and the other device drops the empty folder", async () => {
+  const files: Record<string, string> = { "keep.md": "K" };
+  for (let i = 0; i < 10; i++) files[`Old/n${i}.md`] = `note ${i}`;
+  const { fs, provider, sync } = await synced(files);
+
+  await fs.removeDir("/vault/Old");
+  const res = await sync.sync();
+  assert.equal(res.deleted, 10);
+  assert.equal(provider.trashed.filter((p) => !p.endsWith("/")).length, 10);
+  assert.ok(provider.trashed.includes("Old/"), "the emptied folder goes to the Drive trash too");
+
+  // A second device that had the same notes learns of the deletions and tidies the empty folder.
+  const other = setup();
+  for (const [path, body] of Object.entries(files)) {
+    await other.fs.writeTextFile(`/vault/${path}`, body);
+  }
+  await other.sync.sync(); // its own fake remote, so every note is now tracked as synced
+  for (let i = 0; i < 10; i++) other.provider.remote.delete(`Old/n${i}.md`);
+  const res2 = await other.sync.sync();
+  assert.equal(res2.deleted, 10);
+  assert.equal(await other.fs.exists("/vault/Old"), false);
+  assert.equal(await other.fs.exists("/vault/keep.md"), true);
+});
+
+/** Two devices sharing one fake Drive. */
+function twoDevices() {
+  const a = setup();
+  const indexStore = memoryIndexStore();
+  const fs = new MemoryFs();
+  const sync = new VaultSync({ fs, provider: a.provider, vaultDir, remoteFolderName: "Granite Vault", indexStore });
+  return { a, b: { fs, sync, indexStore } };
+}
+
+test("an empty folder made on one device appears on the other, and deleting it there removes it here", async () => {
+  const { a, b } = twoDevices();
+  await a.fs.writeTextFile("/vault/note.md", "x");
+  await a.fs.mkdirp("/vault/Ideas/Later");
+  await a.sync.sync();
+  const got = await b.sync.sync(); // a brand-new device: copies what Drive has
+  assert.equal(await b.fs.exists("/vault/Ideas/Later"), true);
+  assert.equal(got.folders, 2);
+
+  await b.fs.removeDir("/vault/Ideas");
+  await b.sync.sync();
+  const res = await a.sync.sync();
+  assert.equal(await a.fs.exists("/vault/Ideas"), false);
+  assert.equal(res.folders, 2);
+  assert.equal(await a.fs.exists("/vault/note.md"), true);
+  assert.equal((await a.sync.sync()).folders, 0, "a settled vault reports no folder changes");
+});
+
+test("empty folders the old file-only sync left behind are cleaned up on both sides", async () => {
+  // The desktop deleted "Teat": its notes went to the Drive trash, but the empty folder stayed on Drive and on
+  // the phone, and neither device had folder history yet.
+  const { a: desktop, b: phone } = twoDevices();
+  await desktop.fs.writeTextFile("/vault/keep/a.md", "A");
+  await desktop.sync.sync();
+  await phone.sync.sync();
+  desktop.provider.folders.set("Teat", "dir-teat");
+  await phone.fs.mkdirp("/vault/Teat");
+  delete desktop.indexStore.current.folders;
+  delete phone.indexStore.current.folders;
+
+  await desktop.sync.sync(); // doesn't have it: the empty Drive folder goes to the trash
+  assert.equal(desktop.provider.folders.has("Teat"), false);
+  await phone.sync.sync(); // has it only locally, and empty: removed
+  assert.equal(await phone.fs.exists("/vault/Teat"), false);
+  assert.equal(await phone.fs.exists("/vault/keep/a.md"), true);
+  assert.equal(await desktop.fs.exists("/vault/Teat"), false);
+});
+
+test("the .granite folder is left out of folder sync", async () => {
+  const { fs, provider, sync } = setup();
+  await fs.writeTextFile("/vault/.granite/plugins/p/main.js", "//");
+  await sync.sync();
+  assert.ok(provider.folders.has(".granite/plugins/p"));
+  assert.equal((await sync.sync()).folders, 0);
+});
+
+test("a folder is never removed while it still holds a file", async () => {
+  const { a, b } = twoDevices();
+  await a.fs.mkdirp("/vault/Box");
+  await a.sync.sync();
+  await b.sync.sync();
+  await a.fs.removeDir("/vault/Box");
+  await b.fs.writeTextFile("/vault/Box/new.md", "written on the phone meanwhile");
+  await b.sync.sync(); // uploads new.md
+  await a.sync.sync(); // Box is missing here but not empty on Drive: it comes back with the note
+  assert.equal(await a.fs.exists("/vault/Box/new.md"), true);
+});
+
 test("a note edited here but deleted there is kept and re-uploaded", async () => {
   const { fs, provider, sync } = await synced({ "a.md": "A" });
   provider.remote.delete("a.md");

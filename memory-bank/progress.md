@@ -196,6 +196,67 @@ _Last updated: 2026-09-20_
   - [x] Web preview verified in a browser (read + parse path)
   - [ ] **Not yet run on a phone** — user to verify image insert via Expo Go
 
+### Folder delete + move (2026-09-21, desktop and phone)
+- [x] `core-notes`: `moveFolder(fs, from, to)` (`folders.ts`) moves a folder file by file (only needs `moveFile`, so it
+      works on Tauri and Expo) and fixes each note's relative links that point *outside* the folder;
+      `relocateLinks` got an optional `{ from }` so links into the moved folder (its own `assets/`) are left alone.
+- [x] `VaultFileSystem.removeDir` (recursive) added; implemented in `tauriFs`, `expoFs`, `memFs`, tests' `MemoryFs`.
+- [x] Sync: `countDeletionUnits` counts a wholly-deleted folder as ONE deletion for the "too many deletions" breaker
+      (otherwise deleting/moving a folder of >5 notes stopped sync on both devices); `delete-local` prunes the
+      folders it leaves empty (ignoring `.DS_Store`). A moved folder syncs as delete-old-paths + upload-new-paths.
+- [x] Desktop: right-click a folder -> Delete (`DeleteDialog` shows the note count); drag a folder onto a folder or
+      the list background to move it (a folder can't be dropped into itself).
+- [x] Phone: long-press a folder -> sheet with "Move folder" (`FolderPicker`, own subtree excluded) / "Delete folder".
+- Verified: core tests (24 + 45), `tsc --noEmit` for desktop + mobile, and both UIs in the browser previews.
+  NOT verified on real hardware: Tauri recursive `remove`/`rename` under the fs scope, Expo `Directory.delete`, real Drive.
+- Empty folders never sync (Drive has no folder records here); only folders that contain files reach other devices.
+
+### Follow-ups the same day (2026-09-21)
+- [x] **Deleted `welcome.md` came back** on desktop and phone. Cause found from the desktop's `sync-index.json` + file
+      mtimes: `ensureSampleVault` re-created `welcome.md` at every mount/launch whenever that file was missing (the
+      local file was written *before* it was uploaded, so it was not a Drive download), and sync then spread it.
+      Now it only seeds a vault with **no notes at all** and returns `null` when there is no welcome note to open.
+      A stale Drive listing right after a trash was also considered but has no evidence; not changed.
+- [x] Collapse-all / expand-all folders button (desktop sidebar header, phone toolbar); shown only when folders exist.
+- Not done: Obsidian-style coloured folder rows (screenshot 3) - it is a theme, ask before adding.
+
+### Bold / italic / strikethrough (2026-09-21, desktop and phone)
+- [x] `core-notes/formatMarkdown.ts`: pure `toggleFormat(text, from, to, kind)` (`**`, `*`, `~~`). Wraps/unwraps, keeps spaces
+      outside the markers, formats the word at the cursor when nothing is selected (or inserts an empty pair), and stacks:
+      every `*`/`~` touching the text is one "zone", new markers go on the outside (`~~***x***~~`). 9 tests.
+- [x] `live-editor`: `Mod-b`, `Mod-i`, `Mod-Shift-x` in the keymap (before `defaultKeymap`, whose `Mod-i` selects the parent
+      syntax node) + `LiveEditorHandle.format(kind)`.
+- [x] Phone: a B / I / S bar under the editor *inside the WebView page* (`editor-web/main.tsx` `FormatBar`), shown while the
+      editor has focus, so it sits right above the keyboard however the app makes room for it (edge-to-edge Android does not
+      always resize). Buttons act on `pointerdown` + `preventDefault` so focus/selection/keyboard are kept.
+      `apps/mobile/src/editorHtml.ts` is generated: run `node scripts/build-editor.mjs` (npm start does it) after editor changes.
+- Not done: the "A" (text colour / underline) button from the reference screenshot: not Markdown. Verified in the browser
+  previews only (desktop shortcuts with real keys; phone bar in the web preview); not on the Samsung keyboard.
+
+### Folder sync (2026-09-21)
+- [x] Sync now handles folders, not only files: `SyncIndex.folders` (folders on both sides after the last sync),
+      `CloudProvider.listFolders` / `ensureFolder`, and `VaultSync.#syncFolders` after the file pass. Same rule as files
+      (one side only + in the record = deleted there); an empty folder syncs both ways; a folder is only ever removed
+      when **empty** on that side. Dot-folders (`.granite`) are left out. `SyncResult.folders` = local folder changes;
+      both apps refresh the sidebar on it.
+- Upgrade rule: the first folder sync on a device that already synced files (`index.folders` undefined, files
+  recorded) removes empty one-sided folders, since the old file-only sync never made empty folders anywhere, so they
+  are leftovers (the user's `Teat`/`test` on the phone and on Drive). A brand-new device (no file records) only copies.
+- The running desktop app hot-reloaded an earlier draft and already did its upgrade run (its index has `folders`);
+  it removed nothing local (it had no empty folders).
+
+### Note title = file name (2026-09-21, desktop and phone)
+- [x] The open note's name is a heading above the text (`NoteTitle.tsx` on desktop and in `apps/mobile/src/components`);
+      editing it renames the file (same folder, same extension) on blur / Enter; Esc reverts. A clash ("already exists")
+      or an empty name puts the old title back. `core-notes/noteName.ts`: `noteTitle()` hides `.md`, `renamedNoteFile()`
+      cleans the name (`/ : * ? " < > |` -> `-`, no leading dot). 3 tests.
+- [x] `.md` / `.markdown` is no longer shown anywhere the user reads a note name (the desktop sidebar showed it; the
+      phone already hid it). The extension stays on disk.
+- Phone: the editor page is keyed by `docId` (not the path), so a rename does not rebuild the WebView; opening a note or
+  moving the open note bumps `docId`.
+- Not done: links to a renamed note from other notes are not rewritten (same decision as before: only "the note moved
+  -> its own relative links follow"). On other devices a rename arrives as delete + new file.
+
 ## Left to do
 
 ### Finish / polish the local feature

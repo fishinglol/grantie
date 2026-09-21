@@ -5,6 +5,7 @@ import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { indentUnit, syntaxTree } from "@codemirror/language";
 import {
   Annotation,
+  EditorSelection,
   EditorState,
   type Text,
   StateEffect,
@@ -20,7 +21,7 @@ import {
   placeholder,
   WidgetType,
 } from "@codemirror/view";
-import { dirname, IMAGE_FILE, join } from "@granite/core-notes";
+import { dirname, IMAGE_FILE, join, toggleFormat, type InlineFormat } from "@granite/core-notes";
 import { openImageViewer } from "./imageViewer";
 
 export { IMAGE_FILE };
@@ -705,7 +706,22 @@ function livePreview(ctx: PreviewContext) {
   return field;
 }
 
+/** Wrap / unwrap the selection (or the word at the cursor) in bold, italic or strikethrough markers. */
+function applyFormat(view: EditorView, format: InlineFormat): boolean {
+  const { from, to } = view.state.selection.main;
+  const edit = toggleFormat(view.state.doc.toString(), from, to, format);
+  view.dispatch({
+    changes: edit.changes,
+    selection: EditorSelection.range(edit.selection.anchor, edit.selection.head),
+    scrollIntoView: true,
+    userEvent: "input.format",
+  });
+  return true;
+}
+
 export interface LiveEditorHandle {
+  /** Toggle bold / italic / strikethrough on the selection (the phone's format bar uses this). */
+  format(kind: InlineFormat): void;
   /**
    * Insert Markdown. Given `at` (viewport coordinates inside the editor) it goes
    * inline at exactly that character, like a text cursor; otherwise it becomes
@@ -757,6 +773,9 @@ export default function LiveEditor({ ref, value, embeds, notePath, toUrl, onChan
           history(),
           selectedField,
           keymap.of([
+            { key: "Mod-b", run: (v) => applyFormat(v, "bold") },
+            { key: "Mod-i", run: (v) => applyFormat(v, "italic") },
+            { key: "Mod-Shift-x", run: (v) => applyFormat(v, "strike") },
             {
               key: "Escape",
               run: (v) => {
@@ -823,6 +842,12 @@ export default function LiveEditor({ ref, value, embeds, notePath, toUrl, onChan
           selection: { anchor: pos + insert.length },
           scrollIntoView: true,
         });
+        view.focus();
+      },
+      format(kind) {
+        const view = viewRef.current;
+        if (!view) return;
+        applyFormat(view, kind);
         view.focus();
       },
       getText: () => viewRef.current?.state.doc.toString() ?? "",

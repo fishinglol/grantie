@@ -35,6 +35,11 @@ export interface SyncIndex {
   /** Provider change-feed position taken before the last clean sync; lets a poll skip a full listing. */
   changesToken?: string;
   files: Record<string, SyncRecord>;
+  /**
+   * Folders that were on both sides after the last sync. A folder missing on one side but listed here was
+   * deleted there. Absent until the first sync that tracks folders.
+   */
+  folders?: string[];
 }
 
 export function emptyIndex(): SyncIndex {
@@ -66,5 +71,7 @@ export interface SyncResult {
   deleted: number;
   skipped: number;
   failed: number;
+  /** Folders created or removed on this device because of the other side. */
+  folders: number;
   items: SyncOutcome[];
 }

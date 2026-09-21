@@ -1,20 +1,23 @@
 import { forwardRef } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import NoteTitle from './NoteTitle';
 import { colors } from '../theme';
 import Icon from './Icon';
 import NoteEditor from './NoteEditor';
 import type { NoteEditorHandle, NoteEditorProps } from './NoteEditor.types';
 
 export interface NoteScreenProps extends NoteEditorProps {
+  /** The note's name without `.md`; editing it renames the file. */
   title: string;
+  onRename: (title: string) => Promise<boolean>;
   dirty: boolean;
   onOpenSidebar: () => void;
   onOpenMenu: () => void;
 }
 
-/** One note, full screen: round sidebar and ⋮ buttons, the note's title, then the live editor. */
+/** One note, full screen: round sidebar and ⋮ buttons, the note's title (editable), then the live editor. */
 const NoteScreen = forwardRef<NoteEditorHandle, NoteScreenProps>(function NoteScreen(
-  { title, dirty, onOpenSidebar, onOpenMenu, ...editor },
+  { title, onRename, dirty, onOpenSidebar, onOpenMenu, ...editor },
   ref,
 ) {
   return (
@@ -30,9 +33,7 @@ const NoteScreen = forwardRef<NoteEditorHandle, NoteScreenProps>(function NoteSc
           </Pressable>
         </View>
       </View>
-      <Text style={styles.title} numberOfLines={2}>
-        {title}
-      </Text>
+      <NoteTitle name={title} onRename={onRename} />
       <NoteEditor ref={ref} {...editor} />
     </KeyboardAvoidingView>
   );
@@ -60,6 +61,5 @@ const styles = StyleSheet.create({
   round: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.panel, alignItems: 'center', justifyContent: 'center' },
   right: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   dirty: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.accent },
-  title: { color: colors.textDim, fontSize: 32, fontWeight: '700', paddingHorizontal: 18, paddingTop: 8 },
   empty: { color: colors.textFaint, fontSize: 16, padding: 18 },
 });

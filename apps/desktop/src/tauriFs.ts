@@ -10,6 +10,7 @@ import {
   writeFile,
   writeTextFile,
 } from "@tauri-apps/plugin-fs";
+import type { FolderFs } from "@granite/core-notes";
 import type { DirEntry, VaultFileSystem } from "@granite/core-cloud";
 
 const isTauri = () =>
@@ -109,6 +110,14 @@ export const tauriFs: VaultFileSystem = {
     }
     await remove(path);
   },
+  async removeDir(path) {
+    if (!isTauri()) {
+      for (const k of [...memFiles.keys()]) if (k.startsWith(`${path}/`)) memFiles.delete(k);
+      for (const d of [...memDirs]) if (d === path || d.startsWith(`${path}/`)) memDirs.delete(d);
+      return;
+    }
+    await remove(path, { recursive: true });
+  },
   async stat(path) {
     if (!isTauri()) {
       const val = memFiles.get(path);
@@ -131,3 +140,6 @@ export async function moveFile(from: string, to: string): Promise<void> {
   }
   await rename(from, to);
 }
+
+/** What moving a folder needs: the vault filesystem plus file moves. */
+export const folderFs: VaultFileSystem & FolderFs = { ...tauriFs, moveFile };

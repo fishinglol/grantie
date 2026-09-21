@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { conflictCopyName, planSync } from "../src/syncPlan.ts";
+import { conflictCopyName, countDeletionUnits, planSync } from "../src/syncPlan.ts";
 import { emptyIndex, type LocalFile, type RemoteFile, type SyncIndex } from "../src/types.ts";
 
 const local = (path: string, modifiedMs: number): LocalFile => ({ path, modifiedMs, size: 1 });
@@ -88,4 +88,19 @@ test("conflict copies sit next to the original and keep the extension", () => {
     conflictCopyName("assets/photo.png", at),
     "assets/photo (Drive copy 2026-09-03 14-05-09).png",
   );
+});
+
+test("a folder that is deleted whole counts as one deletion; scattered deletions count one each", () => {
+  const files = ["Old/a.md", "Old/deep/b.md", "Old/c.md", "Keep/d.md", "Keep/e.md", "top.md"];
+  const local = files.filter((p) => p.startsWith("Keep") || p === "top.md").map((p) => ({ path: p, modifiedMs: 1, size: 1 }));
+  const remote = files.map((p) => ({ id: p, path: p, modifiedTime: "t" }));
+  const index: SyncIndex = {
+    folderId: "f",
+    files: Object.fromEntries(files.map((p) => [p, { remoteId: p, localModifiedMs: 1, remoteModified: "t" }])),
+  };
+  assert.equal(countDeletionUnits(planSync(local, remote, index)), 1);
+
+  // One note gone from a folder that keeps others is a deletion of its own.
+  const partial = local.filter((f) => f.path !== "Keep/d.md");
+  assert.equal(countDeletionUnits(planSync(partial, remote, index)), 2);
 });

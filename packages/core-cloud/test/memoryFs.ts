@@ -48,6 +48,10 @@ export class MemoryFs implements VaultFileSystem {
   async removeFile(path: string): Promise<void> {
     if (!this.files.delete(path)) throw new Error(`ENOENT ${path}`);
   }
+  async removeDir(path: string): Promise<void> {
+    for (const k of [...this.files.keys()]) if (k.startsWith(`${path}/`)) this.files.delete(k);
+    for (const d of [...this.dirs]) if (d === path || d.startsWith(`${path}/`)) this.dirs.delete(d);
+  }
   async stat(path: string): Promise<FileStat> {
     const f = this.files.get(path);
     if (!f) throw new Error(`ENOENT ${path}`);
@@ -106,11 +110,36 @@ export class FakeProvider implements CloudProvider {
       size: f.data.length,
     }));
   }
+  /** Folders that exist on the fake remote; like Drive, uploading a file creates its folders. */
+  readonly folders = new Map<string, string>();
+  #addFolders(path: string): void {
+    const parts = path.split("/").slice(0, -1);
+    parts.forEach((_, i) => {
+      const dir = parts.slice(0, i + 1).join("/");
+      if (!this.folders.has(dir)) this.folders.set(dir, `dir-${this.#nextId++}`);
+    });
+  }
+  async listFolders(): Promise<{ id: string; path: string }[]> {
+    for (const path of this.remote.keys()) this.#addFolders(path);
+    return [...this.folders].map(([path, id]) => ({ id, path }));
+  }
+  async ensureFolder(_folderId: string, path: string): Promise<void> {
+    this.#addFolders(`${path}/x`);
+    this.changeCount++;
+  }
   async download(fileId: string): Promise<Uint8Array> {
     for (const f of this.remote.values()) if (f.id === fileId) return f.data;
     throw new Error(`no such remote file ${fileId}`);
   }
   async trash(fileId: string): Promise<void> {
+    for (const [path, id] of this.folders) {
+      if (id === fileId) {
+        this.folders.delete(path);
+        this.trashed.push(`${path}/`);
+        this.changeCount++;
+        return;
+      }
+    }
     for (const [path, f] of this.remote) {
       if (f.id === fileId) {
         this.remote.delete(path);
@@ -128,6 +157,7 @@ export class FakeProvider implements CloudProvider {
   }
   async upload(args: UploadArgs): Promise<RemoteFile> {
     this.uploads.push(args.path);
+    this.#addFolders(args.path);
     const existing = this.remote.get(args.path);
     const id = args.existingId ?? existing?.id ?? `id-${this.#nextId++}`;
     const modifiedTime = this.#stamp();

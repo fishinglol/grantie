@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 import { Directory, Paths } from 'expo-file-system';
-import { IMAGE_FILE, join, type FileSystem } from '@granite/core-notes';
+import { IMAGE_FILE, join } from '@granite/core-notes';
 import type { VaultFileSystem } from '@granite/core-cloud';
 
 /**
@@ -32,13 +32,18 @@ is on that line.
 See [the project brief](https://example.com/granite) for the bigger picture.
 `;
 
-/** Create the sample note on first launch if the vault has no notes. Idempotent. */
-export async function ensureSampleVault(fs: FileSystem): Promise<void> {
+/**
+ * Create the sample note only in a vault with no notes at all. Checking for `welcome.md` itself would bring
+ * it back on every launch after the user deleted it (and sync would spread it to the other devices).
+ * Returns 'welcome.md' if it is there, so it can be opened.
+ */
+export async function ensureSampleVault(fs: VaultFileSystem): Promise<string | null> {
   const welcome = join(VAULT_DIR, 'welcome.md');
-  if (!(await fs.exists(welcome))) {
+  if (!(await fs.exists(VAULT_DIR)) || (await scanVault(fs)).notes.length === 0) {
     await fs.mkdirp(VAULT_DIR);
     await fs.writeTextFile(welcome, SAMPLE_NOTE);
   }
+  return (await fs.exists(welcome)) ? 'welcome.md' : null;
 }
 
 export interface VaultScan {

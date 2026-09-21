@@ -37,6 +37,10 @@ export const memFs: MovableFs = {
   async removeFile(path) {
     files.delete(path);
   },
+  async removeDir(path) {
+    for (const key of [...files.keys()]) if (key.startsWith(asDir(path))) files.delete(key);
+    for (const dir of [...dirs]) if (dir === path || dir.startsWith(asDir(path))) dirs.delete(dir);
+  },
   async moveFile(from, to) {
     const v = files.get(from);
     if (v === undefined) throw new Error(`memFs: not found — ${from}`);

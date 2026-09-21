@@ -47,6 +47,7 @@ State: the user runs the phone app in **Expo Go** on a Samsung phone (Mac and ph
   iframe host, declared permissions, per-device enable, `.granite/` syncs). Trust model was not answered; the
   sandboxed default was used and should be confirmed. Details, limits and next steps: `pluginDesign.md` "Status".
   Needs their real-device check (desktop needs a `tauri dev` rebuild for `fs:allow-remove`, which also serves plugins' notes).
+- **Folder delete + move** added on desktop and phone (see `progress.md` "Folder delete + move"); needs a real-device check.
 - Next candidates: open the PR into `main`; real-Drive test of moving/deleting notes across two devices;
   refresh token → secure storage; standalone Android install (EAS `.apk`); a `.env.example` note that the
   desktop and phone clients are different types.
