@@ -19,6 +19,7 @@ import "./editor.css";
  *              plugins { plugins }                 the plugins to run, [{ manifest, code }]; others are stopped
  *              plugin-run { n, pluginId, commandId } run a plugin command
  *              vault-result { id, ok, value|error } answer to a plugin's vault request
+ *              swipe-right                          a quick swipe to the right: the app opens the sidebar
  * page → app   ready                               the page can take `init`
  *              change { value }                    the user edited the note
  *              notice { message }                  a plugin wants to show a message
@@ -69,6 +70,7 @@ const FORMATS: { kind: InlineFormat; label: string; title: string }[] = [
   { kind: "bold", label: "B", title: "Bold" },
   { kind: "italic", label: "I", title: "Italic" },
   { kind: "strike", label: "S", title: "Strikethrough" },
+  { kind: "underline", label: "U", title: "Underline" },
 ];
 
 /**
@@ -112,7 +114,66 @@ function FormatBar({ onFormat }: { onFormat: (kind: InlineFormat) => void }) {
   );
 }
 
+/**
+ * Keep the page exactly as tall as the part of the screen the keyboard leaves free. When the keyboard opens the
+ * browser may only shrink the *visual* viewport (the layout viewport stays full height, so a bar at the bottom of
+ * the page ends up behind the keyboard, or scrolled out of sight when the note isn't scrolled to its end).
+ * `--vv-top` / `--vv-height` follow the visual viewport and `.page` is pinned to it (see editor.css).
+ */
+function useVisibleArea() {
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const fit = () => {
+      const style = document.documentElement.style;
+      style.setProperty("--vv-top", `${vv.offsetTop}px`);
+      style.setProperty("--vv-height", `${vv.height}px`);
+    };
+    fit();
+    vv.addEventListener("resize", fit);
+    vv.addEventListener("scroll", fit);
+    return () => {
+      vv.removeEventListener("resize", fit);
+      vv.removeEventListener("scroll", fit);
+    };
+  }, []);
+}
+
+/** A quick swipe to the right anywhere on the note asks the app to open the sidebar (like Obsidian's phone app). */
+function useSwipeToOpenSidebar() {
+  useEffect(() => {
+    let start: { x: number; y: number; time: number } | null = null;
+    const onStart = (e: TouchEvent) => {
+      const t = e.touches[0];
+      const skip = !t || e.touches.length !== 1 || (e.target instanceof Element && e.target.closest(".cm-table-wrap, .cm-img-wrap, .format-bar"));
+      start = skip ? null : { x: t!.clientX, y: t!.clientY, time: Date.now() };
+    };
+    const onEnd = (e: TouchEvent) => {
+      const t = e.changedTouches[0];
+      const s = start;
+      start = null;
+      if (!s || !t) return;
+      const dx = t.clientX - s.x;
+      // Fast, mostly horizontal, and not while text is selected (dragging a selection is not a swipe).
+      if (dx > 80 && Math.abs(t.clientY - s.y) < dx * 0.4 && Date.now() - s.time < 400 && window.getSelection()?.isCollapsed !== false) {
+        send({ type: "swipe-right" });
+      }
+    };
+    const cancel = () => (start = null);
+    document.addEventListener("touchstart", onStart, { passive: true });
+    document.addEventListener("touchend", onEnd, { passive: true });
+    document.addEventListener("touchcancel", cancel, { passive: true });
+    return () => {
+      document.removeEventListener("touchstart", onStart);
+      document.removeEventListener("touchend", onEnd);
+      document.removeEventListener("touchcancel", cancel);
+    };
+  }, []);
+}
+
 function Page() {
+  useVisibleArea();
+  useSwipeToOpenSidebar();
   const [value, setValue] = useState("");
   const [notePath, setNotePath] = useState<string | null>(null);
   const [embeds, setEmbeds] = useState<ReadonlyMap<string, string>>(new Map());

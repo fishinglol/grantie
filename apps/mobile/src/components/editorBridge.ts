@@ -44,6 +44,9 @@ export function createEditorBridge(post: (message: object) => void, getProps: ()
         case 'change':
           if (typeof msg.value === 'string') props.onChange(msg.value);
           break;
+        case 'swipe-right':
+          props.onSwipeRight();
+          break;
         case 'notice':
           props.onNotice(String(msg.message));
           break;

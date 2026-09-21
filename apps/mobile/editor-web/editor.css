@@ -13,6 +13,7 @@
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body, #root { margin: 0; height: 100%; background: #141720; }
+html, body { overflow: hidden; }
 body {
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -26,7 +27,16 @@ body {
 .live-editor .cm-img-bar { opacity: 1; }
 
 /* The editor fills the page; the format bar sits under it, above the keyboard. */
-.page { display: flex; flex-direction: column; height: 100%; }
+/* Pinned to the part of the screen the keyboard leaves free (--vv-* are set from the visual viewport in main.tsx). */
+.page {
+  position: fixed;
+  left: 0;
+  width: 100%;
+  top: var(--vv-top, 0px);
+  height: var(--vv-height, 100%);
+  display: flex;
+  flex-direction: column;
+}
 .page .live-editor { height: auto; }
 .format-bar {
   display: flex;
@@ -47,4 +57,5 @@ body {
 }
 .format-bar button:active { background: var(--panel-hover); }
 .format-bar .format-italic { font-style: italic; font-weight: 600; font-family: Georgia, "Times New Roman", serif; }
+.format-bar .format-underline { text-decoration: underline; text-underline-offset: 3px; font-weight: 600; }
 .format-bar .format-strike { text-decoration: line-through; font-weight: 500; }

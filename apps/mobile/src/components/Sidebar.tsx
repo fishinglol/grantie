@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react';
-import { Animated, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Animated, PanResponder, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { colors } from '../theme';
 
-/** Slide-in drawer from the left with a dimmed backdrop; stays mounted so its state survives closing. */
+/** Slide-in drawer from the left with a dimmed backdrop (swipe left to close); stays mounted so its state survives closing. */
 export default function Sidebar({ open, onClose, children }: { open: boolean; onClose: () => void; children: React.ReactNode }) {
   const { width } = useWindowDimensions();
   const drawerWidth = Math.min(width * 0.84, 360);
@@ -11,6 +11,16 @@ export default function Sidebar({ open, onClose, children }: { open: boolean; on
   useEffect(() => {
     Animated.timing(progress, { toValue: open ? 1 : 0, duration: 220, useNativeDriver: true }).start();
   }, [open, progress]);
+
+  // A quick swipe to the left closes the drawer; only mostly-horizontal drags count, so the list still scrolls.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const swipe = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, g) => g.dx < -12 && Math.abs(g.dx) > Math.abs(g.dy) * 2,
+      onPanResponderRelease: (_, g) => g.dx < -60 && onCloseRef.current(),
+    }),
+  ).current;
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents={open ? 'auto' : 'none'}>
@@ -23,7 +33,9 @@ export default function Sidebar({ open, onClose, children }: { open: boolean; on
           { width: drawerWidth, transform: [{ translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [-drawerWidth, 0] }) }] },
         ]}
       >
-        {children}
+        <View style={{ flex: 1 }} {...swipe.panHandlers}>
+          {children}
+        </View>
       </Animated.View>
     </View>
   );

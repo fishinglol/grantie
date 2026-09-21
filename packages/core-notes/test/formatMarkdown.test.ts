@@ -84,3 +84,29 @@ test("formats stack on the outside and come off one at a time, in any order", ()
   assert.equal(run(text, from, to, "strike").out, "***at***");
   assert.equal(run(text, from, to, "italic").out, "~~**at**~~");
 });
+
+test("underline uses <u> tags and toggles off again", () => {
+  const on = run("say hello there", 4, 9, "underline");
+  assert.equal(on.out, "say <u>hello</u> there");
+  assert.equal(on.selected, "hello");
+  const off = run(on.out, 7, 12, "underline");
+  assert.equal(off.out, "say hello there");
+  assert.equal(off.selected, "hello");
+});
+
+test("underline stacks with the other formats in any order", () => {
+  let r = run("at", 0, 2, "bold");
+  r = run(r.out, r.out.indexOf("at"), r.out.indexOf("at") + 2, "underline");
+  assert.equal(r.out, "<u>**at**</u>");
+  const s = r.out.indexOf("at");
+  assert.equal(run(r.out, s, s + 2, "bold").out, "<u>at</u>");
+  assert.equal(run(r.out, s, s + 2, "underline").out, "**at**");
+  assert.equal(run("<u>x</u>", 3, 4, "italic").out, "*<u>x</u>*");
+});
+
+test("underline with no selection formats the word, and keeps the cursor", () => {
+  const r = run("one two", 5, 5, "underline"); // inside "two"
+  assert.equal(r.out, "one <u>two</u>");
+  assert.equal(r.cursor, 8);
+  assert.equal(run(r.out, r.cursor, r.cursor, "underline").out, "one two");
+});

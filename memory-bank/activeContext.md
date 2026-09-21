@@ -47,7 +47,15 @@ State: the user runs the phone app in **Expo Go** on a Samsung phone (Mac and ph
   iframe host, declared permissions, per-device enable, `.granite/` syncs). Trust model was not answered; the
   sandboxed default was used and should be confirmed. Details, limits and next steps: `pluginDesign.md` "Status".
   Needs their real-device check (desktop needs a `tauri dev` rebuild for `fs:allow-remove`, which also serves plugins' notes).
-- **Folder delete + move** added on desktop and phone (see `progress.md` "Folder delete + move"); needs a real-device check.
+- **Later the same day (branch `feat/mobile-live-editor`, all in `progress.md`):** folder delete + move; **folder sync**
+  (empty folders sync both ways, a deleted folder is removed on the other device, only when empty); `welcome.md` no longer
+  re-created after deletion; collapse/expand-all folders; bold / italic / strikethrough / underline (Mod-B/I/Shift-X/U and a
+  B I S U bar above the phone keyboard); the note's name as an editable heading that renames the file, `.md` hidden from users;
+  swipe right to open the phone sidebar; scroll past the end; indent guides; image-toolbar colours fixed for light themes.
+  User-driven, screenshot by screenshot. **Everything here was checked in the browser previews and unit tests only, not on the
+  Samsung phone or a real Drive** (the phone must be Reloaded in Expo Go to pick up new editor pages; the user once ran a stale bundle).
+- Lessons: the user's phrasing was ambiguous twice ("กดทับ" was indent guides, not an active-line highlight, which was built and
+  removed); when unsure, ask or state the interpretation. `apps/mobile/src/editorHtml.ts` is generated: `node scripts/build-editor.mjs`.
 - Next candidates: open the PR into `main`; real-Drive test of moving/deleting notes across two devices;
   refresh token → secure storage; standalone Android install (EAS `.apk`); a `.env.example` note that the
   desktop and phone clients are different types.

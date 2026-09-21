@@ -589,6 +589,7 @@ export default function App() {
           onRename={renameNote}
           dirty={dirty}
           onChange={onChange}
+          onSwipeRight={() => setSidebar(true)}
           plugins={runningPlugins}
           onNotice={say}
           onVault={pluginVault}

@@ -146,6 +146,21 @@ Relative links (`![](assets/a.png)`, `[f](x.pdf)`) depend on the note's folder, 
 runs `relocateLinks(text, oldDir, newDir)` (URLs, anchors and absolute paths untouched),
 after flushing any unsaved edits and refusing to overwrite an existing file.
 
+## Pattern: folders are synced as records, like files
+`VaultSync` runs a folder pass after the file pass. `SyncIndex.folders` holds the folders both sides had after the last
+sync; a folder missing on one side but in that list was deleted there. Empty folders sync (created on the other side);
+a folder is only removed while **empty**, so nothing inside can be lost. Upgrade path: with no folder history and
+file records present, empty one-sided folders are leftovers of the old file-only sync and are cleaned up; a brand-new device
+just copies. `countDeletionUnits` counts a wholly-deleted folder as one deletion for the "too many deletions" breaker.
+`moveFolder` (core-notes) moves file by file and rewrites relative links that point outside the folder.
+
+## Pattern: inline formatting is a pure toggle over "marker zones"
+`toggleFormat(text, from, to, kind)` (core-notes) returns edits + the selection to restore. Every `*`, `~`, `<u>` / `</u>` touching the
+text is one zone; a format is on if the zone has enough of its marker on both sides; new markers go on the outside. Underline is
+`<u>` (not Markdown). Desktop binds Mod-B/I/U/Shift-X; the phone shows a B I S U bar *inside the WebView page* (buttons act on
+`pointerdown` + `preventDefault` to keep focus), pinned to `visualViewport` so it sits above the keyboard even when Android only
+shrinks the visual viewport.
+
 ## Gotchas (each cost real debugging time)
 - **Verify UI changes on a fresh page load.** The `EditorView` is created once per mount, so
   hot-reload keeps old extensions; the reload guard at the bottom of `LiveEditor.tsx` fixes

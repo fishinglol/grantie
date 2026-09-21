@@ -40,6 +40,9 @@
 /* Inline */
 .live-editor .cm-strong { font-weight: 700; color: var(--h); }
 .live-editor .cm-em { font-style: italic; }
+/* Indent guides: painted on the leading whitespace; the vertical padding makes the lines meet across the line gaps. */
+.live-editor .cm-indent-guide { box-shadow: inset 1px 0 0 var(--text-dim); padding: 0.3em 0; opacity: 0.45; }
+.live-editor .cm-underline { text-decoration: underline; text-underline-offset: 3px; }
 .live-editor .cm-strike { text-decoration: line-through; color: var(--text-dim); }
 .live-editor .cm-link { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
 .live-editor .cm-inline-code {

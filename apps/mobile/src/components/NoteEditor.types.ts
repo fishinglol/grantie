@@ -21,6 +21,8 @@ export interface NoteEditorProps {
   /** Vault images by lower-cased file name, for `![[name.png]]` embeds. */
   embeds: ReadonlyMap<string, string>;
   onChange: (text: string) => void;
+  /** The user swiped right on the note: show the sidebar. */
+  onSwipeRight: () => void;
   /** Plugins switched on for this device; they run inside the editor page. */
   plugins: { manifest: PluginManifest; code: string }[];
   onNotice: (message: string) => void;

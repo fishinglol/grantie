@@ -1,6 +1,6 @@
 # Progress
 
-_Last updated: 2026-09-20_
+_Last updated: 2026-09-21_
 
 ## Done
 - **`conflict_cleaner` CLI v0.1** — finds & resolves sync-conflict files (Python,
@@ -256,6 +256,27 @@ _Last updated: 2026-09-20_
   moving the open note bumps `docId`.
 - Not done: links to a renamed note from other notes are not rewritten (same decision as before: only "the note moved
   -> its own relative links follow"). On other devices a rename arrives as delete + new file.
+
+### Phone follow-ups: keyboard bar, swipe, underline (2026-09-21)
+- [x] The B/I/S bar was behind the keyboard unless the note was scrolled to its end: on Android the keyboard only shrinks the
+      *visual* viewport. `editor-web/main.tsx` `useVisibleArea()` copies `visualViewport` height/offset into `--vv-height` /
+      `--vv-top` and `.page` is `position: fixed` to them (`html, body` no longer scroll). Only checked by resizing the
+      web-preview iframe; NOT on the Samsung keyboard.
+- [x] Swipe to open the sidebar: a quick right swipe on the note (page JS `useSwipeToOpenSidebar` -> `swipe-right` message ->
+      `onSwipeRight`), ignored over tables/images/the bar and while text is selected; a left swipe closes the drawer
+      (`Sidebar.tsx` PanResponder). It is a flick (no finger-following drag).
+- [x] Underline: `<u>text</u>` (Markdown has none, same as Obsidian). `toggleFormat` takes `underline` and stacks with the others;
+      the live preview underlines the text and hides the tags off-cursor (`cm-underline`); Mod-U on desktop, a U button on the phone.
+- [x] Live-preview decorations are also rebuilt when the background parse catches up; before, a slow parse left a note
+      unstyled until the next edit (seen once in the throttled preview tab).
+
+- [x] Scroll past the end (Obsidian-style): `scrollPastEnd()` in the shared editor lets the last line be scrolled up to the top,
+      and a `scrollMargins` bottom margin (30% of the editor) keeps the caret out of the bottom edge while typing at the end.
+      Checked on the desktop preview (last line lands at the top when scrolled to the end); phone needs `build-editor` + reload.
+
+- [x] Indent guides: a thin vertical line at every indent level (a tab, or two spaces) of a line's leading whitespace, in the
+      shared editor (`cm-indent-guide` marks in `buildDecorations`; padding makes them meet across the line gaps). An active-line
+      highlight was built first by mistake (the user meant vertical lines) and removed. Guides don't continue on wrapped rows.
 
 ## Left to do
 

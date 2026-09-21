@@ -6,7 +6,7 @@ export { IMAGE_FILE } from "./files.ts";
 export { relocateLinks } from "./relocateLinks.ts";
 export { moveFolder } from "./folders.ts";
 export { noteTitle, renamedNoteFile } from "./noteName.ts";
-export { FORMAT_MARKER, toggleFormat } from "./formatMarkdown.ts";
+export { toggleFormat } from "./formatMarkdown.ts";
 export type { FormatEdit, InlineFormat } from "./formatMarkdown.ts";
 export type { FolderFs } from "./folders.ts";
 export type { FileSystem } from "./fs.ts";

@@ -19,6 +19,7 @@ import {
   EditorView,
   keymap,
   placeholder,
+  scrollPastEnd,
   WidgetType,
 } from "@codemirror/view";
 import { dirname, IMAGE_FILE, join, toggleFormat, type InlineFormat } from "@granite/core-notes";
@@ -449,6 +450,17 @@ function frontmatterRange(state: EditorState): { to: number; rows: [string, stri
 const TABLE_DELIM = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
 const RULE = /^\s*([-*_])(\s*\1){2,}\s*$/;
 
+function inInlineCode(state: EditorState, pos: number): boolean {
+  const tree = syntaxTree(state);
+  for (let node: ReturnType<typeof tree.resolveInner> | null = tree.resolveInner(pos, 1); node; node = node.parent) {
+    if (node.name === "InlineCode") return true;
+  }
+  return false;
+}
+
+/** Underline is not Markdown, so it is written `<u>text</u>`. */
+const UNDERLINE = /<u>[^<\n]+<\/u>/g;
+
 function inCodeBlock(state: EditorState, pos: number): boolean {
   const tree = syntaxTree(state);
   let node: ReturnType<typeof tree.resolveInner> | null = tree.resolveInner(pos, 1);
@@ -689,6 +701,36 @@ function buildDecorations(state: EditorState, ctx: PreviewContext): DecorationSe
     },
   });
 
+  // Underlined text: the tags hide unless the cursor is on them, like the other markers.
+  for (let n = fm ? doc.lineAt(fm.to).number + 1 : 1; n <= doc.lines; n++) {
+    const line = doc.line(n);
+    if (!line.text.includes("<u>")) continue;
+    for (const m of line.text.matchAll(UNDERLINE)) {
+      const from = line.from + m.index!;
+      const to = from + m[0].length;
+      if (inTable(from, to) || inEmbed(from, to) || inCodeBlock(state, from) || inInlineCode(state, from)) continue;
+      out.push(markDeco("cm-underline").range(from + 3, to - 4));
+      if (!touches(from, to)) {
+        hide(from, from + 3);
+        hide(to - 4, to);
+      }
+    }
+  }
+
+  // Indent guides: a thin vertical line at every level of a line's leading whitespace (a tab, or two spaces).
+  // Drawn on the whitespace itself, so the lines sit exactly where the text is indented whatever the font.
+  for (let n = fm ? doc.lineAt(fm.to).number + 1 : 1; n <= doc.lines; n++) {
+    const line = doc.line(n);
+    const lead = /^[ \t]+/.exec(line.text);
+    if (!lead || lead[0].length === line.text.length || inTable(line.from, line.to) || inEmbed(line.from, line.to)) continue;
+    for (let i = 0; i < lead[0].length; ) {
+      const unit = lead[0][i] === "\t" ? 1 : 2;
+      if (i + unit > lead[0].length || lead[0].slice(i, i + unit).includes("\t") !== (unit === 1)) break;
+      out.push(markDeco("cm-indent-guide").range(line.from + i, line.from + i + unit));
+      i += unit;
+    }
+  }
+
   return Decoration.set(out, true);
 }
 
@@ -696,7 +738,8 @@ function livePreview(ctx: PreviewContext) {
   const field = StateField.define<DecorationSet>({
     create: (state) => buildDecorations(state, ctx),
     update(deco, tr) {
-      if (tr.docChanged || tr.selection || tr.effects.some((e) => e.is(refresh) || e.is(setSel))) {
+      // The parser works in the background, so also rebuild when it has caught up (a long note would stay half-styled).
+      if (tr.docChanged || tr.selection || syntaxTree(tr.state) !== syntaxTree(tr.startState) || tr.effects.some((e) => e.is(refresh) || e.is(setSel))) {
         return buildDecorations(tr.state, ctx);
       }
       return deco;
@@ -706,7 +749,7 @@ function livePreview(ctx: PreviewContext) {
   return field;
 }
 
-/** Wrap / unwrap the selection (or the word at the cursor) in bold, italic or strikethrough markers. */
+/** Wrap / unwrap the selection (or the word at the cursor) in bold, italic, strikethrough or underline markers. */
 function applyFormat(view: EditorView, format: InlineFormat): boolean {
   const { from, to } = view.state.selection.main;
   const edit = toggleFormat(view.state.doc.toString(), from, to, format);
@@ -720,7 +763,7 @@ function applyFormat(view: EditorView, format: InlineFormat): boolean {
 }
 
 export interface LiveEditorHandle {
-  /** Toggle bold / italic / strikethrough on the selection (the phone's format bar uses this). */
+  /** Toggle bold / italic / strikethrough / underline on the selection (the phone's format bar uses this). */
   format(kind: InlineFormat): void;
   /**
    * Insert Markdown. Given `at` (viewport coordinates inside the editor) it goes
@@ -775,6 +818,7 @@ export default function LiveEditor({ ref, value, embeds, notePath, toUrl, onChan
           keymap.of([
             { key: "Mod-b", run: (v) => applyFormat(v, "bold") },
             { key: "Mod-i", run: (v) => applyFormat(v, "italic") },
+            { key: "Mod-u", run: (v) => applyFormat(v, "underline") },
             { key: "Mod-Shift-x", run: (v) => applyFormat(v, "strike") },
             {
               key: "Escape",
@@ -798,6 +842,10 @@ export default function LiveEditor({ ref, value, embeds, notePath, toUrl, onChan
           indentUnit.of("  "),
           markdown({ base: markdownLanguage }),
           EditorView.lineWrapping,
+          // Like Obsidian: the last line can be scrolled up to the top, and typing near the end keeps the caret
+          // out of the bottom third instead of pinning it to the bottom edge (hard to read, and under the phone's keyboard bar).
+          scrollPastEnd(),
+          EditorView.scrollMargins.of((view) => ({ bottom: view.dom.clientHeight * 0.3 })),
           placeholder("Start writing markdown…"),
           livePreview({
             getBaseDir: () => baseDirRef.current,
