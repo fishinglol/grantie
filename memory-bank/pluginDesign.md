@@ -61,6 +61,10 @@ declared permissions, explicit per-device enable**.
   Command "Turn the paper look on / off". Installed into the user's real vault at
   `~/Documents/GraniteVault-new/.granite/plugins/sheet/`; it syncs to the phone via Drive, then must be switched on
   there. Verified in both browser previews; not yet seen in the real Tauri window / on the phone.
+- **Blocks (added for the Excel plugin)**: permission `editor.blocks` + `granite.blocks.register(lang, render)`; a ```` ```lang ````
+  fence is drawn in place by the plugin (a sandboxed iframe per block inside a CodeMirror block widget, raw text while the cursor is in
+  it). API: `render(el, source, { save, resize, remove, edit })` and an optional `{ update(source) }` handle. See `progress.md`
+  "Excel plugin" for the design, limits and what was not verified on the phone.
 - **Next**: command palette (Cmd+P) so commands aren't only reachable from the Plugins screen; CodeMirror
   extension / event / settings APIs; plugin registry + install-from-URL; docs site; a Worker layer for hangs;
   `desktopOnly` plugins are hidden on the phone but never exercised.

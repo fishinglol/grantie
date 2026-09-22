@@ -21,6 +21,7 @@ const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function NoteEd
   useImperativeHandle(ref, () => ({ insert: bridge.insert, runPluginCommand: bridge.runPluginCommand }), [bridge]);
   useEffect(() => void bridge.sendEmbeds(), [props.embeds, bridge]);
   useEffect(() => bridge.sendPlugins(), [props.plugins, bridge]);
+  useEffect(() => void bridge.sendTitle(), [props.title, bridge]);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {

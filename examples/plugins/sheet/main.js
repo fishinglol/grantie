@@ -17,8 +17,24 @@ const CSS = `
 .live-editor .cm-scroller {
   font-size: 15px;
   line-height: 24px;
-  padding: 24px 0 40px;
+  padding: 0 0 40px;
 }
+/* The note's name is the top of the sheet: same width and paper as the card below, ruled off like a report's header. */
+.live-editor .note-title {
+  box-sizing: border-box;
+  width: min(800px, calc(100% - 28px));
+  max-width: none;
+  height: 48px;
+  margin: 24px auto 0;
+  padding: 0 18px;
+  border-radius: 4px 4px 0 0;
+  border-bottom: 1px solid #72aaff;
+  background: #fafafa;
+  color: #202124;
+  font: 700 20px/47px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.12);
+}
+.live-editor .note-title:focus { box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.12), inset 0 -2px 0 #145ac4; }
 .live-editor .cm-content {
   flex: 0 0 auto;
   box-sizing: border-box;
@@ -28,7 +44,7 @@ const CSS = `
   margin: 0 auto;
   padding: 0 18px 24px;
   aspect-ratio: 8 / 5;
-  border-radius: 4px;
+  border-radius: 0 0 4px 4px;
   background-color: #fafafa;
   background-image: repeating-linear-gradient(to bottom, transparent 0, transparent 23px, #72aaff 23px, #72aaff 24px);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2), 0 10px 28px rgba(0, 0, 0, 0.14);

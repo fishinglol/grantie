@@ -27,6 +27,7 @@ const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function NoteEd
   // Vault images were (re)indexed, or the set of enabled plugins changed, after the page loaded.
   useEffect(() => void bridge.sendEmbeds(), [props.embeds, bridge]);
   useEffect(() => bridge.sendPlugins(), [props.plugins, bridge]);
+  useEffect(() => void bridge.sendTitle(), [props.title, bridge]);
 
   return (
     <WebView

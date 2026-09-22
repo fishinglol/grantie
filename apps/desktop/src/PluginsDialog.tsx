@@ -1,4 +1,6 @@
-import { PERMISSION_LABELS, PLUGINS_DIR } from "@granite/plugins";
+import { useState } from "react";
+import { PERMISSION_LABELS, PLUGINS_DIR, type PluginManifest } from "@granite/plugins";
+import { CATALOG } from "./pluginCatalog";
 import type { PluginsState } from "./usePlugins";
 
 export interface PluginsDialogProps {
@@ -6,9 +8,27 @@ export interface PluginsDialogProps {
   onClose: () => void;
 }
 
-/** Lists the plugins in the vault, lets the user switch them on, and runs their commands. */
+function Permissions({ manifest }: { manifest: PluginManifest }) {
+  return (
+    <div className="plugin-perms">
+      {manifest.permissions.length === 0 ? (
+        <span>Needs no permissions</span>
+      ) : (
+        manifest.permissions.map((p) => (
+          <span key={p} className="plugin-perm">
+            {PERMISSION_LABELS[p]}
+          </span>
+        ))
+      )}
+    </div>
+  );
+}
+
+/** Lists the plugins in the vault (switch on, run commands) and the store where more can be installed. */
 export default function PluginsDialog({ plugins, onClose }: PluginsDialogProps) {
-  const { installed, enabled, failed, commands, loadError, refresh, toggle, run } = plugins;
+  const { installed, enabled, failed, commands, loadError, refresh, toggle, install, run } = plugins;
+  const [tab, setTab] = useState<"installed" | "store">("installed");
+  const [busy, setBusy] = useState<string | null>(null);
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -20,15 +40,53 @@ export default function PluginsDialog({ plugins, onClose }: PluginsDialogProps) 
         onKeyDown={(e) => e.key === "Escape" && onClose()}
       >
         <h2>Plugins</h2>
-        {installed === null && <p>Looking for plugins…</p>}
-        {loadError && <p className="modal-error">Couldn't read the plugins folder: {loadError}</p>}
-        {installed?.length === 0 && !loadError && (
+        <div className="plugin-tabs" role="tablist">
+          <button role="tab" aria-selected={tab === "installed"} className={tab === "installed" ? "on" : ""} onClick={() => setTab("installed")}>
+            Installed
+          </button>
+          <button role="tab" aria-selected={tab === "store"} className={tab === "store" ? "on" : ""} onClick={() => setTab("store")}>
+            Store
+          </button>
+        </div>
+        {tab === "store" && (
+          <ul className="plugin-list">
+            {CATALOG.map(({ manifest: m, ...entry }) => {
+              const have = installed?.find((p) => p.manifest?.id === m.id)?.manifest;
+              const label = !have ? "Install" : have.version !== m.version ? "Update" : "Installed";
+              return (
+                <li key={m.id} className="plugin">
+                  <div className="plugin-head">
+                    <div>
+                      <strong>{m.name}</strong> <span className="plugin-version">v{m.version}</span>
+                      {m.author && <span className="plugin-version"> · {m.author}</span>}
+                    </div>
+                    <button
+                      className={label === "Installed" ? "" : "primary"}
+                      disabled={label === "Installed" || busy !== null}
+                      onClick={() => {
+                        setBusy(m.id);
+                        void install({ manifest: m, ...entry }).finally(() => setBusy(null));
+                      }}
+                    >
+                      {busy === m.id ? "Installing…" : label}
+                    </button>
+                  </div>
+                  {m.description && <p>{m.description}</p>}
+                  <Permissions manifest={m} />
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {tab === "installed" && installed === null && <p>Looking for plugins…</p>}
+        {tab === "installed" && loadError && <p className="modal-error">Couldn't read the plugins folder: {loadError}</p>}
+        {tab === "installed" && installed?.length === 0 && !loadError && (
           <p>
-            No plugins installed. Put a plugin folder in <code>{PLUGINS_DIR}/</code> inside your vault (see{" "}
-            <code>examples/plugins/hello-granite</code>), then press Refresh.
+            No plugins installed yet. Open the <a href="#store" onClick={(e) => (e.preventDefault(), setTab("store"))}>Store</a> to add one, or put a
+            plugin folder in <code>{PLUGINS_DIR}/</code> inside your vault and press Refresh.
           </p>
         )}
-        <ul className="plugin-list">
+        <ul className="plugin-list" hidden={tab !== "installed"}>
           {installed?.map((plugin) => {
             const m = plugin.manifest;
             if (!m) {
@@ -56,17 +114,7 @@ export default function PluginsDialog({ plugins, onClose }: PluginsDialogProps) 
                   </label>
                 </div>
                 {m.description && <p>{m.description}</p>}
-                <div className="plugin-perms">
-                  {m.permissions.length === 0 ? (
-                    <span>Needs no permissions</span>
-                  ) : (
-                    m.permissions.map((p) => (
-                      <span key={p} className="plugin-perm">
-                        {PERMISSION_LABELS[p]}
-                      </span>
-                    ))
-                  )}
-                </div>
+                <Permissions manifest={m} />
                 {failed[m.id] && <p className="modal-error">Couldn't start: {failed[m.id]}</p>}
                 {on && mine.length > 0 && (
                   <div className="plugin-commands">

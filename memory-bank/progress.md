@@ -274,9 +274,127 @@ _Last updated: 2026-09-21_
       and a `scrollMargins` bottom margin (30% of the editor) keeps the caret out of the bottom edge while typing at the end.
       Checked on the desktop preview (last line lands at the top when scrolled to the end); phone needs `build-editor` + reload.
 
-- [x] Indent guides: a thin vertical line at every indent level (a tab, or two spaces) of a line's leading whitespace, in the
-      shared editor (`cm-indent-guide` marks in `buildDecorations`; padding makes them meet across the line gaps). An active-line
-      highlight was built first by mistake (the user meant vertical lines) and removed. Guides don't continue on wrapped rows.
+- [x] Indent guide (redesigned after the user found one line per level ugly, "like a comb", and liked a single bar): ONE thin bar
+      8px left of an indented line's text, on its last tab (or last two spaces); lines indented alike form one continuous bar and
+      it steps in/out as the indent changes. Spaces after a tab don't move the bar (so an "↓" line between steps keeps the bar aligned). A variant that dropped the bar on
+      such lines was tried and reverted at the user's request. An active-line highlight was built first by
+      mistake (the user meant vertical lines) and removed. Guides don't continue on wrapped rows.
+
+- [x] The note title moved INTO the shared editor (`packages/live-editor/src/NoteTitle.tsx`, `LiveEditor`'s `title` prop, rendered
+      inside `.live-editor`), so a theme/plugin that restyles `.live-editor` restyles it too. Before, the desktop title sat outside it
+      on the dark pane (white text on a dark band above the Sheet paper) and the phone's title was a React Native TextInput outside
+      the WebView. The phone now shows it inside the page: page -> app `rename { n, title }`, app -> page `rename-result { n, ok }`
+      and `title { title }` (props `title` / `onRename` on `NoteEditor`). `.editor-pane` / `.live-editor` got `min-width: 0` (a fixed-width
+      child stretched the pane past the window).
+- [x] Sheet plugin v1.1.0: the title is the ruled header of the paper (same width, `border-bottom` rule, card's top corners squared).
+      The copy in a vault (`.granite/plugins/sheet/`) is separate from `examples/plugins/sheet/`: it must be re-copied to update.
+
+### Excel plugin: a spreadsheet inside the note (2026-09-21, desktop and phone code)
+- [x] The user asked for an "Excel" plugin that behaves like Excel / Google Sheets (screenshot of a Sheets workbook) and, after
+      another AI's version (a full-screen desktop-only modal wired into `NoteApp` / `usePlugins` with an `if (pluginId === ...)`
+      hack) was rejected, said: not a pop-up, "in the same page". That version was deleted (`SpreadsheetModal.tsx`,
+      `examples/plugins/spreadsheet`, the hooks in `NoteApp.tsx` / `usePlugins.ts`).
+- [x] **Plugin API v1 grew "blocks"**: permission `editor.blocks` + `granite.blocks.register(lang, render)`. Any ```` ```lang ````
+      fence of a registered language is drawn by the plugin *in place* as a CodeMirror block widget (`BlockWidget` in
+      `LiveEditor.tsx`, raw text while the cursor is inside, like tables). Each block is its own sandboxed iframe running the same
+      plugin code in "block mode" (`PluginHost.mountBlock`); it can `save(text)` (rewrites the text between the fences), `resize(px)`,
+      `remove()` and `edit()` (puts the cursor in the block). The editor is handed a `BlockBridge` (created in `usePlugins` and in
+      `editor-web/main.tsx`; the host is created later, in an effect) through the new `blocks` prop. The frame gets the editor's theme
+      variables + `color-scheme` (its opaque origin can't read them). Block frames allow inline `<style>` and `data:` images only.
+- [x] **`examples/plugins/excel`** (id `excel`, permissions `editor.blocks` + `editor.write`): ~1.9k lines of plain JS. Sheet = one
+      ```` ```sheet ```` block of JSON, one cell per line, so the note stays Markdown and syncs. Engine (tokenizer, parser, ~110
+      functions, references, ranges, `A:A`, `$`, copy/insert/delete reference rewriting) is tested from Node
+      (`packages/plugins/test/excel.test.ts` loads `main.js` in a `vm`). Grid: virtualised absolute layout, selection, fill handle,
+      undo/redo, clipboard, formatting, checkbox + colour-chip dropdowns, sort, resize, formula bar / name box. Full list in its README.
+- [x] Lessons: an invisible focused `<textarea>` (not `keydown` on a div) is what makes typing, IME (Thai) and paste work; on touch
+      (`pointer: coarse`) the grid takes focus instead so a tap doesn't raise the keyboard and a second tap edits. Saves are immediate
+      (a debounce would be lost when the note removes the frame). A sheet that fails to parse shows an error + "Show as text" instead of
+      an empty grid, so the next edit can't overwrite the user's data.
+- Verified in the desktop browser preview (edit, formulas, undo/redo, insert row, sort, fill, paste, dropdown, checkbox, insert command,
+  broken JSON, dark theme; tests 16 pass; `tsc` clean except the existing `apps/mobile/editor-web/vite.config.ts` warning).
+  **Not verified**: the phone (WebView, touch taps, keyboard), the real Tauri window, a real vault. The preview screenshot tool paints
+  iframe content one capture late, so take two screenshots. The phone page needs `node scripts/build-editor.mjs` + reload.
+- Install into a real vault: copy `examples/plugins/excel/` to `<vault>/.granite/plugins/excel/`, switch it on under Plugins.
+
+### Plugin Store (2026-09-21, desktop)
+- [x] The user asked for a plugin store: list everything in one place and install from it (they install the Sheet plugin from there).
+      Plugins dialog now has **Installed | Store** tabs. The store lists every folder in `examples/plugins/` (bundled at build time by
+      `import.meta.glob(...?raw)` in `apps/desktop/src/pluginCatalog.ts`, so adding a plugin there lists it; no network, no new
+      dependency). **Install / Update / Installed** per row (Update = the bundled version differs from the vault's). Install copies
+      `manifest.json` + `main.js` to `<vault>/.granite/plugins/<id>/` (`install` in `usePlugins.ts`), switches it on for this device (the
+      permissions are shown in the row before installing) and triggers sync, so it reaches the phone (which still has to switch it on).
+- [x] The browser-preview fs `mkdirp` is now recursive like the real one (before, `.granite/plugins` never "existed" in the preview).
+- Not built (asked for nothing more): uninstall, a remote/community catalogue, a phone store screen. Checked in the desktop preview
+  (install Sheet -> listed On, paper look applied); not in the real Tauri window.
+
+### Whole-page sheets + the note's ⋯ menu (2026-09-21, desktop and phone code)
+- [x] The user wanted a note to *be* a sheet ("not a box, the whole page"), started from a **⋯ button at the top right** of the page with a
+      "turn this page into a sheet" action. Plugin API additions: `commands.add({ page: true })` (listed in the ⋯ menu, `CommandInfo.page`),
+      `editor.setText(text)` (permission `editor.write`, `LiveEditorHandle.setText`, one undo step, cursor to the end so the block stays
+      rendered) and `block.resize("fill")` (the frame takes the page's height: `max(320px, calc(var(--vv-height, 100vh) - 150px))`).
+- [x] Desktop: `PageMenu.tsx` in `.editor-pane` (with no page action installed it points to the plugin Store). Phone: the ⋮ sheet
+      (`App.tsx`) gets a group with the plugin's page commands.
+- [x] Excel 1.1.0: command "Turn this page into a sheet" writes a 26x100 sheet with `"page":1` (no resize grip, fills the page). Front
+      matter is kept; a note that only has a "# Title" line is replaced, one with real text keeps it BELOW the sheet (nothing is lost);
+      a page that already has a sheet just says so. Needs `editor.read` now, so an installed 1.0.0 must be updated from the Store.
+- [x] Follow-up (user: "too small, make it full page"): `resize("fill")` now marks the block container `cm-plugin-block-page`; the editor CSS
+      (`live-editor.css`) then drops the 780px column and padding (`:has(.cm-plugin-block-page)`) and sizes the block to `--editor-h`, the
+      scroller's height, which `LiveEditor` publishes with a ResizeObserver. So a page sheet is edge to edge and exactly as tall as the pane.
+- Checked in the desktop preview (install from Store, new note, ⋯, whole page is the sheet, second run says "already has a sheet");
+  18 tests pass. Not checked on the phone (needs `build-editor` + reload) or in the Tauri window.
+
+### Excel: Format menu, merge, conditional formatting, ✎ dropdown, resize bars (2026-09-22)
+- [x] From four Google Sheets screenshots (dropdown menu with ✎, checkboxes, row/column resize handles, the Format menu). Excel 1.1.0 grid now
+      has a **Format ▾** menu: Number, Text, Alignment (+ vertical), Wrapping, Font size, Merge cells, Conditional formatting, Alternating
+      colours, Clear formatting. Sheet JSON gained `merges`, `cf`, `alt` (rectangles `r1 c1 r2 c2`; they follow inserted/deleted rows and
+      columns via `adjustRect`), cell props `fs` (font px) and `va` (t/b). Selecting part of a merge selects all of it (`expandForMerges`);
+      only the top-left value of a merge is kept. Rules: `cfTest` (13 kinds, custom formula via `ev.formula`), first match wins, rule
+      fill/text/bold beat the cell's own, alternating colours only fill cells with no fill.
+- [x] Dropdown menu has the ✎ (edit options); checkbox restyled (rounded, blue when ticked); header border shows a dark bar on hover,
+      double-click fits the column/row to its contents (`autoFit`), touch can drag header borders (12px hit zone), and on a touch screen
+      the round corner handle extends the selection (the mouse's fill handle stays a fill). Skipped from the menu: Theme, Rotation, Convert to table.
+- [x] **Bug (user screenshot): leaving a whole-page sheet and coming back showed the raw ```` ```sheet ```` JSON.** A note opens with the
+      cursor at 0, which is the start of a block that begins the note, and `BlockWidget` treated "cursor touching the block" as editing.
+      Now only a cursor/selection strictly inside the block (`r.from < end.to && r.to > start.from`) shows the text; `</>` still does.
+- Lesson: a `str.replace` that swallowed the first line of the `#more` CSS rule made "+ 20 more rows" float over cell A1: re-read generated CSS.
+- Tests: 22 pass. Checked in the browser via a same-origin harness frame (merge, font size, alternating, clear, conditional rules incl. a
+  formula, error message, ✎, auto-fit, touch extend / resize). Not checked on the phone or in Tauri.
+
+### Excel: the rest of the Format menu + phone Store (2026-09-22)
+- [x] Added what the four screenshots still lacked: **Theme** (`th` light/dark/sepia/green + `ff` serif/mono, applied as classes on `#app`, defaults to the
+      note's colours), **Wrapping = Overflow | Wrap | Clip** (`wr` undefined / 1 / "c"; overflow is the default and lets long left-aligned text run over
+      empty, unfilled neighbours), **Rotation** (`rot` u45 d45 u90 d90), **Smart chips** (dropdown, checkbox, remove), **Convert to table**
+      (`tables`: a rect + `f` filters keyed by column offset; header row gets banded `alt` colours, a ▼ per column with Sort A→Z / Z→A / Filter by values /
+      Clear filter / Convert to range; rows a filter hides get height 0 via `hiddenRows`, arrow keys skip them) and **custom Alternating colours**.
+- [x] Phone: same plugin code runs in the WebView, so all of it is there; added touch sizing (`@media (pointer: coarse)`: 36px toolbar buttons, roomier
+      menus), popups that fit narrow frames, and a **Plugin Store on the phone**: `scripts/build-catalog.mjs` writes `src/pluginCatalog.ts` (git-ignored, run
+      by `build:editor` before `npm start`), `src/catalog.ts`, an Installed | Store tab in `PluginsSheet.tsx`, `installPlugin` in `App.tsx` (writes the two files into
+      `.granite/plugins/<id>/`, switches it on, rescans, syncs). Also `memFs.exists` now treats a folder as existing once a file is under it (the web preview only).
+- Checked: 24 tests pass; the new features in the same-origin harness frame (overflow / clip / wrap widths, table + filter hiding a row, theme, serif, custom alt
+      colours, wrapping / chips / rotation menu items); the phone web preview at 375px (Store lists 3, install Excel -> "Installed", ⋮ shows "Turn this page
+      into a sheet", tapping it makes a full-width whole-page sheet). NOT checked: a real phone (Expo Go: needs Reload), the Tauri window.
+
+### Decorated the user's real "test" tracker note + dropdown editor redo (2026-09-22)
+- [x] User asked to make their real `test.md` (a habit-tracker screenshot) match a Google Sheets reference: converted the
+      `priority` / `Status` columns to coloured dropdown chips, struck through two done rows, and built the whole
+      right-side "FAIS'S DAILY HABIT" panel (streak counters, Duo Roast card, a daily-tasks table with checkboxes/status
+      chips, merges for the banner cells) directly in `/Users/fais/Documents/GraniteVault-new/test.md`. Built and
+      screenshot-checked against a copy in a same-origin harness frame before writing the real file (`Read` it first,
+      diffed against the system-reminder's "changed on disk" notice before overwriting).
+- [x] **Bug found while doing this**: the plugin installed in that real vault (`.granite/plugins/excel/`) was an older
+      copy without merge-cell / vertical-align support, because past sessions kept adding features without bumping
+      `manifest.json`'s `version`, so the Store's Update button never caught it. Copied the current `main.js` +
+      `manifest.json` over the vault's copy and started actually bumping the version each time (now 1.3.0). **Lesson:
+      bump the version in the same edit as any feature change**, not just at big milestones.
+- [x] User then asked for the dropdown **options editor** to look like Sheets' "Data validation rules" panel (their
+      screenshot) rather than the one-option-per-line textarea. Rewrote `dropdownEditor()`: a row per option with a
+      colour swatch button (opens an inline `PALETTE` grid, toggled by one `openSwatch` index, not a second popup —
+      the existing popup system is single-popup), a text input, a drag-handle (⠿, plain pointer events, swaps array
+      indices under the cursor) and a trash button; "+ Add another item" appends and focuses a new row. `.dd textarea`
+      CSS (now unused) was removed; touch sizing added to the `pointer: coarse` block.
+- Verified in the same harness-frame technique: swatch picking, add, delete, drag-reorder, Apply (writes the reordered
+  `opts` with edited labels/colours), and Remove dropdown (clears `t`/`opts`, keeps the cell's text). 24 tests still pass.
+  Pushed to the real vault's plugin copy too. Not checked on the phone or in Tauri.
 
 ## Left to do
 

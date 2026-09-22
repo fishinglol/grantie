@@ -21,6 +21,10 @@ export interface NoteEditorProps {
   /** Vault images by lower-cased file name, for `![[name.png]]` embeds. */
   embeds: ReadonlyMap<string, string>;
   onChange: (text: string) => void;
+  /** The note's name without `.md`, shown by the page as an editable heading. */
+  title: string;
+  /** The heading was edited: rename the file. Resolves false if it didn't happen (the page puts the old name back). */
+  onRename: (title: string) => Promise<boolean>;
   /** The user swiped right on the note: show the sidebar. */
   onSwipeRight: () => void;
   /** Plugins switched on for this device; they run inside the editor page. */

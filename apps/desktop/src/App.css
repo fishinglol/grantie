@@ -687,6 +687,8 @@ button.skip:disabled { opacity: 0.4; cursor: default; }
 }
 
 .editor-pane {
+  position: relative;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -717,21 +719,6 @@ button.skip:disabled { opacity: 0.4; cursor: default; }
 }
 
 /* Dragging files from Finder over the editor */
-.note-title {
-  flex: none;
-  width: 100%;
-  max-width: 780px;
-  margin: 0 auto;
-  padding: 26px 32px 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--h);
-  font: 700 30px/1.25 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  text-overflow: ellipsis;
-}
-.note-title:hover { color: #fff; }
-.note-title:focus { box-shadow: inset 0 -2px 0 var(--accent); }
 .editor-pane.file-hover { outline: 2px dashed var(--accent); outline-offset: -8px; }
 
 /* Sidebar footer: user/settings chip with a hover menu */
@@ -941,3 +928,16 @@ button.skip:disabled { opacity: 0.4; cursor: default; }
   cursor: pointer;
 }
 .plugin-commands button:hover { background: var(--accent); color: #0f1219; }
+
+.plugin-tabs { display: flex; gap: 4px; margin: 0 0 12px; padding: 3px; border-radius: 9px; background: var(--panel); }
+.plugin-tabs button { flex: 1; padding: 5px 0; border: 0; border-radius: 7px; background: transparent; color: var(--text-dim); font: inherit; cursor: pointer; }
+.plugin-tabs button.on { background: var(--bg); color: var(--h); }
+.plugin-list[hidden] { display: none; }
+
+/* The ⋯ button at the top right of a note, and its menu of page-level plugin actions */
+.page-menu { position: absolute; top: 14px; right: 18px; z-index: 30; }
+.page-menu-btn { display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 8px; background: transparent; color: var(--text-dim); cursor: pointer; }
+.page-menu-btn:hover, .page-menu-btn[aria-expanded="true"] { background: var(--panel-hover); color: var(--h); }
+.page-menu-list { position: absolute; top: 34px; right: 0; min-width: 220px; padding: 4px; border-radius: 10px; background: var(--panel); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4); }
+.page-menu-list button { display: block; width: 100%; padding: 7px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.page-menu-list button:hover { background: var(--panel-hover); }

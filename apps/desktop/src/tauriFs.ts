@@ -65,7 +65,8 @@ export const tauriFs: VaultFileSystem = {
   },
   async mkdirp(path) {
     if (!isTauri()) {
-      memDirs.add(path);
+      // Recursive, like the real one: the parents exist too.
+      for (let p = path; p.length > 1; p = p.slice(0, Math.max(0, p.lastIndexOf("/")))) memDirs.add(p);
       return;
     }
     try {

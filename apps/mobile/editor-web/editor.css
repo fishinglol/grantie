@@ -26,6 +26,9 @@ body {
 .live-editor .cm-content { padding: 16px 18px 120px; }
 .live-editor .cm-img-bar { opacity: 1; }
 
+/* The phone keeps the heading dimmer and a little smaller than the desktop's. */
+.live-editor .note-title { max-width: none; padding: 6px 18px 0; font-size: 30px; color: var(--text-dim); }
+
 /* The editor fills the page; the format bar sits under it, above the keyboard. */
 /* Pinned to the part of the screen the keyboard leaves free (--vv-* are set from the visual viewport in main.tsx). */
 .page {

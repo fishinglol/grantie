@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { LiveEditor, type LiveEditorHandle } from "@granite/live-editor";
 import type { InlineFormat } from "@granite/core-notes";
-import { PluginHost } from "@granite/plugins/host";
+import { BlockBridge, PluginHost } from "@granite/plugins/host";
 import type { PluginManifest } from "@granite/plugins";
 import "@granite/live-editor/live-editor.css";
 import "./editor.css";
@@ -19,8 +19,11 @@ import "./editor.css";
  *              plugins { plugins }                 the plugins to run, [{ manifest, code }]; others are stopped
  *              plugin-run { n, pluginId, commandId } run a plugin command
  *              vault-result { id, ok, value|error } answer to a plugin's vault request
+ *              title { title }                     the note's name changed (a rename went through)
+ *              rename-result { n, ok }             answer to a rename
  *              swipe-right                          a quick swipe to the right: the app opens the sidebar
- * page → app   ready                               the page can take `init`
+ * page → app   rename { n, title }                  the heading was edited: rename the file
+ *              ready                               the page can take `init`
  *              change { value }                    the user edited the note
  *              notice { message }                  a plugin wants to show a message
  *              plugin-commands { commands }         the commands running plugins registered
@@ -29,7 +32,9 @@ import "./editor.css";
  *              vault { id, request }                a plugin wants to list / read / write notes
  */
 type Inbound =
-  | { type: "init"; value: string; notePath: string; embeds: [string, string][] }
+  | { type: "init"; value: string; notePath: string; embeds: [string, string][]; title: string }
+  | { type: "title"; title: string }
+  | { type: "rename-result"; n: number; ok: boolean }
   | { type: "value"; value: string }
   | { type: "embeds"; embeds: [string, string][] }
   | { type: "insert"; text: string }
@@ -177,8 +182,12 @@ function Page() {
   const [value, setValue] = useState("");
   const [notePath, setNotePath] = useState<string | null>(null);
   const [embeds, setEmbeds] = useState<ReadonlyMap<string, string>>(new Map());
+  const [title, setTitle] = useState("");
+  const renames = useRef(new Map<number, (ok: boolean) => void>());
+  const renameSeq = useRef(0);
   const editor = useRef<LiveEditorHandle>(null);
   const host = useRef<PluginHost | null>(null);
+  const [blocks] = useState(() => new BlockBridge());
   /** What each running plugin was started from, to notice when the app sends a changed one. */
   const started = useRef(new Map<string, string>());
 
@@ -188,16 +197,22 @@ function Page() {
         getText: () => editor.current?.getText() ?? "",
         getSelection: () => editor.current?.getSelection() ?? "",
         replaceSelection: (text) => editor.current?.replaceSelection(text),
+        setText: (text) => editor.current?.setText(text),
         listNotes: () => vault({ op: "list" }) as Promise<string[]>,
         readNote: (path) => vault({ op: "read", path }) as Promise<string>,
         writeNote: async (path, text) => void (await vault({ op: "write", path, text })),
         notice: (message) => send({ type: "notice", message }),
       },
       () => send({ type: "plugin-commands", commands: h.commands() }),
+      blocks.changed,
     );
     host.current = h;
-    return () => h.dispose();
-  }, []);
+    blocks.host = h;
+    return () => {
+      h.dispose();
+      blocks.host = null;
+    };
+  }, [blocks]);
 
   useEffect(() => {
     const onMessage = (event: Event) => {
@@ -210,7 +225,12 @@ function Page() {
       if (msg.type === "init") {
         setEmbeds(new Map(msg.embeds));
         setNotePath(msg.notePath);
+        setTitle(msg.title);
         setValue(msg.value);
+      } else if (msg.type === "title") setTitle(msg.title);
+      else if (msg.type === "rename-result") {
+        renames.current.get(msg.n)?.(msg.ok);
+        renames.current.delete(msg.n);
       } else if (msg.type === "value") setValue(msg.value);
       else if (msg.type === "embeds") setEmbeds(new Map(msg.embeds));
       else if (msg.type === "insert") editor.current?.insertBlock(msg.text);
@@ -268,7 +288,13 @@ function Page() {
         ref={editor}
         value={value}
         embeds={embeds}
+        blocks={blocks}
         notePath={notePath}
+        title={notePath ? { name: title, onRename: (t) => new Promise<boolean>((resolve) => {
+          const n = ++renameSeq.current;
+          renames.current.set(n, resolve);
+          send({ type: "rename", n, title: t });
+        }) } : undefined}
         toUrl={toUrl}
         onChange={(text) => {
           setValue(text);

@@ -6,7 +6,7 @@ import { GoogleDriveProvider, VaultSync, type GoogleSession, type SyncResult } f
 
 import { REMOTE_FOLDER_NAME, SYNC_INTERVAL_MS } from "./config";
 import DeleteDialog from "./DeleteDialog";
-import NoteTitle from "./NoteTitle";
+import PageMenu from "./PageMenu";
 import PluginsDialog from "./PluginsDialog";
 import { usePlugins } from "./usePlugins";
 import { http } from "./googleLogin";
@@ -844,10 +844,18 @@ export default function NoteApp({
               void readBrowserFiles([...e.dataTransfer.files]).then((files) => attachFiles(files, at));
             }}
           >
-            {path && <NoteTitle key={path} name={noteTitle(basename(path))} onRename={renameNote} />}
+            {path && (
+              <PageMenu
+                commands={plugins.commands.filter((c) => c.page)}
+                onRun={(c) => void plugins.run(c)}
+                onOpenPlugins={() => setShowPlugins(true)}
+              />
+            )}
             <LiveEditor
               ref={editorRef}
+              title={path ? { name: noteTitle(basename(path)), onRename: renameNote } : undefined}
               embeds={vaultImages}
+              blocks={plugins.blocks}
               value={editorText}
               notePath={path}
               toUrl={convertFileSrc}

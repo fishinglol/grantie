@@ -7,10 +7,31 @@ import type { Permission } from "./manifest.ts";
  *
  * Plugin authors: `declare const granite: import("@granite/plugins").GraniteApi;`
  */
+/** What a block gets to talk back to the note with. */
+export interface BlockContext {
+  /** Replace the text between the block's ``` fences (typing in the block saves through this). */
+  save(source: string): void;
+  /** Tell the note how tall the block is, in pixels, or `"fill"` to take the whole height of the page. */
+  resize(height: number | "fill"): void;
+  /** Delete the whole block, fences included. */
+  remove(): void;
+  /** Turn the block back into plain text with the cursor in it (to fix or read the raw text). */
+  edit(): void;
+}
+
+/** What a block's render function may return. */
+export interface BlockHandle {
+  /** The text between the fences changed from outside (undo, sync); redraw. Not called for the block's own `save`. */
+  update?(source: string): void;
+}
+
 export interface GraniteApi {
   commands: {
-    /** Add a command the user can run from the Plugins screen. No permission needed. */
-    add(command: { id: string; name: string; run: () => void | Promise<void> }): void;
+    /**
+     * Add a command the user can run from the Plugins screen. No permission needed. With `page: true` it is also
+     * listed in the ⋯ menu at the top right of the open note ("Turn this page into a sheet").
+     */
+    add(command: { id: string; name: string; page?: boolean; run: () => void | Promise<void> }): void;
   };
   editor: {
     /** editor.read: the whole open note. */
@@ -19,12 +40,22 @@ export interface GraniteApi {
     getSelection(): Promise<string>;
     /** editor.write: replace the selection, or insert at the cursor when nothing is selected. */
     replaceSelection(text: string): Promise<void>;
+    /** editor.write: replace the whole open note (the user can undo it). */
+    setText(text: string): Promise<void>;
     /**
      * editor.style: apply CSS to the app while the plugin runs ("" removes it; it is removed automatically when
      * the plugin is switched off). The editor's colours are CSS variables (`--text`, `--h`, `--accent`, `--bg`,
      * `--panel`, …) on `.live-editor`, so restyling usually means setting those. No `@import` or `url()`.
      */
     setStyle(css: string): Promise<void>;
+  };
+  blocks: {
+    /**
+     * editor.blocks: draw every fenced block of this language (```sheet … ```) inside the note, in place, as the
+     * plugin's own page. `render` runs once per block in its own sandboxed frame: fill `el` (the frame's `<body>`);
+     * `source` is the text between the fences. The block shows as plain text while the cursor is inside it.
+     */
+    register(lang: string, render: (el: HTMLElement, source: string, block: BlockContext) => BlockHandle | void): void;
   };
   vault: {
     /** vault.read: vault-relative paths of every note, e.g. `Projects/plan.md`. */
@@ -43,7 +74,9 @@ export const METHOD_PERMISSION: Record<string, Permission | null> = {
   "editor.getText": "editor.read",
   "editor.getSelection": "editor.read",
   "editor.replaceSelection": "editor.write",
+  "editor.setText": "editor.write",
   "editor.setStyle": "editor.style",
+  "blocks.register": "editor.blocks",
   "vault.list": "vault.read",
   "vault.read": "vault.read",
   "vault.write": "vault.write",
@@ -54,6 +87,8 @@ export interface CommandInfo {
   pluginId: string;
   id: string;
   name: string;
+  /** Also offered in the note's ⋯ menu. */
+  page?: boolean;
 }
 
 /** A vault path a plugin may read or write: relative, inside the vault, not hidden, a Markdown note. */

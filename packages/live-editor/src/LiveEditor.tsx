@@ -24,6 +24,7 @@ import {
 } from "@codemirror/view";
 import { dirname, IMAGE_FILE, join, toggleFormat, type InlineFormat } from "@granite/core-notes";
 import { openImageViewer } from "./imageViewer";
+import NoteTitle from "./NoteTitle";
 
 export { IMAGE_FILE };
 
@@ -333,6 +334,108 @@ function renderInline(text: string, parent: HTMLElement) {
   if (last < text.length) parent.append(text.slice(last));
 }
 
+/**
+ * Lets plugins draw fenced blocks (```sheet … ```) inside the note. The app builds one (`BlockBridge` from
+ * `@granite/plugins/host`) and hands it to the editor; the editor knows nothing about plugins beyond this.
+ */
+export interface BlockActions {
+  /** Rewrite the text between the fences. */
+  save(source: string): void;
+  /** Delete the whole block, fences included. */
+  remove(): void;
+  /** Put the cursor inside the block, which turns it back into plain text. */
+  edit(): void;
+}
+
+export interface BlockRenderer {
+  /** Languages that currently have a renderer. */
+  langs(): string[];
+  /** `listener` runs when `langs()` changed. Returns the unsubscribe. */
+  subscribe(listener: () => void): () => void;
+  /** Draw a block into `el`. */
+  mount(lang: string, el: HTMLElement, source: string, actions: BlockActions): { update(source: string): void; destroy(): void };
+}
+
+const blockMounts = new WeakMap<HTMLElement, ReturnType<BlockRenderer["mount"]>>();
+
+/** From the opening fence line at `pos`: the whole block and the text between its fences (`empty` when there is none). */
+function fenceRanges(doc: Text, pos: number) {
+  const open = doc.lineAt(pos);
+  for (let n = open.number + 1; n <= doc.lines; n++) {
+    const close = doc.line(n);
+    if (!/^\s*(`{3,}|~{3,})\s*$/.test(close.text)) continue;
+    const empty = n === open.number + 1;
+    const inner = empty ? { from: close.from, to: close.from } : { from: doc.line(open.number + 1).from, to: doc.line(n - 1).to };
+    return { whole: { from: open.from, to: close.to }, inner, empty };
+  }
+  return null;
+}
+
+/** A plugin block: the plugin's own page, in a sandboxed frame, in the flow of the note. */
+class BlockWidget extends WidgetType {
+  constructor(
+    readonly lang: string,
+    readonly source: string,
+    readonly renderer: BlockRenderer,
+  ) {
+    super();
+  }
+  eq(o: BlockWidget) {
+    return o.lang === this.lang && o.source === this.source && o.renderer === this.renderer;
+  }
+  toDOM(view: EditorView) {
+    const el = document.createElement("div");
+    el.className = "cm-plugin-block";
+    try {
+      blockMounts.set(
+        el,
+        this.renderer.mount(this.lang, el, this.source, {
+          save: (text) => this.write(view, el, text),
+          remove: () => this.write(view, el, null),
+          edit: () => {
+            const found = fenceRanges(view.state.doc, view.posAtDOM(el));
+            if (!found) return;
+            view.dispatch({ selection: { anchor: found.inner.from }, scrollIntoView: true });
+            view.focus();
+          },
+        }),
+      );
+    } catch (e) {
+      el.textContent = e instanceof Error ? e.message : String(e);
+    }
+    return el;
+  }
+  /** Keep the frame (and what is typed in it) when the note's text changes; the frame ignores its own echoes. */
+  updateDOM(dom: HTMLElement) {
+    const mount = blockMounts.get(dom);
+    if (!mount) return false;
+    mount.update(this.source);
+    return true;
+  }
+  destroy(dom: HTMLElement) {
+    blockMounts.get(dom)?.destroy();
+    blockMounts.delete(dom);
+  }
+  ignoreEvent() {
+    return true;
+  }
+  get estimatedHeight() {
+    return 200;
+  }
+  private write(view: EditorView, dom: HTMLElement, text: string | null) {
+    const { doc } = view.state;
+    const found = fenceRanges(doc, view.posAtDOM(dom));
+    if (!found) return;
+    const changes =
+      text === null
+        ? { from: found.whole.from, to: Math.min(found.whole.to + 1, doc.length), insert: "" }
+        : found.empty
+          ? { from: found.inner.from, insert: `${text}\n` }
+          : { from: found.inner.from, to: found.inner.to, insert: text };
+    view.dispatch({ changes, userEvent: "input.plugin" });
+  }
+}
+
 class TableWidget extends WidgetType {
   constructor(
     readonly source: string,
@@ -499,6 +602,8 @@ interface PreviewContext {
   resolveEmbed: (name: string) => string | null;
   /** Turns a file path into a URL the page can load (Tauri's asset protocol, a `file://` URI, …). */
   toUrl: (path: string) => string;
+  /** Plugin block renderer, when the app has one. */
+  getBlocks: () => BlockRenderer | null;
 }
 
 /** `![[image.png]]` / `![[image.png|300]]` embeds whose image can be found in the vault. */
@@ -685,6 +790,21 @@ function buildDecorations(state: EditorState, ctx: PreviewContext): DecorationSe
         case "FencedCode": {
           const first = doc.lineAt(node.from).number;
           const last = doc.lineAt(node.to).number;
+          const renderer = ctx.getBlocks();
+          const info = node.node.getChild("CodeInfo");
+          const lang = info ? doc.sliceString(info.from, info.to).trim().split(/\s+/)[0]! : "";
+          if (renderer && lang && node.node.getChildren("CodeMark").length >= 2 && renderer.langs().includes(lang)) {
+            const start = doc.line(first);
+            const end = doc.line(last);
+            // Plain text while the cursor is inside it (to edit or delete it), like a table. A cursor on the block's edge
+            // does not count: a note opens with the cursor at 0, which is the start of a sheet that is the whole page.
+            if (!selection.ranges.some((r) => r.from < end.to && r.to > start.from)) {
+              const text = node.node.getChild("CodeText");
+              const widget = new BlockWidget(lang, text ? doc.sliceString(text.from, text.to) : "", renderer);
+              out.push(Decoration.replace({ widget, block: true }).range(start.from, end.to));
+              return false;
+            }
+          }
           for (let n = first; n <= last; n++) {
             const cls = n === first ? "cm-codeblock cm-codeblock-first" : n === last ? "cm-codeblock cm-codeblock-last" : "cm-codeblock";
             out.push(lineDeco(cls).range(doc.line(n).from));
@@ -717,18 +837,17 @@ function buildDecorations(state: EditorState, ctx: PreviewContext): DecorationSe
     }
   }
 
-  // Indent guides: a thin vertical line at every level of a line's leading whitespace (a tab, or two spaces).
-  // Drawn on the whitespace itself, so the lines sit exactly where the text is indented whatever the font.
+  // Indent guide: one thin bar just left of an indented line's text (on its last indent step, a tab or two spaces).
+  // Lines indented alike form one continuous bar, and the bar steps in or out as the indent changes, so deep nesting
+  // stays a single quiet line instead of a comb. Painted on the whitespace itself, so it follows the text in any font.
   for (let n = fm ? doc.lineAt(fm.to).number + 1 : 1; n <= doc.lines; n++) {
     const line = doc.line(n);
     const lead = /^[ \t]+/.exec(line.text);
     if (!lead || lead[0].length === line.text.length || inTable(line.from, line.to) || inEmbed(line.from, line.to)) continue;
-    for (let i = 0; i < lead[0].length; ) {
-      const unit = lead[0][i] === "\t" ? 1 : 2;
-      if (i + unit > lead[0].length || lead[0].slice(i, i + unit).includes("\t") !== (unit === 1)) break;
-      out.push(markDeco("cm-indent-guide").range(line.from + i, line.from + i + unit));
-      i += unit;
-    }
+    // On the last tab (spaces after a tab only line text up, so they don't move the bar), else on the last two spaces.
+    const tab = lead[0].lastIndexOf("\t");
+    const at = tab >= 0 ? tab : lead[0].length >= 2 ? lead[0].length - 2 : -1;
+    if (at >= 0) out.push(markDeco("cm-indent-guide").range(line.from + at, line.from + at + (tab >= 0 ? 1 : 2)));
   }
 
   return Decoration.set(out, true);
@@ -780,10 +899,17 @@ export interface LiveEditorHandle {
   getSelection(): string;
   /** Replace the selection, or insert at the cursor when nothing is selected (used by plugins). */
   replaceSelection(text: string): void;
+  /** Replace the whole note (one undo step). The cursor goes to the end, outside any plugin block. */
+  setText(text: string): void;
 }
 
 export interface LiveEditorProps {
   ref?: Ref<LiveEditorHandle>;
+  /**
+   * The note's name, shown as an editable heading above the text. It is part of the editor (not of the app around it)
+   * so a theme or plugin that restyles the editor restyles it too. `onRename` resolves false if it didn't happen.
+   */
+  title?: { name: string; onRename: (title: string) => Promise<boolean> };
   value: string;
   /** Vault images by lower-cased file name, for resolving Obsidian `![[name.png]]` embeds. */
   embeds: ReadonlyMap<string, string>;
@@ -791,10 +917,12 @@ export interface LiveEditorProps {
   notePath: string | null;
   /** Turns a file path into a URL the page can load: Tauri's asset protocol on desktop, `file://` on phones. */
   toUrl: (path: string) => string;
+  /** Draws the fenced blocks plugins have registered (a spreadsheet, say) in place. */
+  blocks?: BlockRenderer;
   onChange: (value: string) => void;
 }
 
-export default function LiveEditor({ ref, value, embeds, notePath, toUrl, onChange }: LiveEditorProps) {
+export default function LiveEditor({ ref, title, value, embeds, notePath, toUrl, blocks, onChange }: LiveEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -804,6 +932,8 @@ export default function LiveEditor({ ref, value, embeds, notePath, toUrl, onChan
   embedsRef.current = embeds;
   const toUrlRef = useRef(toUrl);
   toUrlRef.current = toUrl;
+  const blocksRef = useRef(blocks);
+  blocksRef.current = blocks;
   onChangeRef.current = onChange;
   baseDirRef.current = notePath ? dirname(notePath) : "";
 
@@ -851,6 +981,7 @@ export default function LiveEditor({ ref, value, embeds, notePath, toUrl, onChan
             getBaseDir: () => baseDirRef.current,
             resolveEmbed: (name) => embedsRef.current.get(name.toLowerCase()) ?? null,
             toUrl: (path) => toUrlRef.current(path),
+            getBlocks: () => blocksRef.current ?? null,
           }),
           dropField,
           EditorView.updateListener.of((u) => {
@@ -862,7 +993,11 @@ export default function LiveEditor({ ref, value, embeds, notePath, toUrl, onChan
       }),
     });
     viewRef.current = view;
+    // A plugin block that is the whole page is as tall as the editor: publish that height as a CSS variable.
+    const resize = new ResizeObserver(() => host.current?.style.setProperty("--editor-h", `${view.scrollDOM.clientHeight}px`));
+    resize.observe(view.scrollDOM);
     return () => {
+      resize.disconnect();
       view.destroy();
       viewRef.current = null;
     };
@@ -909,6 +1044,15 @@ export default function LiveEditor({ ref, value, embeds, notePath, toUrl, onChan
         view.dispatch(view.state.replaceSelection(text), { scrollIntoView: true, userEvent: "input.plugin" });
         view.focus();
       },
+      setText(text) {
+        const view = viewRef.current;
+        if (!view) return;
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: text },
+          selection: { anchor: text.length },
+          userEvent: "input.plugin",
+        });
+      },
       showDropIndicator(at) {
         const view = viewRef.current;
         if (!view) return;
@@ -941,7 +1085,18 @@ export default function LiveEditor({ ref, value, embeds, notePath, toUrl, onChan
     viewRef.current?.dispatch({ effects: refresh.of(null) });
   }, [embeds]);
 
-  return <div className="live-editor" ref={host} />;
+  // A plugin started or stopped drawing a kind of block.
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: refresh.of(null) });
+    return blocks?.subscribe(() => viewRef.current?.dispatch({ effects: refresh.of(null) }));
+  }, [blocks]);
+
+  return (
+    <div className="live-editor">
+      {title && <NoteTitle key={notePath} name={title.name} onRename={title.onRename} />}
+      <div className="live-editor-host" ref={host} />
+    </div>
+  );
 }
 
 // The EditorView is built once per mount, so a hot-swapped module would leave the old

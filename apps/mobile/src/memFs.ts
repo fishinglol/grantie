@@ -29,7 +29,8 @@ export const memFs: MovableFs = {
     return v;
   },
   async exists(path) {
-    return files.has(path) || dirs.has(path);
+    // A folder exists once anything is written under it, like on a real disk (writes create the parents).
+    return files.has(path) || dirs.has(path) || [...files.keys()].some((k) => k.startsWith(`${path}/`));
   },
   async mkdirp(path) {
     dirs.add(path);

@@ -17,6 +17,7 @@ export function createEditorBridge(post: (message: object) => void, getProps: ()
     isReady: () => ready,
     sendEmbeds: () => ready && post({ type: 'embeds', embeds: [...getProps().embeds] }),
     sendPlugins,
+    sendTitle: () => ready && post({ type: 'title', title: getProps().title }),
     insert: (text: string) => post({ type: 'insert', text }),
     runPluginCommand(pluginId: string, commandId: string): Promise<void> {
       const n = ++runSeq;
@@ -38,11 +39,17 @@ export function createEditorBridge(post: (message: object) => void, getProps: ()
       switch (msg.type) {
         case 'ready':
           ready = true;
-          post({ type: 'init', value: props.initialText, notePath: props.path, embeds: [...props.embeds] });
+          post({ type: 'init', value: props.initialText, notePath: props.path, embeds: [...props.embeds], title: props.title });
           sendPlugins();
           break;
         case 'change':
           if (typeof msg.value === 'string') props.onChange(msg.value);
+          break;
+        case 'rename':
+          props.onRename(String(msg.title)).then(
+            (ok) => post({ type: 'rename-result', n: msg.n, ok }),
+            () => post({ type: 'rename-result', n: msg.n, ok: false }),
+          );
           break;
         case 'swipe-right':
           props.onSwipeRight();

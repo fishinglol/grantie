@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { checkPluginCss, discoverPlugins, parseManifest, safeNotePath } from "../src/index.ts";
+import { METHOD_PERMISSION, checkPluginCss, discoverPlugins, parseManifest, safeNotePath } from "../src/index.ts";
 import { MemoryFs } from "../../core-cloud/test/memoryFs.ts";
 
 const good = { id: "hello-granite", name: "Hello", version: "1.0.0", permissions: ["editor.write"] };
@@ -70,4 +70,21 @@ test("plugin CSS may style but never fetch or escape", () => {
   ]) {
     assert.throws(() => checkPluginCss(bad), Error, `should reject ${String(bad).slice(0, 30)}`);
   }
+});
+
+test("all example plugins have valid manifests and safe code", async () => {
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const examplesDir = path.resolve(import.meta.dirname, "../../../examples/plugins");
+  const dirs = ["hello-granite", "sheet", "excel"];
+  for (const dir of dirs) {
+    const raw = JSON.parse(await fs.readFile(path.join(examplesDir, dir, "manifest.json"), "utf8"));
+    const m = parseManifest(raw);
+    assert.equal(m.id, dir);
+  }
+});
+
+test("plugins can ask to draw blocks in notes, and only with that permission", () => {
+  assert.deepEqual(parseManifest({ id: "x", name: "X", version: "1", permissions: ["editor.blocks"] }).permissions, ["editor.blocks"]);
+  assert.equal(METHOD_PERMISSION["blocks.register"], "editor.blocks");
 });

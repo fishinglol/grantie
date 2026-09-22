@@ -7,7 +7,7 @@ export interface NoteTitleProps {
   onRename: (title: string) => Promise<boolean>;
 }
 
-/** The open note's name as a heading above the text; editing it renames the file. Give it a `key` per note. */
+/** The open note's name as a heading above the text; editing it renames the file. Keyed per note by its parent. */
 export default function NoteTitle({ name, onRename }: NoteTitleProps) {
   const [draft, setDraft] = useState(name);
   const [current, setCurrent] = useState(name);

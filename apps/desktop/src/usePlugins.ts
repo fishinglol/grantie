@@ -1,8 +1,9 @@
 import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import { join } from "@granite/core-notes";
 import type { LiveEditorHandle } from "@granite/live-editor";
-import { API_VERSION, discoverPlugins, readPluginCode, type CommandInfo, type InstalledPlugin } from "@granite/plugins";
-import { PluginHost } from "@granite/plugins/host";
+import { API_VERSION, PLUGINS_DIR, discoverPlugins, readPluginCode, type CommandInfo, type InstalledPlugin } from "@granite/plugins";
+import { BlockBridge, PluginHost } from "@granite/plugins/host";
+import type { CatalogPlugin } from "./pluginCatalog";
 import { pluginStore } from "./stores";
 import { tauriFs } from "./tauriFs";
 
@@ -30,6 +31,8 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
   /** Why the plugin list could not be read (shown instead of an endless "Looking for plugins…"). */
   const [loadError, setLoadError] = useState<string | null>(null);
   const host = useRef<PluginHost | null>(null);
+  /** What the editor is given to draw plugin blocks; stable, so it can be passed on the first render. */
+  const [blocks] = useState(() => new BlockBridge());
   const latest = useRef({ hasNote, notes, notify, onWroteNote });
   latest.current = { hasNote, notes, notify, onWroteNote };
 
@@ -43,6 +46,10 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
           if (!latest.current.hasNote) throw new Error("Open a note first");
           editor.current?.replaceSelection(text);
         },
+        setText: (text) => {
+          if (!latest.current.hasNote) throw new Error("Open a note first");
+          editor.current?.setText(text);
+        },
         listNotes: async () => latest.current.notes,
         readNote: (rel) => tauriFs.readTextFile(join(vaultDir, rel)),
         writeNote: async (rel, text) => {
@@ -52,13 +59,17 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
         notice: (m) => latest.current.notify(m),
       },
       () => setCommands(h.commands()),
+      blocks.changed,
     );
     host.current = h;
+    blocks.host = h;
     return () => {
       h.dispose();
       host.current = null;
+      blocks.host = null;
+      blocks.changed();
     };
-  }, [editor, vaultDir]);
+  }, [editor, vaultDir, blocks]);
 
   const start = useCallback(
     async (plugin: InstalledPlugin) => {
@@ -110,6 +121,27 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
     [enabled, start],
   );
 
+  /** Copy a store plugin into the vault (which syncs it to the phone) and switch it on here. */
+  const install = useCallback(
+    async (entry: CatalogPlugin) => {
+      if (!vaultDir) return;
+      const id = entry.manifest.id;
+      try {
+        const dir = join(vaultDir, PLUGINS_DIR, id);
+        await tauriFs.mkdirp(dir);
+        await tauriFs.writeTextFile(join(dir, "manifest.json"), entry.manifestText);
+        await tauriFs.writeTextFile(join(dir, "main.js"), entry.code);
+        if (!enabled.includes(id)) await pluginStore.save({ enabled: [...enabled, id] });
+        await refresh();
+        latest.current.onWroteNote(`${PLUGINS_DIR}/${id}/main.js`);
+        notify(`Installed ${entry.manifest.name}`);
+      } catch (e) {
+        notify(`Couldn't install ${entry.manifest.name}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+    [vaultDir, enabled, refresh, notify],
+  );
+
   const run = useCallback(
     async (c: CommandInfo) => {
       try {
@@ -121,7 +153,7 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
     [notify],
   );
 
-  return { installed, enabled, failed, commands, loadError, refresh, toggle, run };
+  return { installed, enabled, failed, commands, loadError, blocks, refresh, toggle, install, run };
 }
 
 export type PluginsState = ReturnType<typeof usePlugins>;

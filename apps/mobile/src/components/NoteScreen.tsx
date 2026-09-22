@@ -1,23 +1,19 @@
 import { forwardRef } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import NoteTitle from './NoteTitle';
 import { colors } from '../theme';
 import Icon from './Icon';
 import NoteEditor from './NoteEditor';
 import type { NoteEditorHandle, NoteEditorProps } from './NoteEditor.types';
 
 export interface NoteScreenProps extends NoteEditorProps {
-  /** The note's name without `.md`; editing it renames the file. */
-  title: string;
-  onRename: (title: string) => Promise<boolean>;
   dirty: boolean;
   onOpenSidebar: () => void;
   onOpenMenu: () => void;
 }
 
-/** One note, full screen: round sidebar and ⋮ buttons, the note's title (editable), then the live editor. */
+/** One note, full screen: round sidebar and ⋮ buttons, then the live editor (which shows the note's editable title). */
 const NoteScreen = forwardRef<NoteEditorHandle, NoteScreenProps>(function NoteScreen(
-  { title, onRename, dirty, onOpenSidebar, onOpenMenu, ...editor },
+  { dirty, onOpenSidebar, onOpenMenu, ...editor },
   ref,
 ) {
   return (
@@ -33,7 +29,6 @@ const NoteScreen = forwardRef<NoteEditorHandle, NoteScreenProps>(function NoteSc
           </Pressable>
         </View>
       </View>
-      <NoteTitle name={title} onRename={onRename} />
       <NoteEditor ref={ref} {...editor} />
     </KeyboardAvoidingView>
   );

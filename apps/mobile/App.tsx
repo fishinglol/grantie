@@ -4,7 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import { IMAGE_FILE, basename, dirname, embedImage, join, moveFolder, noteTitle, relocateLinks, renamedNoteFile } from '@granite/core-notes';
-import { discoverPlugins, readPluginCode, type CommandInfo, type InstalledPlugin } from '@granite/plugins';
+import { PLUGINS_DIR, discoverPlugins, readPluginCode, type CommandInfo, type InstalledPlugin } from '@granite/plugins';
 import { GoogleDriveProvider, VaultSync, type DeviceCode, type GoogleSession } from '@granite/core-cloud';
 
 import { expoFs } from './src/expoFs';
@@ -22,6 +22,7 @@ import DeviceSignIn from './src/components/DeviceSignIn';
 import FolderPicker from './src/components/FolderPicker';
 import PluginsSheet from './src/components/PluginsSheet';
 import { nameOf, parentOf } from './src/tree';
+import { CATALOG, type CatalogPlugin } from './src/catalog';
 import Toast from './src/components/Toast';
 import type { NoteEditorHandle, PluginVaultRequest } from './src/components/NoteEditor.types';
 
@@ -424,6 +425,27 @@ export default function App() {
     [enabledPlugins, refreshPlugins],
   );
 
+  /** Store: copy a bundled plugin into the vault (which syncs it to the desktop), switch it on here and pick it up. */
+  const installPlugin = useCallback(
+    async (entry: CatalogPlugin) => {
+      const id = entry.manifest.id;
+      try {
+        const dir = join(VAULT_DIR, PLUGINS_DIR, id);
+        await fs.writeTextFile(join(dir, 'manifest.json'), entry.manifestText);
+        await fs.writeTextFile(join(dir, 'main.js'), entry.code);
+        const next = enabledPlugins.includes(id) ? enabledPlugins : [...enabledPlugins, id];
+        setEnabledPlugins(next);
+        await pluginStore.save({ enabled: next });
+        await refreshPlugins();
+        say(`Installed ${entry.manifest.name}`);
+        if (session) void runSync();
+      } catch (e) {
+        say(`Couldn't install ${entry.manifest.name}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+    [enabledPlugins, refreshPlugins, say, session, runSync],
+  );
+
   /** Plugins the editor page should be running right now. */
   const runningPlugins = useMemo(
     () =>
@@ -631,6 +653,18 @@ export default function App() {
             { label: 'Move file', icon: 'folder-move-outline', onPress: () => setPicking(true) },
             { label: 'Share note', icon: 'share-variant-outline', onPress: shareNote },
           ],
+          // Plugin actions for the whole page ("Turn this page into a sheet").
+          ...(pluginCommands.some((c) => c.page)
+            ? [
+                pluginCommands
+                  .filter((c) => c.page)
+                  .map((c) => ({
+                    label: c.name,
+                    icon: 'table-large' as const,
+                    onPress: () => void editor.current?.runPluginCommand(c.pluginId, c.id).catch((e: unknown) => say(e instanceof Error ? e.message : String(e))),
+                  })),
+              ]
+            : []),
           [{ label: 'Delete file', icon: 'trash-can-outline', danger: true, onPress: () => open && askDelete(open.rel) }],
         ]}
       />
@@ -691,6 +725,8 @@ export default function App() {
         errors={pluginErrors}
         commands={open ? pluginCommands : []}
         hasNote={open !== null}
+        catalog={CATALOG}
+        onInstall={installPlugin}
         onToggle={(id, on) => void togglePlugin(id, on)}
         onRun={(c) => {
           setPluginsOpen(false); // the message it shows would sit behind this sheet
