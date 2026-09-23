@@ -5,8 +5,10 @@ import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { indentUnit, syntaxTree } from "@codemirror/language";
 import {
   Annotation,
+  Compartment,
   EditorSelection,
   EditorState,
+  Facet,
   type Text,
   StateEffect,
   StateField,
@@ -36,6 +38,22 @@ export { IMAGE_FILE };
 
 const External = Annotation.define<boolean>();
 const refresh = StateEffect.define<null>();
+
+/**
+ * Reading mode: no caret, no typing, and no edits from the image toolbar. Text arriving from outside (`External`: a
+ * sync, another pane on the same note) and plugin blocks (`input.plugin`, e.g. a sheet saving itself) still go through.
+ */
+const readingFacet = Facet.define<boolean, boolean>({ combine: (values) => values.some(Boolean) });
+const readingMode = (on: boolean) =>
+  on
+    ? [
+        readingFacet.of(true),
+        EditorView.editable.of(false),
+        EditorState.transactionFilter.of((tr) =>
+          tr.docChanged && !tr.annotation(External) && !tr.isUserEvent("input.plugin") ? [] : tr,
+        ),
+      ]
+    : [];
 
 class BulletWidget extends WidgetType {
   eq() {
@@ -635,15 +653,17 @@ function findEmbeds(state: EditorState, fromLine: number, ctx: PreviewContext) {
 }
 
 function buildDecorations(state: EditorState, ctx: PreviewContext): DecorationSet {
-  const { doc, selection } = state;
+  const { doc } = state;
+  // Reading mode shows every line rendered, as if the cursor were nowhere.
+  const ranges = state.facet(readingFacet) ? [] : state.selection.ranges;
   const out: Range<Decoration>[] = [];
 
   const activeLines = new Set<number>();
-  for (const r of selection.ranges) {
+  for (const r of ranges) {
     for (let n = doc.lineAt(r.from).number; n <= doc.lineAt(r.to).number; n++) activeLines.add(n);
   }
   const onActiveLine = (pos: number) => activeLines.has(doc.lineAt(pos).number);
-  const touches = (from: number, to: number) => selection.ranges.some((r) => r.from <= to && r.to >= from);
+  const touches = (from: number, to: number) => ranges.some((r) => r.from <= to && r.to >= from);
   const hide = (from: number, to: number) => {
     if (to > from) out.push(HIDE.range(from, to));
   };
@@ -653,7 +673,7 @@ function buildDecorations(state: EditorState, ctx: PreviewContext): DecorationSe
   let skipBefore = 0;
   if (fm) {
     skipBefore = fm.to;
-    const editing = selection.ranges.some((r) => r.from < fm.to && r.to > 0);
+    const editing = ranges.some((r) => r.from < fm.to && r.to > 0);
     if (editing) {
       for (let n = 1; n <= doc.lineAt(fm.to).number; n++) {
         out.push(lineDeco("cm-fm-line").range(doc.line(n).from));
@@ -672,7 +692,7 @@ function buildDecorations(state: EditorState, ctx: PreviewContext): DecorationSe
   for (const t of tables) {
     // Raw while the cursor is inside the table. The very end of the last row doesn't count, so a
     // freshly pasted table (cursor left right after it) shows rendered, and typing a new last row keeps it live.
-    const editing = selection.ranges.some((r) => r.from < t.to && (r.to > t.from || r.from === t.from));
+    const editing = ranges.some((r) => r.from < t.to && (r.to > t.from || r.from === t.from));
     if (editing) {
       for (let n = t.first; n <= t.last; n++) out.push(lineDeco("cm-table-line").range(doc.line(n).from));
     } else {
@@ -798,7 +818,7 @@ function buildDecorations(state: EditorState, ctx: PreviewContext): DecorationSe
             const end = doc.line(last);
             // Plain text while the cursor is inside it (to edit or delete it), like a table. A cursor on the block's edge
             // does not count: a note opens with the cursor at 0, which is the start of a sheet that is the whole page.
-            if (!selection.ranges.some((r) => r.from < end.to && r.to > start.from)) {
+            if (!ranges.some((r) => r.from < end.to && r.to > start.from)) {
               const text = node.node.getChild("CodeText");
               const widget = new BlockWidget(lang, text ? doc.sliceString(text.from, text.to) : "", renderer);
               out.push(Decoration.replace({ widget, block: true }).range(start.from, end.to));
@@ -910,6 +930,8 @@ export interface LiveEditorProps {
    * so a theme or plugin that restyles the editor restyles it too. `onRename` resolves false if it didn't happen.
    */
   title?: { name: string; onRename: (title: string) => Promise<boolean> };
+  /** Reading mode: the note can be read, scrolled and copied from, but not edited. Plugin blocks stay usable. */
+  readOnly?: boolean;
   value: string;
   /** Vault images by lower-cased file name, for resolving Obsidian `![[name.png]]` embeds. */
   embeds: ReadonlyMap<string, string>;
@@ -922,9 +944,10 @@ export interface LiveEditorProps {
   onChange: (value: string) => void;
 }
 
-export default function LiveEditor({ ref, title, value, embeds, notePath, toUrl, blocks, onChange }: LiveEditorProps) {
+export default function LiveEditor({ ref, title, readOnly = false, value, embeds, notePath, toUrl, blocks, onChange }: LiveEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const readingRef = useRef(new Compartment());
   const onChangeRef = useRef(onChange);
   const baseDirRef = useRef("");
   const prevPath = useRef(notePath);
@@ -943,6 +966,7 @@ export default function LiveEditor({ ref, title, value, embeds, notePath, toUrl,
       state: EditorState.create({
         doc: value,
         extensions: [
+          readingRef.current.of(readingMode(readOnly)),
           history(),
           selectedField,
           keymap.of([
@@ -1069,9 +1093,20 @@ export default function LiveEditor({ ref, title, value, embeds, notePath, toUrl,
     if (!view) return;
     const current = view.state.doc.toString();
     if (current !== value) {
+      // Replace only what differs, so the caret and scroll of a note that is also being edited in another pane stay put.
+      let from = 0;
+      const shared = Math.min(current.length, value.length);
+      while (from < shared && current.charCodeAt(from) === value.charCodeAt(from)) from++;
+      let endCurrent = current.length;
+      let endValue = value.length;
+      while (endCurrent > from && endValue > from && current.charCodeAt(endCurrent - 1) === value.charCodeAt(endValue - 1)) {
+        endCurrent--;
+        endValue--;
+      }
       view.dispatch({
-        changes: { from: 0, to: current.length, insert: value },
-        selection: { anchor: 0 },
+        changes: { from, to: endCurrent, insert: value.slice(from, endValue) },
+        // A different note starts at the top; the same note keeps the (mapped) cursor.
+        ...(prevPath.current !== notePath ? { selection: { anchor: 0 } } : {}),
         annotations: [External.of(true), Transaction.addToHistory.of(false)],
       });
     } else if (prevPath.current !== notePath) {
@@ -1079,6 +1114,10 @@ export default function LiveEditor({ ref, title, value, embeds, notePath, toUrl,
     }
     prevPath.current = notePath;
   }, [value, notePath]);
+
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: [readingRef.current.reconfigure(readingMode(readOnly)), refresh.of(null)] });
+  }, [readOnly]);
 
   // Vault images were (re)indexed: re-resolve any `![[name.png]]` embeds.
   useEffect(() => {
@@ -1093,7 +1132,7 @@ export default function LiveEditor({ ref, title, value, embeds, notePath, toUrl,
 
   return (
     <div className="live-editor">
-      {title && <NoteTitle key={notePath} name={title.name} onRename={title.onRename} />}
+      {title && <NoteTitle key={notePath} name={title.name} onRename={title.onRename} readOnly={readOnly} />}
       <div className="live-editor-host" ref={host} />
     </div>
   );

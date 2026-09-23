@@ -5,10 +5,12 @@ export interface NoteTitleProps {
   name: string;
   /** Rename the file to match. Resolves false if it didn't happen, and the title goes back to `name`. */
   onRename: (title: string) => Promise<boolean>;
+  /** Reading mode: the title can't be edited. */
+  readOnly?: boolean;
 }
 
 /** The open note's name as a heading above the text; editing it renames the file. Keyed per note by its parent. */
-export default function NoteTitle({ name, onRename }: NoteTitleProps) {
+export default function NoteTitle({ name, onRename, readOnly }: NoteTitleProps) {
   const [draft, setDraft] = useState(name);
   const [current, setCurrent] = useState(name);
   // The name changed from outside (a rename, or sync): follow it unless the user is in the middle of typing.
@@ -25,6 +27,7 @@ export default function NoteTitle({ name, onRename }: NoteTitleProps) {
       className="note-title"
       value={draft}
       spellCheck={false}
+      readOnly={readOnly}
       aria-label="Note title"
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => void commit()}

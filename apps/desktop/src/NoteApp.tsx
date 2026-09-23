@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
 import { basename, dirname, embedImage, join, moveFolder, noteTitle, NoteRepository, relocateLinks, renamedNoteFile } from "@granite/core-notes";
@@ -7,6 +7,7 @@ import { GoogleDriveProvider, VaultSync, type GoogleSession, type SyncResult } f
 import { REMOTE_FOLDER_NAME, SYNC_INTERVAL_MS } from "./config";
 import DeleteDialog from "./DeleteDialog";
 import PageMenu from "./PageMenu";
+import PanePicker from "./PanePicker";
 import PluginsDialog from "./PluginsDialog";
 import { usePlugins } from "./usePlugins";
 import { http } from "./googleLogin";
@@ -37,6 +38,12 @@ type SyncState =
   | { phase: "syncing"; detail?: string }
   | { phase: "error"; message: string };
 
+/** A note that is open in a pane, or was and still has edits to save. */
+interface OpenDoc {
+  text: string;
+  dirty: boolean;
+}
+
 export interface NoteAppProps {
   /** null when the user chose to work without cloud sync. */
   session: GoogleSession | null;
@@ -54,9 +61,26 @@ export default function NoteApp({
   onConnectDrive,
   onOpenVaultSetup,
 }: NoteAppProps) {
-  const [path, setPath] = useState<string | null>(null);
-  const [editorText, setEditorText] = useState("");
-  const [isDirty, setIsDirty] = useState(false);
+  /**
+   * Open notes live in `docs` (by path), so a note shown in both panes of a split is one text, not two copies.
+   * `panes` holds one or two paths (left, right); `active` is the pane that sidebar clicks, Cmd+S and plugins act on.
+   * The refs mirror the state so async code sees the latest value; only the helpers below write to them.
+   */
+  const [docs, setDocs] = useState<Record<string, OpenDoc>>({});
+  const [panes, setPanes] = useState<(string | null)[]>([null]);
+  const [active, setActiveState] = useState(0);
+  /** Per pane: reading mode (read only). */
+  const [reading, setReading] = useState<boolean[]>([false, false]);
+  /** Share of the width the left pane takes while split. */
+  const [splitRatio, setSplitRatio] = useState(0.5);
+  const [resizing, setResizing] = useState(false);
+  const docsRef = useRef(docs);
+  const panesRef = useRef(panes);
+  const activeRef = useRef(0);
+  const readingRef = useRef(reading);
+  readingRef.current = reading;
+  const mainRef = useRef<HTMLElement>(null);
+  const path = panes[active] ?? null;
   const [status, setStatus] = useState("Starting…");
   const [busy, setBusy] = useState(false);
   const [dir, setDir] = useState<string | null>(vaultDirProp ?? null);
@@ -73,8 +97,15 @@ export default function NoteApp({
   /** Note or folder being dragged in the sidebar, and the folder ("" = root) it is hovering over. */
   const [drag, setDrag] = useState<{ file: string; folder: boolean; x: number; y: number; over: string | null } | null>(null);
   const justDragged = useRef(false);
-  const editorRef = useRef<LiveEditorHandle>(null);
-  const [fileHover, setFileHover] = useState(false);
+  const editorRefs = [useRef<LiveEditorHandle>(null), useRef<LiveEditorHandle>(null)];
+  /** The active pane's editor: what plugins, pasted files and the format shortcuts talk to. */
+  const editorRef = useMemo<RefObject<LiveEditorHandle | null>>(
+    () => ({ get current() { return editorRefs[activeRef.current]!.current; } }) as RefObject<LiveEditorHandle | null>,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+  /** Pane a file is being dragged over from Finder. */
+  const [fileHover, setFileHover] = useState<number | null>(null);
   /** True once Tauri's native drop listener is live; the DOM drop fallback stays off then. */
   const nativeDrop = useRef(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -122,19 +153,64 @@ export default function NoteApp({
     }
   }, []);
 
-  const load = useCallback(async (p: string) => {
-    setBusy(true);
-    try {
-      const loaded = await repo.load(p);
-      setPath(p);
-      setEditorText(loaded.raw);
-      setIsDirty(false);
-      setStatus(`Read + parsed ${basename(p)}`);
-    } catch (e) {
-      setStatus(`Error: ${String(e)}`);
-    } finally {
-      setBusy(false);
-    }
+  const putDoc = useCallback((p: string, doc: OpenDoc) => {
+    docsRef.current = { ...docsRef.current, [p]: doc };
+    setDocs(docsRef.current);
+  }, []);
+
+  const setPaneList = useCallback((next: (string | null)[]) => {
+    panesRef.current = next;
+    setPanes(next);
+  }, []);
+
+  const setActive = useCallback((i: number) => {
+    activeRef.current = i;
+    setActiveState(i);
+  }, []);
+
+  /** Read a note from disk into `docs`. */
+  const reloadDoc = useCallback(
+    async (p: string) => {
+      putDoc(p, { text: (await repo.load(p)).raw, dirty: false });
+    },
+    [putDoc],
+  );
+
+  /** Show a note in the active pane. */
+  const load = useCallback(
+    async (p: string) => {
+      setBusy(true);
+      try {
+        // Unsaved edits win over the copy on disk (the note may be open in the other pane).
+        if (!docsRef.current[p]?.dirty) await reloadDoc(p);
+        const next = [...panesRef.current];
+        next[activeRef.current] = p;
+        setPaneList(next);
+        setStatus(`Read + parsed ${basename(p)}`);
+      } catch (e) {
+        setStatus(`Error: ${String(e)}`);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [reloadDoc, setPaneList],
+  );
+
+  /** A note moved or was deleted: every pane showing a path `map` gives a new value for follows it (null closes it), and the old text is dropped. */
+  const retarget = useCallback(
+    (map: (p: string) => string | null | undefined) => {
+      setPaneList(panesRef.current.map((p) => (p === null ? null : (map(p) ?? p))));
+      const next = { ...docsRef.current };
+      for (const p of Object.keys(next)) if (map(p) !== undefined) delete next[p];
+      docsRef.current = next;
+      setDocs(next);
+    },
+    [setPaneList],
+  );
+
+  /** Write out unsaved edits to notes matching `match`, before they are moved. */
+  const flushDocs = useCallback(async (match: (p: string) => boolean) => {
+    for (const [p, doc] of Object.entries(docsRef.current)) if (doc.dirty && match(p)) await repo.save(p, doc.text);
   }, []);
 
   useEffect(() => {
@@ -159,11 +235,6 @@ export default function NoteApp({
     });
   }, [session, dir]);
 
-  const pathRef = useRef(path);
-  pathRef.current = path;
-
-  const dirtyRef = useRef(isDirty);
-  dirtyRef.current = isDirty;
   /** Always the current plugin rescan (the hook that owns it is declared after `doSync`). */
   const rescanPlugins = useRef<() => Promise<void>>(async () => undefined);
 
@@ -184,25 +255,23 @@ export default function NoteApp({
           if (result.items.some((i) => i.path.startsWith(".granite/plugins/") && !i.error && i.action !== "skip")) {
             void rescanPlugins.current();
           }
-          // Reload the open note only if the sync rewrote or removed it, and never over unsaved edits.
-          const open = pathRef.current;
-          const rel = open?.startsWith(dir) ? open.slice(dir.length).replace(/^[\\/]/, "") : null;
-          const touched = result.items.some(
-            (i) => i.path === rel && !i.error && (i.action === "download" || i.action === "delete-local"),
-          );
-          if (open && touched && !dirtyRef.current) {
-            if (await tauriFs.exists(open)) await load(open);
-            else {
-              setPath(null);
-              setEditorText("");
-            }
+          // Reload an open note only if the sync rewrote or removed it, and never over unsaved edits.
+          for (const open of new Set(panesRef.current)) {
+            if (!open) continue;
+            const rel = open.startsWith(dir) ? open.slice(dir.length).replace(/^[\\/]/, "") : null;
+            const touched = result.items.some(
+              (i) => i.path === rel && !i.error && (i.action === "download" || i.action === "delete-local"),
+            );
+            if (!touched || docsRef.current[open]?.dirty) continue;
+            if (await tauriFs.exists(open)) await reloadDoc(open);
+            else retarget((p) => (p === open ? null : undefined));
           }
         }
       } catch (e) {
         setSync({ phase: "error", message: e instanceof Error ? e.message : String(e) });
       }
     },
-    [engine, load, dir, refreshVaultFiles],
+    [engine, reloadDoc, retarget, dir, refreshVaultFiles],
   );
   const runSync = useCallback(() => doSync(false), [doSync]);
 
@@ -215,42 +284,48 @@ export default function NoteApp({
     return () => clearInterval(timer);
   }, [engine, doSync]);
 
-  const handleSave = useCallback(async () => {
-    if (!path) return;
-    setBusy(true);
-    try {
-      await repo.save(path, editorText);
-      setIsDirty(false);
-      setStatus(`Saved ${basename(path)}`);
-      if (dir) await refreshVaultFiles(dir);
-      void runSync();
-    } catch (e) {
-      setStatus(`Error saving: ${String(e)}`);
-    } finally {
-      setBusy(false);
-    }
-  }, [path, editorText, dir, refreshVaultFiles, runSync]);
+  const saveDoc = useCallback(
+    async (p: string) => {
+      const doc = docsRef.current[p];
+      if (!doc) return;
+      setBusy(true);
+      try {
+        await repo.save(p, doc.text);
+        // Typing during the save keeps the note dirty.
+        const now = docsRef.current[p];
+        if (now?.text === doc.text) putDoc(p, { text: now.text, dirty: false });
+        setStatus(`Saved ${basename(p)}`);
+        if (dir) await refreshVaultFiles(dir);
+        void runSync();
+      } catch (e) {
+        setStatus(`Error saving: ${String(e)}`);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [dir, putDoc, refreshVaultFiles, runSync],
+  );
 
-  // Keyboard shortcut Cmd+S / Ctrl+S to save
+  // Keyboard shortcut Cmd+S / Ctrl+S saves the active pane's note
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === "s") {
         e.preventDefault();
-        void handleSave();
+        const open = panesRef.current[activeRef.current];
+        if (open) void saveDoc(open);
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [handleSave]);
+  }, [saveDoc]);
 
-  // Auto-save debounce (after 1.5s of inactivity)
+  // Auto-save debounce (after 1.5s of inactivity), for every note with unsaved edits, shown or not
   useEffect(() => {
-    if (!isDirty || !path) return;
-    const timer = setTimeout(() => {
-      void handleSave();
-    }, 1500);
+    const unsaved = Object.keys(docs).filter((p) => docs[p]!.dirty);
+    if (unsaved.length === 0) return;
+    const timer = setTimeout(() => unsaved.forEach((p) => void saveDoc(p)), 1500);
     return () => clearTimeout(timer);
-  }, [editorText, isDirty, path, handleSave]);
+  }, [docs, saveDoc]);
 
   const startCreate = useCallback(
     (kind: "note" | "folder") => {
@@ -292,7 +367,7 @@ export default function NoteApp({
             setStatus(`"${fileName}" already exists`);
             return;
           }
-          await repo.save(newPath, `# ${fileName.replace(/\.(md|markdown)$/i, "")}\n\n`);
+          await repo.save(newPath, "");
           await refreshVaultFiles(dir);
           await load(newPath);
           void runSync();
@@ -332,12 +407,8 @@ export default function NoteApp({
       const full = join(dir, file);
       try {
         await tauriFs.removeFile(full);
-        if (full === path) {
-          // Drop pending edits so auto-save can't bring the file back.
-          setIsDirty(false);
-          setPath(null);
-          setEditorText("");
-        }
+        // Drop pending edits so auto-save can't bring the file back.
+        retarget((p) => (p === full ? null : undefined));
         await refreshVaultFiles(dir);
         setStatus(`Deleted ${name}`);
         void runSync();
@@ -345,7 +416,7 @@ export default function NoteApp({
         setStatus(`Error deleting ${name}: ${String(e)}`);
       }
     },
-    [dir, path, refreshVaultFiles, runSync],
+    [dir, retarget, refreshVaultFiles, runSync],
   );
 
   const moveNote = useCallback(
@@ -362,12 +433,9 @@ export default function NoteApp({
           setStatus(`"${name}" already exists in ${where}`);
           return;
         }
-        const isOpen = from === path;
-        if (isOpen && isDirty) {
-          // Flush pending edits so the move doesn't lose them or let auto-save recreate the old file.
-          await repo.save(from, editorText);
-          setIsDirty(false);
-        }
+        // Flush pending edits so the move doesn't lose them or let auto-save recreate the old file.
+        await flushDocs((p) => p === from);
+        const isOpen = panesRef.current.includes(from);
         const text = await tauriFs.readTextFile(from);
         const fixed = relocateLinks(text, dirname(from), dirname(to));
         await moveFile(from, to);
@@ -380,36 +448,35 @@ export default function NoteApp({
           return next;
         });
         await refreshVaultFiles(dir);
-        if (isOpen) await load(to);
+        if (isOpen) await reloadDoc(to);
+        retarget((p) => (p === from ? to : undefined));
         setStatus(`Moved ${name} → ${where}`);
         void runSync();
       } catch (e) {
         setStatus(`Error moving ${name}: ${String(e)}`);
       }
     },
-    [dir, path, isDirty, editorText, refreshVaultFiles, load, runSync],
+    [dir, flushDocs, reloadDoc, retarget, refreshVaultFiles, runSync],
   );
 
-  /** Rename the open note's file (it stays in its folder). Returns whether it happened. */
+  /** Rename a note's file (it stays in its folder). Returns whether it happened. */
   const renameNote = useCallback(
-    async (title: string): Promise<boolean> => {
-      if (!dir || !path) return false;
-      const next = renamedNoteFile(basename(path), title);
+    async (title: string, target: string): Promise<boolean> => {
+      if (!dir) return false;
+      const next = renamedNoteFile(basename(target), title);
       if (!next) return false;
-      const to = join(dirname(path), next);
+      const to = join(dirname(target), next);
       try {
         // A change of letter case alone is the same file on macOS, not a clash.
-        if (to.toLowerCase() !== path.toLowerCase() && (await tauriFs.exists(to))) {
+        if (to.toLowerCase() !== target.toLowerCase() && (await tauriFs.exists(to))) {
           setStatus(`"${next}" already exists`);
           return false;
         }
-        if (isDirty) {
-          // Flush pending edits so they land in the renamed file and auto-save can't recreate the old one.
-          await repo.save(path, editorText);
-          setIsDirty(false);
-        }
-        await moveFile(path, to);
-        setPath(to);
+        // Flush pending edits so they land in the renamed file and auto-save can't recreate the old one.
+        await flushDocs((p) => p === target);
+        await moveFile(target, to);
+        await reloadDoc(to);
+        retarget((p) => (p === target ? to : undefined));
         await refreshVaultFiles(dir);
         setStatus(`Renamed to ${noteTitle(next)}`);
         void runSync();
@@ -419,7 +486,7 @@ export default function NoteApp({
         return false;
       }
     },
-    [dir, path, isDirty, editorText, refreshVaultFiles, runSync],
+    [dir, flushDocs, reloadDoc, retarget, refreshVaultFiles, runSync],
   );
 
   /** Delete a folder with everything in it; sync then trashes its files on Drive and removes them from other devices. */
@@ -429,12 +496,8 @@ export default function NoteApp({
       const name = folder.slice(folder.lastIndexOf("/") + 1);
       const full = join(dir, folder);
       try {
-        if (path?.startsWith(`${full}/`)) {
-          // Drop pending edits so auto-save can't bring the note back.
-          setIsDirty(false);
-          setPath(null);
-          setEditorText("");
-        }
+        // Drop pending edits so auto-save can't bring the notes back.
+        retarget((p) => (p.startsWith(`${full}/`) ? null : undefined));
         await tauriFs.removeDir(full);
         const parent = folder.includes("/") ? folder.slice(0, folder.lastIndexOf("/")) : "";
         setActiveFolder((cur) => (cur === folder || cur.startsWith(`${folder}/`) ? parent : cur));
@@ -445,7 +508,7 @@ export default function NoteApp({
         setStatus(`Error deleting ${name}: ${String(e)}`);
       }
     },
-    [dir, path, refreshVaultFiles, runSync],
+    [dir, retarget, refreshVaultFiles, runSync],
   );
 
   /** Move a folder (with everything in it) into `targetFolder` ("" = vault root), keeping links out of it working. */
@@ -462,12 +525,10 @@ export default function NoteApp({
           setStatus(`"${name}" already exists in ${where}`);
           return;
         }
-        const openInside = path?.startsWith(`${from}/`) ?? false;
-        if (openInside && isDirty) {
-          // Flush pending edits so the move doesn't lose them or let auto-save recreate the old file.
-          await repo.save(path!, editorText);
-          setIsDirty(false);
-        }
+        const inside = (p: string) => p.startsWith(`${from}/`);
+        // Flush pending edits so the move doesn't lose them or let auto-save recreate the old files.
+        await flushDocs(inside);
+        const openInside = panesRef.current.filter((p): p is string => p !== null && inside(p));
         await moveFolder(folderFs, from, join(dir, to));
         setActiveFolder(to);
         setCollapsed((prev) => {
@@ -477,14 +538,16 @@ export default function NoteApp({
           return next;
         });
         await refreshVaultFiles(dir);
-        if (openInside) await load(join(dir, to, path!.slice(from.length + 1)));
+        const moved = (p: string) => join(dir, to, p.slice(from.length + 1));
+        for (const p of openInside) await reloadDoc(moved(p));
+        retarget((p) => (inside(p) ? moved(p) : undefined));
         setStatus(`Moved ${name} → ${where}`);
         void runSync();
       } catch (e) {
         setStatus(`Error moving ${name}: ${String(e)}`);
       }
     },
-    [dir, path, isDirty, editorText, refreshVaultFiles, load, runSync],
+    [dir, flushDocs, reloadDoc, retarget, refreshVaultFiles, runSync],
   );
 
   /** Mouse-based drag (not HTML5 DnD, which Tauri's window-level file-drop handling can swallow). */
@@ -520,9 +583,14 @@ export default function NoteApp({
 
   /** Copy files into the note's assets/ folder and link them at the cursor / drop point. */
   const attachFiles = useCallback(
-    async (files: AttachInput[], at?: { x: number; y: number }) => {
+    async (files: AttachInput[], at?: { x: number; y: number }, pane = activeRef.current) => {
+      const path = panesRef.current[pane];
       if (!path) {
         setStatus("Open a note first to add files");
+        return;
+      }
+      if (readingRef.current[pane]) {
+        setStatus("Switch off reading mode to add files");
         return;
       }
       const noteDir = dirname(path);
@@ -549,7 +617,7 @@ export default function NoteApp({
           );
         }
         if (blocks.length > 0) {
-          editorRef.current?.insertBlock(blocks.join("\n\n"), at);
+          editorRefs[pane]!.current?.insertBlock(blocks.join("\n\n"), at);
           setStatus(`Added ${blocks.length} file${blocks.length > 1 ? "s" : ""} to assets/`);
           void runSync();
         }
@@ -559,7 +627,8 @@ export default function NoteApp({
         setBusy(false);
       }
     },
-    [path, runSync],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [runSync],
   );
   const attachRef = useRef(attachFiles);
   attachRef.current = attachFiles;
@@ -568,25 +637,31 @@ export default function NoteApp({
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
-    const inEditor = (pos: { x: number; y: number }) => {
+    /** The pane (that can take a file) under the pointer. */
+    const paneAt = (pos: { x: number; y: number }) => {
       const at = toClient(pos);
-      return !!document.elementFromPoint(at.x, at.y)?.closest(".editor-pane");
+      const el = document.elementFromPoint(at.x, at.y)?.closest<HTMLElement>(".editor-pane");
+      const i = el ? Number(el.dataset.pane) : -1;
+      return i >= 0 && panesRef.current[i] && !readingRef.current[i] ? i : null;
     };
+    const showDrop = (pane: number | null, at?: { x: number; y: number }) =>
+      editorRefs.forEach((r, i) => r.current?.showDropIndicator(i === pane && at ? at : null));
     import("@tauri-apps/api/webview")
       .then(({ getCurrentWebview }) =>
         getCurrentWebview().onDragDropEvent((event) => {
           const p = event.payload;
           if (p.type === "leave") {
-            setFileHover(false);
-            editorRef.current?.showDropIndicator(null);
+            setFileHover(null);
+            showDrop(null);
           } else if (p.type === "enter" || p.type === "over") {
-            const over = inEditor(p.position);
+            const over = paneAt(p.position);
             setFileHover(over);
-            editorRef.current?.showDropIndicator(over ? toClient(p.position) : null);
+            showDrop(over, toClient(p.position));
           } else if (p.type === "drop") {
-            setFileHover(false);
-            editorRef.current?.showDropIndicator(null);
-            if (!p.paths?.length || !inEditor(p.position)) return;
+            setFileHover(null);
+            showDrop(null);
+            const pane = paneAt(p.position);
+            if (!p.paths?.length || pane === null) return;
             const at = toClient(p.position);
             void (async () => {
               const files: AttachInput[] = [];
@@ -597,7 +672,7 @@ export default function NoteApp({
                   setStatus(`Couldn't read ${basename(filePath)} (folders aren't supported)`);
                 }
               }
-              if (files.length > 0) await attachRef.current(files, at);
+              if (files.length > 0) await attachRef.current(files, at, pane);
             })();
           }
         }),
@@ -626,14 +701,51 @@ export default function NoteApp({
     );
 
   /** Cmd+V with files/images on the clipboard (screenshots, files copied in Finder). */
-  const handlePaste = (e: React.ClipboardEvent) => {
+  const handlePaste = (e: React.ClipboardEvent, pane: number) => {
     const clip = e.clipboardData;
     if (clip.files.length === 0) return;
     // Spreadsheet/rich-text copies carry a preview image plus real text: let the text through.
     if (/[\n\t]/.test(clip.getData("text/plain").trim())) return;
     e.preventDefault();
     e.stopPropagation();
-    void readBrowserFiles([...clip.files]).then((files) => attachFiles(files));
+    void readBrowserFiles([...clip.files]).then((files) => attachFiles(files, undefined, pane));
+  };
+
+  const editDoc = (p: string, text: string) => putDoc(p, { text, dirty: true });
+
+  /** Split right: a second pane, empty until a note is chosen from the list it shows; it becomes the active one. */
+  const splitRight = () => {
+    if (panesRef.current.length > 1) return;
+    setPaneList([panesRef.current[0] ?? null, null]);
+    setReading((r) => [r[0]!, false]);
+    setActive(1);
+  };
+
+  const pickForPane = (i: number, file: string) => {
+    setActive(i);
+    if (dir) void load(join(dir, file));
+  };
+
+  const closePane = (i: number) => {
+    setPaneList(panesRef.current.filter((_, j) => j !== i));
+    setReading((r) => [r[1 - i]!, false]);
+    setActive(0);
+  };
+
+  /** Drag the divider between the panes. */
+  const beginResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const box = mainRef.current?.getBoundingClientRect();
+    if (!box) return;
+    setResizing(true);
+    const onMove = (ev: MouseEvent) => setSplitRatio(Math.min(0.8, Math.max(0.2, (ev.clientX - box.left) / box.width)));
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      setResizing(false);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
   };
 
   const openNote = useCallback(async () => {
@@ -746,7 +858,7 @@ export default function NoteApp({
             <span className="chevron" />
             <span className="file-icon"><FileIcon /></span>
             <span className="file-name">{noteTitle(file.slice(file.lastIndexOf("/") + 1))}</span>
-            {isActive && isDirty && <span className="dirty-dot" title="Unsaved changes" />}
+            {docs[fullPath]?.dirty && <span className="dirty-dot" title="Unsaved changes" />}
           </button>
         </li>,
       );
@@ -823,48 +935,66 @@ export default function NoteApp({
           </aside>
         )}
 
-        <main className="editor-main">
-          <div
-            className={fileHover ? "editor-pane file-hover" : "editor-pane"}
-            onPasteCapture={handlePaste}
-            onDragOver={(e) => {
-              if (nativeDrop.current || !e.dataTransfer.types.includes("Files")) return;
-              e.preventDefault();
-              editorRef.current?.showDropIndicator({ x: e.clientX, y: e.clientY });
-            }}
-            onDragLeave={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) editorRef.current?.showDropIndicator(null);
-            }}
-            onDropCapture={(e) => {
-              if (nativeDrop.current || e.dataTransfer.files.length === 0) return;
-              e.preventDefault();
-              e.stopPropagation(); // keep CodeMirror from inserting the file's raw bytes as text
-              editorRef.current?.showDropIndicator(null);
-              const at = { x: e.clientX, y: e.clientY };
-              void readBrowserFiles([...e.dataTransfer.files]).then((files) => attachFiles(files, at));
-            }}
-          >
-            {path && (
-              <PageMenu
-                commands={plugins.commands.filter((c) => c.page)}
-                onRun={(c) => void plugins.run(c)}
-                onOpenPlugins={() => setShowPlugins(true)}
-              />
-            )}
-            <LiveEditor
-              ref={editorRef}
-              title={path ? { name: noteTitle(basename(path)), onRename: renameNote } : undefined}
-              embeds={vaultImages}
-              blocks={plugins.blocks}
-              value={editorText}
-              notePath={path}
-              toUrl={convertFileSrc}
-              onChange={(text) => {
-                setEditorText(text);
-                setIsDirty(true);
-              }}
-            />
-          </div>
+        <main className={panes.length > 1 ? "editor-main split" : "editor-main"} ref={mainRef}>
+          {panes.map((p, i) => (
+            <Fragment key={i}>
+              {i === 1 && <div className={resizing ? "pane-divider dragging" : "pane-divider"} onMouseDown={beginResize} />}
+              <div
+                className={["editor-pane", fileHover === i && "file-hover", active === i && "active"].filter(Boolean).join(" ")}
+                data-pane={i}
+                style={panes.length > 1 ? { flex: `${i === 0 ? splitRatio : 1 - splitRatio} 1 0` } : undefined}
+                onMouseDownCapture={() => setActive(i)}
+                onFocusCapture={() => setActive(i)}
+                onPasteCapture={(e) => handlePaste(e, i)}
+                onDragOver={(e) => {
+                  if (nativeDrop.current || !e.dataTransfer.types.includes("Files")) return;
+                  e.preventDefault();
+                  editorRefs[i]!.current?.showDropIndicator({ x: e.clientX, y: e.clientY });
+                }}
+                onDragLeave={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node | null)) editorRefs[i]!.current?.showDropIndicator(null);
+                }}
+                onDropCapture={(e) => {
+                  if (nativeDrop.current || e.dataTransfer.files.length === 0) return;
+                  e.preventDefault();
+                  e.stopPropagation(); // keep CodeMirror from inserting the file's raw bytes as text
+                  editorRefs[i]!.current?.showDropIndicator(null);
+                  const at = { x: e.clientX, y: e.clientY };
+                  void readBrowserFiles([...e.dataTransfer.files]).then((files) => attachFiles(files, at, i));
+                }}
+              >
+                {p === null && panes.length > 1 ? (
+                  <PanePicker files={vaultFiles} folders={vaultFolders} onPick={(file) => pickForPane(i, file)} onClose={() => closePane(i)} />
+                ) : (
+                  <>
+                    {p && (
+                      <PageMenu
+                        commands={plugins.commands.filter((c) => c.page)}
+                        onRun={(c) => void plugins.run(c)}
+                        onOpenPlugins={() => setShowPlugins(true)}
+                        reading={reading[i]!}
+                        onToggleReading={() => setReading((r) => r.map((on, j) => (j === i ? !on : on)))}
+                        split={panes.length > 1}
+                        onSplit={splitRight}
+                        onClosePane={() => closePane(i)}
+                      />
+                    )}
+                    <LiveEditor
+                      ref={editorRefs[i]}
+                      title={p ? { name: noteTitle(basename(p)), onRename: (title) => renameNote(title, p) } : undefined}
+                      readOnly={reading[i]! || !p}
+                      embeds={vaultImages}
+                      blocks={plugins.blocks}
+                      value={p ? (docs[p]?.text ?? "") : ""}
+                      notePath={p}
+                      toUrl={convertFileSrc}
+                      onChange={(text) => p && editDoc(p, text)}
+                    />
+                  </>
+                )}
+              </div>
+            </Fragment>
+          ))}
         </main>
       </div>
       {menu && (
