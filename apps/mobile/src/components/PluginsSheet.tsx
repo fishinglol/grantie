@@ -3,6 +3,7 @@ import { Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 're
 import { PERMISSION_LABELS, PLUGINS_DIR, type CommandInfo, type InstalledPlugin } from '@granite/plugins';
 import { colors } from '../theme';
 import type { CatalogPlugin } from '../catalog';
+import PluginStoreView from './PluginStoreView';
 
 export interface PluginsSheetProps {
   visible: boolean;
@@ -25,7 +26,6 @@ export interface PluginsSheetProps {
 /** The phone's Plugins screen: what is installed, switch on/off, and run commands. */
 export default function PluginsSheet({ visible, installed, enabled, errors, commands, hasNote, catalog, onInstall, onToggle, onRun, onRefresh, onClose }: PluginsSheetProps) {
   const [tab, setTab] = useState<'installed' | 'store'>('installed');
-  const [busy, setBusy] = useState<string | null>(null);
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose} />
@@ -40,45 +40,7 @@ export default function PluginsSheet({ visible, installed, enabled, errors, comm
           ))}
         </View>
         <ScrollView style={styles.list} bounces={false}>
-          {tab === 'store' &&
-            catalog.map(({ manifest: m, ...entry }) => {
-              const have = installed.find((p) => p.manifest?.id === m.id)?.manifest;
-              const label = !have ? 'Install' : have.version !== m.version ? 'Update' : 'Installed';
-              return (
-                <View key={m.id} style={styles.card}>
-                  <View style={styles.head}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.name}>
-                        {m.name} <Text style={styles.version}>v{m.version}</Text>
-                      </Text>
-                      {m.author ? <Text style={styles.version}>{m.author}</Text> : null}
-                    </View>
-                    <Pressable
-                      disabled={label === 'Installed' || busy !== null}
-                      onPress={() => {
-                        setBusy(m.id);
-                        void onInstall({ manifest: m, ...entry }).finally(() => setBusy(null));
-                      }}
-                      style={[styles.install, label === 'Installed' && styles.installed]}
-                    >
-                      <Text style={[styles.installText, label === 'Installed' && styles.installedText]}>{busy === m.id ? 'Installing…' : label}</Text>
-                    </Pressable>
-                  </View>
-                  {m.description ? <Text style={styles.desc}>{m.description}</Text> : null}
-                  <View style={styles.perms}>
-                    {m.permissions.length === 0 ? (
-                      <Text style={styles.perm}>Needs no permissions</Text>
-                    ) : (
-                      m.permissions.map((p) => (
-                        <Text key={p} style={styles.perm}>
-                          {PERMISSION_LABELS[p]}
-                        </Text>
-                      ))
-                    )}
-                  </View>
-                </View>
-              );
-            })}
+          {tab === 'store' && <PluginStoreView catalog={catalog} installed={installed} onInstall={onInstall} />}
           {tab === 'installed' && installed.length === 0 && (
             <Text style={styles.empty}>
               No plugins installed yet. Open the Store tab to add one (or add a plugin folder to {PLUGINS_DIR}/ in your vault on your
@@ -165,7 +127,7 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 30,
     paddingHorizontal: 14,
-    maxHeight: '85%',
+    maxHeight: '92%',
   },
   grabber: { alignSelf: 'center', width: 44, height: 4, borderRadius: 2, backgroundColor: colors.panelHover, marginBottom: 10 },
   title: { color: colors.heading, fontSize: 22, fontWeight: '700', paddingHorizontal: 8, paddingBottom: 10 },
@@ -174,10 +136,6 @@ const styles = StyleSheet.create({
   tabOn: { backgroundColor: colors.bg },
   tabText: { color: colors.textDim, fontSize: 15, fontWeight: '600' },
   tabTextOn: { color: colors.heading },
-  install: { backgroundColor: colors.accent, borderRadius: 12, paddingVertical: 8, paddingHorizontal: 14 },
-  installed: { backgroundColor: colors.panelHover },
-  installText: { color: colors.bg, fontSize: 14, fontWeight: '700' },
-  installedText: { color: colors.textDim },
   list: { flexGrow: 0 },
   empty: { color: colors.textDim, fontSize: 15, lineHeight: 22, padding: 8 },
   card: { backgroundColor: colors.panel, borderRadius: 18, padding: 14, marginBottom: 10, gap: 8 },

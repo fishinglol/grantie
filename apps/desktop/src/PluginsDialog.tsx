@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { PERMISSION_LABELS, PLUGINS_DIR, type PluginManifest } from "@granite/plugins";
+import PluginStore from "./PluginStore";
 import { CATALOG } from "./pluginCatalog";
 import type { PluginsState } from "./usePlugins";
 
@@ -48,35 +49,17 @@ export default function PluginsDialog({ plugins, onClose }: PluginsDialogProps) 
             Store
           </button>
         </div>
+        <div className="plugins-body">
         {tab === "store" && (
-          <ul className="plugin-list">
-            {CATALOG.map(({ manifest: m, ...entry }) => {
-              const have = installed?.find((p) => p.manifest?.id === m.id)?.manifest;
-              const label = !have ? "Install" : have.version !== m.version ? "Update" : "Installed";
-              return (
-                <li key={m.id} className="plugin">
-                  <div className="plugin-head">
-                    <div>
-                      <strong>{m.name}</strong> <span className="plugin-version">v{m.version}</span>
-                      {m.author && <span className="plugin-version"> · {m.author}</span>}
-                    </div>
-                    <button
-                      className={label === "Installed" ? "" : "primary"}
-                      disabled={label === "Installed" || busy !== null}
-                      onClick={() => {
-                        setBusy(m.id);
-                        void install({ manifest: m, ...entry }).finally(() => setBusy(null));
-                      }}
-                    >
-                      {busy === m.id ? "Installing…" : label}
-                    </button>
-                  </div>
-                  {m.description && <p>{m.description}</p>}
-                  <Permissions manifest={m} />
-                </li>
-              );
-            })}
-          </ul>
+          <PluginStore
+            catalog={CATALOG}
+            installed={installed}
+            busy={busy}
+            onInstall={(entry) => {
+              setBusy(entry.manifest.id);
+              void install(entry).finally(() => setBusy(null));
+            }}
+          />
         )}
         {tab === "installed" && installed === null && <p>Looking for plugins…</p>}
         {tab === "installed" && loadError && <p className="modal-error">Couldn't read the plugins folder: {loadError}</p>}
@@ -86,7 +69,7 @@ export default function PluginsDialog({ plugins, onClose }: PluginsDialogProps) 
             plugin folder in <code>{PLUGINS_DIR}/</code> inside your vault and press Refresh.
           </p>
         )}
-        <ul className="plugin-list" hidden={tab !== "installed"}>
+        <ul className="plugin-list installed-list" hidden={tab !== "installed"}>
           {installed?.map((plugin) => {
             const m = plugin.manifest;
             if (!m) {
@@ -129,6 +112,7 @@ export default function PluginsDialog({ plugins, onClose }: PluginsDialogProps) 
             );
           })}
         </ul>
+        </div>
         <div className="modal-actions">
           <button onClick={() => void refresh()}>Refresh</button>
           <button className="primary" onClick={onClose}>

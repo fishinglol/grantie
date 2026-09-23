@@ -24,6 +24,8 @@ export interface PluginManifest {
   name: string;
   version: string;
   description?: string;
+  /** One short line for the store's list (the description is for the detail page). */
+  tagline?: string;
   author?: string;
   permissions: Permission[];
   /** Lowest API version the plugin needs. */
@@ -60,9 +62,20 @@ export function parseManifest(raw: unknown): PluginManifest {
     name: text("name", true)!,
     version: text("version", true)!,
     description: text("description", false),
+    tagline: text("tagline", false),
     author: text("author", false),
     permissions: [...new Set(permissions as Permission[])],
     minApiVersion: minApiVersion as number | undefined,
     desktopOnly: m.desktopOnly === true,
   };
+}
+
+/**
+ * The hue (0–360) of a plugin's store icon, stable per id and kept near Granite's orange accent, so tiles differ from
+ * one another but stay in the app's palette. Both apps use it.
+ */
+export function pluginHue(id: string): number {
+  let h = 0;
+  for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) % 60;
+  return (22 + h - 30 + 360) % 360;
 }

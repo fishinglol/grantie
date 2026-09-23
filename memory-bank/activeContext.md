@@ -60,6 +60,28 @@ State: the user runs the phone app in **Expo Go** on a Samsung phone (Mac and ph
   refresh token → secure storage; standalone Android install (EAS `.apk`); a `.env.example` note that the
   desktop and phone clients are different types.
 
+## Session 2026-09-23 — desktop split view + reading mode
+User (Thai, from an Obsidian screenshot) asked for two things on **desktop**: two notes side by side, and a book icon that makes a note
+read-only. Confirmed: desktop only; split via ⋯ → "Split right" (no tabs); reading mode = read/scroll/copy, no typing (plugin blocks stay usable).
+- `NoteApp.tsx` now holds open notes in `docs` (path → `{text, dirty}`) and shows them in `panes` (1–2 paths, `active` = the one sidebar clicks,
+  Cmd+S and plugins act on). A note open in both panes is one text. Move/rename/delete go through `retarget`/`flushDocs`; auto-save covers every dirty doc.
+- `LiveEditor` got `readOnly` (Compartment: `editable(false)` + a transaction filter that lets `External` and `input.plugin` changes through; the
+  cursor-line reveal is off). External text sync now replaces only the differing range. `PageMenu` has the book button + Split/Close item.
+- Checked in the browser preview only (not the Tauri window). The phone's `editorHtml.ts` was **not** regenerated (`node scripts/build-editor.mjs`).
+- Not built: tabs, breadcrumbs, split-by-drag, more than two panes, per-note (vs per-pane) reading state.
+- **Later the same day — plugin Store redesigned like an app store, desktop + phone:** desktop `PluginStore.tsx`, phone
+  `components/PluginStoreView.tsx` (inside `PluginsSheet`): a banner and list with GET / UPDATE / INSTALLED, and a page per plugin with
+  its pictures (tap to enlarge), version / developer / permissions, description. Colours come from the app palette (`--accent`, `--panel`;
+  phone `theme.ts`); tile hues come from the shared `pluginHue(id)` in `@granite/plugins`, kept near the orange accent. There is **no
+  light/dark theme switch in either app yet**, so "match the theme" meant the shared dark palette.
+  A plugin is **only listed with 3+ pictures** in `examples/plugins/<id>/screenshots/` (`MIN_SCREENSHOTS`, desktop `pluginCatalog.ts`,
+  phone `catalog.ts`; `apps/mobile/scripts/build-catalog.mjs` now `require`s them into the generated `src/pluginCatalog.ts`). Manifests
+  got an optional `tagline`. The 12 pictures are real captures of the running app (headless Chrome driving the dev server, sample text
+  written for them). The user said everything must be real: **no ratings, install counts or reviews** are shown (there is no server;
+  a mock was built and removed). Real ones need a plugin server, or a local-only "my review" feature if the user wants one.
+- Also this session: a new note is created **empty** (no `# name` line; the title above the text is the name).
+- Checked in the browser previews only (desktop preview + Expo web at phone size); not on the Samsung phone or in the Tauri window.
+
 ## Mobile session (2026-09-20, after the desktop PR merged) — phone version
 Goal from the user: "update it for phone version" — same UI as desktop. Confirmed: add
 `react-native-webview`; scope was "everything incl. Google sign-in + sync".
