@@ -72,15 +72,18 @@ test("plugin CSS may style but never fetch or escape", () => {
   }
 });
 
-test("all example plugins have valid manifests and safe code", async () => {
+// Every folder in examples/plugins is a Store listing, so a new one (e.g. from a pull request) is checked automatically.
+// This only checks the shape: a person still has to read main.js (see CONTRIBUTING.md).
+test("every example plugin has a valid manifest whose id is its folder name, and a main.js", async () => {
   const fs = await import("node:fs/promises");
   const path = await import("node:path");
   const examplesDir = path.resolve(import.meta.dirname, "../../../examples/plugins");
-  const dirs = ["hello-granite", "sheet", "excel"];
+  const dirs = (await fs.readdir(examplesDir, { withFileTypes: true })).filter((d) => d.isDirectory()).map((d) => d.name);
+  assert.ok(dirs.length > 0);
   for (const dir of dirs) {
-    const raw = JSON.parse(await fs.readFile(path.join(examplesDir, dir, "manifest.json"), "utf8"));
-    const m = parseManifest(raw);
-    assert.equal(m.id, dir);
+    const m = parseManifest(JSON.parse(await fs.readFile(path.join(examplesDir, dir, "manifest.json"), "utf8")));
+    assert.equal(m.id, dir, `${dir}: manifest id must equal the folder name`);
+    assert.ok((await fs.stat(path.join(examplesDir, dir, "main.js"))).isFile(), `${dir}: main.js is missing`);
   }
 });
 

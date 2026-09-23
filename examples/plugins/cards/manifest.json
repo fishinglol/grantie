@@ -1,0 +1,12 @@
+{
+  "id": "cards",
+  "name": "Cards",
+  "version": "1.1.0",
+  "description": "Colourful note cards in a grid, like a sticky-note board: pin, colours, pictures, checklists, archive and bin. Turn a whole page into a board from the ⋯ menu, or type ```cards in a note.",
+  "author": "Granite",
+  "permissions": [
+    "editor.blocks",
+    "editor.read",
+    "editor.write"
+  ]
+}

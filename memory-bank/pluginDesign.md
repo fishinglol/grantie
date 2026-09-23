@@ -65,6 +65,15 @@ declared permissions, explicit per-device enable**.
   fence is drawn in place by the plugin (a sandboxed iframe per block inside a CodeMirror block widget, raw text while the cursor is in
   it). API: `render(el, source, { save, resize, remove, edit })` and an optional `{ update(source) }` handle. See `progress.md`
   "Excel plugin" for the design, limits and what was not verified on the phone.
+- **Cards plugin (2026-09-23; v1.1 adds a box↔full-page button)**: a Google-Keep-style note board, `examples/plugins/cards/` (id `cards`, fence ```` ```cards ````), built
+  with no API change on the same `blocks` mechanism as Excel; the Store lists it automatically (`pluginCatalog.ts` globs
+  `examples/plugins/*`). Stored as a header line + one JSON card per line inside the fence (one `.md`, no sub-files). Pictures are
+  shrunk to <=1000px JPEG and stored as data URIs in the card (the block frame's CSP allows `img-src data:` only, and blocks can't read
+  vault files). Colour shade (light/dark) comes from the `--bg` the host hands the frame. Tests: `packages/plugins/test/cards.test.ts`
+  (storage only; the UI was checked by hand in the desktop browser preview, incl. a 390px light-theme pass). **Not verified**: the
+  image picker (`<input type=file>` in the sandboxed frame) on a real phone WebView / the real Tauri window. Not built: reminders,
+  collaborators, drawing, labels, drag-reorder, multi-select. Gotcha: `Vite` caches the `import.meta.glob` list, so a brand-new
+  example folder only shows in a running dev server after touching `pluginCatalog.ts` (or a restart).
 - **Next**: command palette (Cmd+P) so commands aren't only reachable from the Plugins screen; CodeMirror
   extension / event / settings APIs; plugin registry + install-from-URL; docs site; a Worker layer for hangs;
   `desktopOnly` plugins are hidden on the phone but never exercised.
@@ -128,5 +137,8 @@ both apps already share their TS code and both run the editor in a web view:
 - **Trust model:** fully trusted like Obsidian, or sandboxed with declared permissions? (Recommended: sandboxed.)
 - **Phone UI scope:** commands + editor extensions + declarative settings only, or also a plugin web panel?
 - **Distribution:** community list on GitHub only, or a reviewed store; do plugins sync between devices via Drive?
+  → **Decided 2026-09-23: reviewed store.** The user reviews every community plugin's code themselves before it is listed
+  (contribute = fork + PR into `examples/plugins/<id>/`; nothing is installable from an unreviewed source). Drive sync of
+  `.granite/` already happens.
 - **Overlap with real-time typing:** if the Yjs work (see `activeContext.md`) happens, the plugin API's
   editor/vault surface must stay compatible with it.
