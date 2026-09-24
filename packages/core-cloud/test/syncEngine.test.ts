@@ -128,6 +128,35 @@ test("edits on both sides keep both copies and lose nothing", async () => {
   assert.equal(text(provider.remote.get("welcome.md")!.data), "my version");
 });
 
+test("both sides changed to the same bytes: no copy is made", async () => {
+  const { fs, provider, sync } = setup();
+  await fs.writeTextFile("/vault/welcome.md", "v1");
+  await sync.sync();
+  await provider.upload({ folderId: "folder-1", path: "welcome.md", data: new TextEncoder().encode("same"), existingId: provider.remote.get("welcome.md")!.id });
+  await fs.writeTextFile("/vault/welcome.md", "same");
+
+  const res = await sync.sync();
+
+  assert.equal(res.conflicted, 1);
+  assert.equal(res.items.find((i) => i.action === "conflict")!.conflictCopy, undefined);
+  assert.deepEqual((await listLocalFiles(fs, vaultDir)).map((f) => f.path), ["welcome.md"]);
+  assert.equal((await sync.sync()).conflicted, 0);
+});
+
+test("a conflict copy that conflicts again does not spawn a copy of itself", async () => {
+  const { fs, provider, sync } = setup();
+  const copy = "welcome (Drive copy 2026-09-03 14-05-09).md";
+  await fs.writeTextFile(`/vault/${copy}`, "v1");
+  await sync.sync();
+  await provider.upload({ folderId: "folder-1", path: copy, data: new TextEncoder().encode("their version"), existingId: provider.remote.get(copy)!.id });
+  await fs.writeTextFile(`/vault/${copy}`, "my version");
+
+  await sync.sync();
+
+  assert.deepEqual((await listLocalFiles(fs, vaultDir)).map((f) => f.path), [copy]);
+  assert.equal(text(provider.remote.get(copy)!.data), "my version");
+});
+
 test("the conflict copy itself reaches Drive on the following sync", async () => {
   const { fs, provider, sync } = setup();
   await fs.writeTextFile("/vault/welcome.md", "v1");

@@ -66,6 +66,9 @@ export async function listLocalFolders(fs: VaultFileSystem, dir: string, prefix 
 /** Is anything in `paths` inside the folder `dir`? */
 const under = (paths: Iterable<string>, dir: string) => [...paths].some((p) => p.startsWith(`${dir}/`));
 
+/** What `conflictCopyName` puts in a copy's name. */
+const COPY_MARK = " (Drive copy ";
+
 /** A batch of deletions this small is applied without question; larger ones must also be a minority of the vault. */
 const MAX_UNATTENDED_DELETES = 5;
 
@@ -320,8 +323,17 @@ export class VaultSync {
     // conflict: keep both. The remote copy lands beside the note under a new
     // name, the local file stays authoritative at its own path and is pushed.
     if (!remote) throw new Error(`no remote file for ${item.path}`);
+    // Two things are never worth a copy: both sides already hold the same bytes (only the timestamps
+    // differ), and a conflict copy itself (copies of copies just pile up; the local file wins).
+    const remoteData = await this.#provider.download(remote.id);
+    const localData = await this.#fs.readBinaryFile(join(this.#vaultDir, item.path));
+    const same = remoteData.length === localData.length && remoteData.every((b, i) => b === localData[i]);
+    if (same || item.path.includes(COPY_MARK)) {
+      await this.#push(item.path, folderId, remote.id, index);
+      return undefined;
+    }
     const copyPath = conflictCopyName(item.path, this.#now());
-    await this.#pull(remote.id, copyPath, undefined, remote.modifiedTime, index);
+    await this.#fs.writeBinaryFile(join(this.#vaultDir, copyPath), remoteData);
     await this.#push(item.path, folderId, remote.id, index);
     return copyPath;
   }

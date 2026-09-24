@@ -536,3 +536,11 @@ under the name `CloudProvider` in `packages/core-cloud`.
   realtime channel — expect seconds of latency via its changes feed + push
   notifications. The CRDT merge layer is what makes concurrent edits safe and is
   transport-independent.
+
+### Duplicate "(Drive copy …)" files when editing a canvas (2026-09-24)
+Cause found on the user's Mac: `/Applications/Granite.app` and `tauri dev` were running at once, both syncing the same vault, Drive folder and
+`sync-index.json` every 5 s, so each drag on a canvas looked like "changed on both sides". Fixes: desktop is now **single-instance**
+(`tauri-plugin-single-instance`, first plugin in `src-tauri/src/lib.rs`; a second launch focuses the first window, so `tauri dev` can't run beside
+the installed app); and `VaultSync` no longer makes a conflict copy when both sides hold identical bytes or when the conflicting file is itself a
+"(Drive copy …)" file (local wins). Not verified against real Drive; a running phone app syncing the same vault could still cause real conflicts.
+The 6 leftover copies in `~/Documents/GraniteVault-new` (and Drive) were left for the user to delete.
