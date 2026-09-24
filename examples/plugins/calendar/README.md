@@ -10,7 +10,7 @@ its date math, the layout that gives overlapping notes their own lanes, the thre
 - Permissions: **Draw its own blocks inside your notes** (`editor.blocks`), **Read the open note** and **Change the open note**
   (`editor.read`, `editor.write`, only for the two commands below), **Read your notes** (`vault.read`: to find their dates, and to
   open one) and **Create and change notes** (`vault.write`: only when you create a note from the calendar). No network.
-  Needs Granite with plugin API 3 (`minApiVersion`).
+  Needs Granite with plugin API 4 (`minApiVersion`).
 - Install: from the **Store** tab of Plugins (desktop or phone), or copy this folder to `<vault>/.granite/plugins/calendar/`
   (it syncs to your other devices), then switch it on under Plugins on each device.
 
@@ -33,7 +33,10 @@ property names are yours to choose: change them with ⚙ on the calendar.
 - **Month / Weeks / Year** switch the view. «  ‹  Today  ›  » move by year and month; ↻ reads your notes again (after you
   changed dates elsewhere).
 - **Click (tap) a note** to open it. **Double-click an empty day** (on a phone: **long-press** it) to create a note on that day:
-  `2026-09-26.md`, with the date already filled in, and it opens.
+  `2026-09-26.md`, with the date already filled in, and it opens. On the desktop the note opens **beside** the calendar (a split view,
+  calendar on the left, note on the right; the next note you click replaces the one on the right). On a phone there is no room for two
+  halves, so the note opens full screen with a **‹ back** button to the calendar at the top.
+- Type **`//`** on an empty line and pick **Calendar** to put one inside the note you are writing.
 - **⚙** sets the date property, the end date property, a title property (shown instead of the file name) and whether weeks
   start on Monday or Sunday.
 

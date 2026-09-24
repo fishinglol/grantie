@@ -410,8 +410,18 @@ export default function NoteApp({
       if (dir) void refreshVaultFiles(dir);
       void runSync();
     },
-    openNote: async (rel) => {
-      if (dir) await load(join(dir, rel));
+    openNote: async (rel, options) => {
+      if (!dir) return;
+      if (options?.beside) {
+        // Keep the page the call came from and put the note in the other half, splitting first if there is only one.
+        const from = Number(options.origin?.closest("[data-pane]")?.getAttribute("data-pane") ?? activeRef.current);
+        if (panesRef.current.length < 2) {
+          setPaneList([panesRef.current[0] ?? null, null]);
+          setReading((r) => [r[0]!, false]);
+        }
+        setActive(from === 0 ? 1 : 0);
+      }
+      await load(join(dir, rel));
     },
   });
 

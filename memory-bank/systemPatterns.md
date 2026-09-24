@@ -211,6 +211,20 @@ invisible and the next Backspace would eat a backtick and turn the block into ra
 `blocksRef`): at those two spots the first Backspace selects the whole block (it shows as highlighted text), a second deletes it (like an image); an empty line
 under a block (not the note's last) is just removed. Delete (forward) at the end of the line above a block is NOT handled.
 
+## Pattern: the `//` list (plugin API 4)
+`slashMenu(getBlocks)` in `LiveEditor.tsx`: a `StateField<SlashMenu | null>` decides open / filtered / closed purely from the transaction (line is exactly `//` + non-space text, cursor at its end;
+it opens only on `input.type`), `showTooltip.compute` draws it with ONE stable `create` (CodeMirror keeps a tooltip view by `create` identity and calls its `update`), a `Prec.highest` keymap owns
+arrows / Enter / Tab / Escape while it is open and returns false otherwise. Entries come from `BlockRenderer.menuItems()` (host: plugins' `addItem`s + legacy `//` triggers); choosing calls
+`runInput("item", { text: key })`. The plugin only ever sees its own item id, never keystrokes. `inputHandler` lets a typed `//` through when the list exists, so it never competes with old triggers.
+
+## Pattern: a plugin frame is reused only for the same block language
+`BlockWidget.updateDOM` keeps the iframe (and what the user typed in it) when a block's text changes, but only if `dom.dataset.lang === this.lang`; otherwise CodeMirror builds a new frame (and the old
+one is `destroy`ed). Without the check, a note switch table -> calendar kept the table's frame.
+
+## Pattern: open-beside
+`granite.vault.open(path, { beside: true })`: the host passes the calling block's element as `origin`; desktop finds its pane through `data-pane`, splits if needed and loads the note in the other pane;
+the phone opens it full screen and remembers where it came from (`backRel`) for a back pill. See `progress.md` "`//` list, open-beside ...".
+
 ## Pattern: plugin API 3 = `vault.open`
 `granite.vault.open(path)` (permission `vault.read`, path checked by `safeNotePath`) -> `HostAdapter.openNote(rel)`. Desktop: `usePlugins` gets an `openNote`
 argument, `NoteApp` passes `load(join(dir, rel))` (into the active pane). Phone: the block page sends the `vault` request `{ op: 'open', path }`, `App.tsx`'s

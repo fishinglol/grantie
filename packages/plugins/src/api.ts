@@ -76,6 +76,12 @@ export interface GraniteApi {
      * insert instead, or `null` to let the paste through untouched. One handler per plugin; it has 5 seconds.
      */
     onPaste(handler: (clip: PasteClip) => string | null | Promise<string | null>): Promise<void>;
+    /**
+     * editor.input (API 4): put an entry in the list that appears when the user types `//` alone on an empty line, next to the
+     * other plugins' entries. Choosing it removes the typed `//` and puts whatever `insert` returns (Markdown) there.
+     * `name` is what the list shows (and what typing after `//` filters on), `description` is one line under it.
+     */
+    addItem(item: { id: string; name: string; description?: string; insert: () => string | Promise<string> }): Promise<void>;
   };
   vault: {
     /** vault.read: vault-relative paths of every note, e.g. `Projects/plan.md`. */
@@ -84,8 +90,12 @@ export interface GraniteApi {
     read(path: string): Promise<string>;
     /** vault.write: only `.md` notes inside the vault; never the hidden `.granite` folder. */
     write(path: string, text: string): Promise<void>;
-    /** vault.read (API 3): open a note in the editor, in place of the one showing now. */
-    open(path: string): Promise<void>;
+    /**
+     * vault.read (API 3): open a note in the editor, in place of the one showing now. With `{ beside: true }` (API 4) a desktop
+     * window opens it in the other half of a split view (making one if needed) so the page you called from stays visible; the
+     * phone opens it full screen with a button back to the page you came from.
+     */
+    open(path: string, options?: { beside?: boolean }): Promise<void>;
   };
   /** Show a short message. No permission needed. */
   notice(message: string): void;

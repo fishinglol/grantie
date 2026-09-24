@@ -17,8 +17,8 @@ export interface UsePluginsArgs {
   notify: (message: string) => void;
   /** A plugin wrote this note; refresh the sidebar (and sync). */
   onWroteNote: (rel: string) => void;
-  /** Show this note (vault-relative) in the active pane. */
-  openNote: (rel: string) => Promise<void>;
+  /** Show this note (vault-relative): in the active pane, or with `beside`, in the pane next to the one `origin` (a plugin block) is in. */
+  openNote: (rel: string, options?: { beside?: boolean; origin?: HTMLElement | null }) => Promise<void>;
 }
 
 /**
@@ -58,7 +58,7 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
           await tauriFs.writeTextFile(join(vaultDir, rel), text);
           latest.current.onWroteNote(rel);
         },
-        openNote: (rel) => latest.current.openNote(rel),
+        openNote: (rel, options) => latest.current.openNote(rel, options),
         notice: (m) => latest.current.notify(m),
       },
       () => setCommands(h.commands()),

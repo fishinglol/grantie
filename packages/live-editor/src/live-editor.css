@@ -280,3 +280,14 @@
 /* A block that is the whole page (a sheet): edge to edge and exactly as tall as the editor, with no room to scroll past it. */
 .live-editor:has(.cm-plugin-block-page) .cm-content { max-width: none; padding: 0 !important; }
 .live-editor .cm-plugin-block-page { margin: 0; height: var(--editor-h, 100vh); }
+
+/* The `//` list (plugins' things to insert). */
+.live-editor .cm-tooltip.cm-slash-menu {
+  min-width: 220px; max-width: min(320px, 90vw); max-height: 260px; overflow-y: auto; padding: 4px;
+  background: var(--panel, #1f2330); border: 1px solid var(--border, #3a4055); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); color: var(--text);
+}
+.cm-slash-item { padding: 7px 10px; border-radius: 7px; cursor: pointer; }
+.cm-slash-item.cm-slash-on { background: var(--panel-hover, #2a2f3e); }
+.cm-slash-name { font-weight: 600; font-size: 14px; }
+.cm-slash-desc { margin-top: 1px; font-size: 12px; color: var(--text-dim); line-height: 1.3; }

@@ -9,6 +9,7 @@ import {
   EditorSelection,
   EditorState,
   Facet,
+  Prec,
   type Text,
   StateEffect,
   StateField,
@@ -22,6 +23,8 @@ import {
   keymap,
   placeholder,
   scrollPastEnd,
+  showTooltip,
+  type TooltipView,
   WidgetType,
 } from "@codemirror/view";
 import { dirname, IMAGE_FILE, join, toggleFormat, type InlineFormat } from "@granite/core-notes";
@@ -365,6 +368,14 @@ export interface BlockActions {
   edit(): void;
 }
 
+/** One entry of the `//` list. */
+export interface MenuItemInfo {
+  key: string;
+  name: string;
+  description: string;
+  plugin: string;
+}
+
 export interface BlockRenderer {
   /** Languages that currently have a renderer. */
   langs(): string[];
@@ -376,7 +387,10 @@ export interface BlockRenderer {
   triggers?(): string[];
   /** True when a plugin wants to see pasted spreadsheet text (anything with a tab in it). */
   hasPasteHook?(): boolean;
-  runInput?(kind: "trigger" | "paste", payload: { text: string; html?: string }): Promise<string | null>;
+  /** The entries of the list that opens when the user types `//` alone on an empty line. */
+  menuItems?(): MenuItemInfo[];
+  /** `item`: `payload.text` is a `MenuItemInfo.key`. */
+  runInput?(kind: "trigger" | "paste" | "item", payload: { text: string; html?: string }): Promise<string | null>;
   /** Draw a block into `el`. */
   mount(lang: string, el: HTMLElement, source: string, actions: BlockActions): { update(source: string): void; destroy(): void };
 }
@@ -415,6 +429,8 @@ function pluginInput(getBlocks: () => BlockRenderer | null) {
       // What the line would read after this input. Judged as a whole (not by where the character lands) because
       // typing `/` next to an existing `/` may be reported as inserted before or after it.
       const typed = state.sliceDoc(line.from, from) + text + state.sliceDoc(from, line.to);
+      // `//` opens the list (`slashMenu`) when any plugin offers an entry; the text is typed as usual.
+      if (typed === "//" && blocks.menuItems?.().length) return false;
       if (!blocks.triggers().includes(typed) || inCodeBlock(state, from)) return false;
       view.dispatch({ changes: { from: line.from, to: line.to }, userEvent: "delete" });
       void blocks.runInput("trigger", { text: typed }).then((out) => insertPluginText(view, line.from, line.from, out ?? typed));
@@ -435,6 +451,139 @@ function pluginInput(getBlocks: () => BlockRenderer | null) {
           view.dispatch({ changes: { from: Math.min(from, end), to: end, insert: text }, selection: { anchor: Math.min(from, end) + text.length }, userEvent: "input.paste" });
         });
         return true;
+      },
+    }),
+  ];
+}
+
+interface SlashMenu {
+  /** Start of the line the `//` is on. */
+  line: number;
+  items: MenuItemInfo[];
+  query: string;
+  shown: MenuItemInfo[];
+  index: number;
+}
+const menuClose = StateEffect.define<null>();
+const menuMove = StateEffect.define<number>();
+/** `//` alone on a line, then anything but spaces and slashes (what the list is filtered by). */
+const SLASH_LINE = /^\/\/([^\s/]*)$/;
+const filterMenu = (items: MenuItemInfo[], query: string) => {
+  const q = query.toLowerCase();
+  return q ? items.filter((i) => `${i.name} ${i.plugin}`.toLowerCase().includes(q)) : items;
+};
+
+/**
+ * The list that opens when `//` is typed alone on an empty line (Notion-style): one entry per thing a plugin can insert. Typing
+ * more filters it, arrows + Enter / Tab or a tap choose, Escape or moving away closes it and leaves the typed text alone.
+ * Choosing removes the typed text and asks the plugin what to put there.
+ */
+function slashMenu(getBlocks: () => BlockRenderer | null) {
+  const pick = (view: EditorView, item: MenuItemInfo) => {
+    const blocks = getBlocks();
+    if (!blocks?.runInput) return;
+    const line = view.state.doc.lineAt(view.state.selection.main.head);
+    const typed = line.text;
+    view.dispatch({ changes: { from: line.from, to: line.to }, effects: menuClose.of(null), userEvent: "delete" });
+    void blocks.runInput("item", { text: item.key }).then((out) => insertPluginText(view, line.from, line.from, out ?? typed));
+  };
+
+  const field = StateField.define<SlashMenu | null>({
+    create: () => null,
+    update(menu, tr) {
+      const { state } = tr;
+      const sel = state.selection.main;
+      const line = state.doc.lineAt(sel.head);
+      const match = sel.empty && sel.head === line.to ? SLASH_LINE.exec(line.text) : null;
+      if (!match || tr.effects.some((e) => e.is(menuClose)) || state.facet(readingFacet)) return null;
+      const query = match[1]!;
+      if (menu) {
+        if (menu.line !== line.from) return null;
+        const shown = filterMenu(menu.items, query);
+        if (shown.length === 0) return null;
+        let index = query === menu.query ? Math.min(menu.index, shown.length - 1) : 0;
+        for (const e of tr.effects) if (e.is(menuMove)) index = (index + e.value + shown.length) % shown.length;
+        return { ...menu, query, shown, index };
+      }
+      if (query === "" && tr.docChanged && tr.isUserEvent("input.type") && !inCodeBlock(state, sel.head)) {
+        const items = getBlocks()?.menuItems?.() ?? [];
+        if (items.length > 0) return { line: line.from, items, query, shown: items, index: 0 };
+      }
+      return null;
+    },
+    provide: (f) =>
+      showTooltip.compute([f], (state) => {
+        const menu = state.field(f);
+        return menu ? { pos: menu.line, above: false, strictSide: false, create } : null;
+      }),
+  });
+
+  function create(view: EditorView): TooltipView {
+    const dom = document.createElement("div");
+    dom.className = "cm-slash-menu";
+    const render = (state: EditorState) => {
+      const menu = state.field(field);
+      if (!menu) return;
+      dom.replaceChildren(
+        ...menu.shown.map((item, i) => {
+          const row = document.createElement("div");
+          row.className = i === menu.index ? "cm-slash-item cm-slash-on" : "cm-slash-item";
+          const name = document.createElement("div");
+          name.className = "cm-slash-name";
+          name.textContent = item.name;
+          row.append(name);
+          if (item.description) {
+            const desc = document.createElement("div");
+            desc.className = "cm-slash-desc";
+            desc.textContent = item.description;
+            row.append(desc);
+          }
+          // pointerdown + preventDefault: the editor keeps focus (and the phone keeps its keyboard) while the entry is chosen.
+          row.addEventListener("pointerdown", (e) => {
+            e.preventDefault();
+            pick(view, item);
+          });
+          return row;
+        }),
+      );
+      dom.querySelector(".cm-slash-on")?.scrollIntoView({ block: "nearest" });
+    };
+    render(view.state);
+    return { dom, update: (u) => render(u.state) };
+  }
+
+  const move = (delta: number) => (view: EditorView) => {
+    if (!view.state.field(field)) return false;
+    view.dispatch({ effects: menuMove.of(delta) });
+    return true;
+  };
+  const choose = (view: EditorView) => {
+    const menu = view.state.field(field);
+    if (!menu) return false;
+    pick(view, menu.shown[menu.index]!);
+    return true;
+  };
+  return [
+    field,
+    Prec.highest(
+      keymap.of([
+        { key: "ArrowDown", run: move(1) },
+        { key: "ArrowUp", run: move(-1) },
+        { key: "Enter", run: choose },
+        { key: "Tab", run: choose },
+        {
+          key: "Escape",
+          run: (view) => {
+            if (!view.state.field(field)) return false;
+            view.dispatch({ effects: menuClose.of(null) });
+            return true;
+          },
+        },
+      ]),
+    ),
+    EditorView.domEventHandlers({
+      blur(_event, view) {
+        if (view.state.field(field)) view.dispatch({ effects: menuClose.of(null) });
       },
     }),
   ];
@@ -496,6 +645,7 @@ class BlockWidget extends WidgetType {
   toDOM(view: EditorView) {
     const el = document.createElement("div");
     el.className = "cm-plugin-block";
+    el.dataset.lang = this.lang;
     try {
       blockMounts.set(
         el,
@@ -518,7 +668,8 @@ class BlockWidget extends WidgetType {
   /** Keep the frame (and what is typed in it) when the note's text changes; the frame ignores its own echoes. */
   updateDOM(dom: HTMLElement) {
     const mount = blockMounts.get(dom);
-    if (!mount) return false;
+    // A frame runs one plugin: a block of another language (another note's calendar where a table was) needs its own.
+    if (!mount || dom.dataset.lang !== this.lang) return false;
     mount.update(this.source);
     return true;
   }
@@ -1102,6 +1253,7 @@ export default function LiveEditor({ ref, title, readOnly = false, value, embeds
           }),
           dropField,
           pluginInput(() => blocksRef.current ?? null),
+          slashMenu(() => blocksRef.current ?? null),
           EditorView.updateListener.of((u) => {
             if (u.docChanged && !u.transactions.some((t) => t.annotation(External))) {
               onChangeRef.current(u.state.doc.toString());

@@ -13,8 +13,11 @@ export interface HostAdapter {
   listNotes(): Promise<string[]>;
   readNote(path: string): Promise<string>;
   writeNote(path: string, text: string): Promise<void>;
-  /** Show this note in the editor (vault-relative path). */
-  openNote(path: string): Promise<void>;
+  /**
+   * Show this note in the editor (vault-relative path). `beside`: keep what is showing and open it next to it (desktop split view;
+   * the phone shows it full screen with a way back). `origin` is the plugin block the call came from, when it came from one.
+   */
+  openNote(path: string, options?: { beside?: boolean; origin?: HTMLElement | null }): Promise<void>;
   notice(message: string): void;
 }
 
@@ -33,7 +36,7 @@ function bootstrapHtml(network: boolean, block: boolean): string {
   const csp = `default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'${block ? "; style-src 'unsafe-inline'; img-src data:" : ""}${network ? "; connect-src https:" : ""}`;
   return `<!doctype html><meta http-equiv="Content-Security-Policy" content="${csp}">${block ? "<style>html,body{margin:0;background:transparent}</style>" : ""}<script>
 (function () {
-  var host = window.parent, pending = {}, seq = 0, commands = {}, isBlock = false, blockFns = {}, blockHandle = null, triggers = {}, pasteFn = null;
+  var host = window.parent, pending = {}, seq = 0, commands = {}, isBlock = false, blockFns = {}, blockHandle = null, triggers = {}, pasteFn = null, items = {};
   function applyVars(vars) { for (var k in vars) document.documentElement.style.setProperty(k, vars[k]); }
   function send(m) { host.postMessage(m, "*"); }
   function call(method, args) {
@@ -71,13 +74,18 @@ function bootstrapHtml(network: boolean, block: boolean): string {
         if (typeof fn !== "function") throw new Error("input.onPaste needs a handler");
         pasteFn = fn;
         if (!isBlock) return call("input.register", ["paste", ""]);
+      },
+      addItem: function (d) {
+        if (!d || typeof d.id !== "string" || typeof d.name !== "string" || typeof d.insert !== "function") throw new Error("input.addItem needs { id, name, insert }");
+        items[d.id] = d.insert;
+        if (!isBlock) return call("input.register", ["item", d.id, d.name, String(d.description || "")]);
       }
     }),
     vault: Object.freeze({
       list: function () { return call("vault.list", []); },
       read: function (p) { return call("vault.read", [p]); },
       write: function (p, t) { return call("vault.write", [p, t]); },
-      open: function (p) { return call("vault.open", [p]); }
+      open: function (p, o) { return call("vault.open", [p, !!(o && o.beside)]); }
     }),
     notice: function (m) { send({ k: "call", n: 0, method: "notice", args: [String(m)] }); }
   });
@@ -112,7 +120,7 @@ function bootstrapHtml(network: boolean, block: boolean): string {
       if (p) { if (m.ok) p.resolve(m.value); else p.reject(new Error(m.error)); }
     } else if (m.k === "input-run") {
       Promise.resolve().then(function () {
-        var fn = m.kind === "paste" ? pasteFn : triggers[m.text];
+        var fn = m.kind === "paste" ? pasteFn : m.kind === "item" ? items[m.text] : triggers[m.text];
         return fn ? (m.kind === "paste" ? fn({ text: String(m.text), html: String(m.html) }) : fn()) : null;
       }).then(
         function (v) { send({ k: "input-done", n: m.n, value: typeof v === "string" ? v : null }); },
@@ -165,6 +173,15 @@ function themeVars(el: HTMLElement): Record<string, string> {
   return vars;
 }
 
+/** One entry of the `//` list. `key` is what `runInput("item", { text: key })` takes. */
+export interface MenuItem {
+  key: string;
+  name: string;
+  description: string;
+  /** Name of the plugin that offers it. */
+  plugin: string;
+}
+
 /** What the editor needs to draw plugin blocks; `BlockBridge` below is the stable object an app hands it. */
 export interface BlockMount {
   update(source: string): void;
@@ -180,6 +197,8 @@ interface Loaded {
   /** Texts the user may type alone on a line to trigger it, and whether it takes over pasted spreadsheet text. */
   triggers: Set<string>;
   paste: boolean;
+  /** Entries this plugin put in the `//` list. */
+  items: Map<string, { name: string; description: string }>;
   inputs: Map<number, { resolve: (value: string | null) => void; timer: ReturnType<typeof setTimeout> }>;
   runs: Map<number, { resolve: () => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>;
   code: string;
@@ -210,7 +229,7 @@ export class PluginHost {
     frame.setAttribute("aria-hidden", "true");
     frame.style.cssText = "display:none;width:0;height:0;border:0";
     frame.srcdoc = bootstrapHtml(manifest.permissions.includes("network"), false);
-    const entry: Loaded = { manifest, frame, blockLangs: new Set(), commands: new Map(), triggers: new Set(), paste: false, inputs: new Map(), runs: new Map(), code };
+    const entry: Loaded = { manifest, frame, blockLangs: new Set(), commands: new Map(), triggers: new Set(), paste: false, items: new Map(), inputs: new Map(), runs: new Map(), code };
     this.#plugins.set(manifest.id, entry);
     const started = new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -303,11 +322,35 @@ export class PluginHost {
   }
 
   /**
-   * Ask the plugin that registered `trigger` (or the paste hook) what to insert. Resolves null when it declines, fails or
-   * takes longer than 5 seconds (the editor then leaves the typed or pasted text alone).
+   * The entries of the `//` list. A plugin from before API 4 that answers `//` gets one entry (its own name), so it is not lost
+   * when the list takes over that text.
    */
-  runInput(kind: "trigger" | "paste", payload: { text: string; html?: string }): Promise<string | null> {
-    const entry = [...this.#plugins.values()].find((p) => (kind === "paste" ? p.paste : p.triggers.has(payload.text)));
+  menuItems(): MenuItem[] {
+    return [...this.#plugins.values()]
+      .flatMap((p) => {
+        const items: MenuItem[] = [...p.items].map(([id, i]) => ({ key: `${p.manifest.id}:item:${id}`, name: i.name, description: i.description, plugin: p.manifest.name }));
+        if (p.items.size === 0 && p.triggers.has("//")) items.push({ key: `${p.manifest.id}:trigger`, name: p.manifest.name, description: p.manifest.tagline ?? "", plugin: p.manifest.name });
+        return items;
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /**
+   * Ask the plugin that registered `trigger` (or the paste hook, or the `item` with this `MenuItem.key`) what to insert. Resolves
+   * null when it declines, fails or takes longer than 5 seconds (the editor then leaves the typed or pasted text alone).
+   */
+  runInput(kind: "trigger" | "paste" | "item", payload: { text: string; html?: string }): Promise<string | null> {
+    let sent: "trigger" | "paste" | "item" = kind;
+    let text = payload.text;
+    let entry: Loaded | undefined;
+    if (kind === "item") {
+      const [pluginId, type, id] = text.split(":");
+      entry = this.#plugins.get(pluginId ?? "");
+      if (type === "trigger") [sent, text] = ["trigger", "//"];
+      else text = id ?? "";
+    } else {
+      entry = [...this.#plugins.values()].find((p) => (kind === "paste" ? p.paste : p.triggers.has(text)));
+    }
     if (!entry) return Promise.resolve(null);
     const n = ++this.#runSeq;
     return new Promise((resolve) => {
@@ -316,7 +359,7 @@ export class PluginHost {
         resolve(null);
       }, INPUT_TIMEOUT_MS);
       entry.inputs.set(n, { resolve, timer });
-      entry.frame.contentWindow?.postMessage({ k: "input-run", n, kind, text: payload.text, html: payload.html ?? "" }, "*");
+      entry.frame.contentWindow?.postMessage({ k: "input-run", n, kind: sent, text, html: payload.html ?? "" }, "*");
     });
   }
 
@@ -380,7 +423,7 @@ export class PluginHost {
       case "call": {
         const n = Number(d.n);
         const reply = (ok: boolean, value?: unknown, error?: string) => post({ k: "result", n, ok, value, error });
-        void this.#call(manifest, String(d.method), Array.isArray(d.args) ? d.args : []).then(
+        void this.#call(manifest, String(d.method), Array.isArray(d.args) ? d.args : [], block.container).then(
           (value) => n && reply(true, value),
           (e: unknown) => n && reply(false, undefined, e instanceof Error ? e.message : String(e)),
         );
@@ -468,7 +511,7 @@ export class PluginHost {
     if (!existing) document.head.append(style);
   }
 
-  async #call(manifest: PluginManifest, method: string, args: unknown[]): Promise<unknown> {
+  async #call(manifest: PluginManifest, method: string, args: unknown[], origin: HTMLElement | null = null): Promise<unknown> {
     if (!(method in METHOD_PERMISSION)) throw new Error(`unknown method "${method}"`);
     const needed = METHOD_PERMISSION[method];
     if (needed && !manifest.permissions.includes(needed)) {
@@ -496,7 +539,7 @@ export class PluginHost {
       case "vault.write":
         return this.#adapter.writeNote(safeNotePath(args[0]), text(1));
       case "vault.open":
-        return this.#adapter.openNote(safeNotePath(args[0]));
+        return this.#adapter.openNote(safeNotePath(args[0]), { beside: args[1] === true, origin });
       case "blocks.register": {
         const lang = text(0);
         if (!/^[a-z][a-z0-9-]{0,29}$/.test(lang)) throw new Error(`"${lang}" is not a block language (lower-case letters, digits, dashes)`);
@@ -508,6 +551,10 @@ export class PluginHost {
         const entry = this.#plugins.get(manifest.id);
         if (text(0) === "paste") {
           if (entry) entry.paste = true;
+        } else if (text(0) === "item") {
+          const id = text(1);
+          if (!/^[a-z0-9-]{1,30}$/i.test(id)) throw new Error(`"${id}" is not an item id (letters, digits, dashes)`);
+          entry?.items.set(id, { name: text(2).slice(0, 40), description: text(3).slice(0, 120) });
         } else {
           const trigger = text(1);
           if (trigger.length < 1 || trigger.length > 8 || /\s/.test(trigger)) throw new Error(`"${trigger}" is not a trigger (1–8 characters, no spaces)`);
@@ -540,7 +587,8 @@ export class BlockBridge {
   };
   triggers = (): string[] => this.host?.inputTriggers() ?? [];
   hasPasteHook = (): boolean => this.host?.hasPasteHook() ?? false;
-  runInput = (kind: "trigger" | "paste", payload: { text: string; html?: string }): Promise<string | null> =>
+  menuItems = (): MenuItem[] => this.host?.menuItems() ?? [];
+  runInput = (kind: "trigger" | "paste" | "item", payload: { text: string; html?: string }): Promise<string | null> =>
     this.host?.runInput(kind, payload) ?? Promise.resolve(null);
   /** Call from the host's `onBlocksChanged`. */
   changed = (): void => this.#listeners.forEach((l) => l());

@@ -495,6 +495,32 @@ The date math, `layoutDays` lanes, the three views and the CSS are theirs (CSS r
   **Not verified**: the phone itself (WebView, touch, long-press to create), a real vault with hundreds of notes (it reads every note on mount), Tauri window.
   Fixed on the way: the year view showed a stray header row (`[hidden]` lost to `display: grid`), narrow screens lost the room for the continuation arrow.
 
+### `//` list, open-beside, table layout, frame-reuse bug (2026-09-24, plugin API 4, desktop + phone)
+User (Thai) after trying the phone: table and calendar still buggy on the phone; wants `//` to list the plugins' things (Calendar, Table...) like Notion; wants a tap on a note/day in the
+calendar to open it beside the calendar (a screenshot of Obsidian's calendar | note split); asked to be told the plan before code ("yes do it" after).
+- **Phone bugs: NOT reproduced.** Ran the phone app in the Expo web preview at 390 px (in-memory fs, plugins seeded by hand): typing, Tab, `+ Row`, `//`, opening notes, the calendar all worked.
+  Real device only: Android WebView, real touch, IME keyboard, and possibly the phone still running an older build (an OTA needs two restarts, now one). **Ask for a screenshot / what happens.**
+  Found and fixed on the way: (1) `BlockWidget.updateDOM` reused a plugin frame for a block of a *different* language, so opening a note with a calendar after one with a table kept showing the table
+  (files were never touched); now `dom.dataset.lang` must match. Very likely behind "plugin appears then vanishes". (2) Simple Table's delete-row `×` was an extra table column, so the table was 26 px
+  wider than its block, "Delete table" stuck out past its edge and a phone got a sideways scroll. The `×` now sits inside the row's last cell (`td.last textarea` has right padding).
+- **Plugin API 4** (`API_VERSION` 4): `granite.input.addItem({ id, name, description?, insert })` (permission `editor.input`) puts an entry in the `//` list; `granite.vault.open(path, { beside })`.
+  Host: `PluginHost.menuItems()` (a pre-API-4 plugin that answers the `//` trigger gets one entry named after the plugin, so an installed Simple Table 1.0.0 is not lost), `runInput("item", { text: key })`
+  (key = `pluginId:item:id` or `pluginId:trigger`), `HostAdapter.openNote(path, { beside, origin })` where `origin` is the block the call came from (`#call` gets `block.container`), `BlockBridge.menuItems`.
+- **`//` list** (`slashMenu()` in `LiveEditor.tsx`, a `StateField` + `showTooltip`, no new dependency): opens when `//` is typed alone on an empty line (`input.type`, not in a code block, not reading mode)
+  and at least one entry exists; typing more filters (name + plugin), ArrowUp/Down, Enter/Tab or a tap (`pointerdown` + preventDefault so the phone keeps its keyboard) choose, Escape / blur / moving off the
+  line close it and leave the text alone. Choosing deletes the typed text and inserts what the plugin returns (`insertPluginText`). CSS `.cm-slash-*` in `live-editor.css`.
+  Entries: Calendar, Cards, Spreadsheet, Table (plugins bumped: simple-table 1.1.0, calendar 1.1.0, cards 1.2.0, excel 1.4.0, all `minApiVersion` 4; **installed copies in a vault are old until the user taps UPDATE in
+  the Store**; Simple Table's `//` trigger is gone from 1.1.0, its entry replaces it).
+- **Open beside**: desktop `NoteApp` `openNote(rel, { beside, origin })`: splits if there is one pane, target = the pane other than the one holding `origin` (`[data-pane]`), then `load()`; the next click replaces
+  the right pane. Phone: no room for two halves, so `App.tsx` opens the note full screen and shows a **‹ Cal** pill (`NoteScreen` prop `back`, state `backRel`, cleared by any other `openNote`) that goes back.
+  A bottom-sheet second editor was considered and NOT built (a second editor needs its own save/doc state in `App.tsx`); ask if the pill is not enough.
+- **Verified** (desktop web preview + phone web preview at 390 px + headless Chrome): the list with 4 plugins, filter `//ta` -> Table -> Enter, tap on a row, calendar click -> split, second click replaces the right pane,
+  double-click a day creates+opens on the right, phone pill goes back, table fits 390 px. Tests: `packages/plugins/test/menu-items.test.ts` (each plugin's entry and manifest; 55 pass).
+  **Not verified**: the real phone (touch on the list, soft keyboard placement of the list, the pill), the Tauri window, the list on a phone with the soft keyboard covering the lower half (CodeMirror flips it above).
+- New Store picture for Simple Table: `screenshots/00-slash-list.webp`.
+- Preview tip: the phone web preview keeps files only in memory (`memFs`); to seed it I temporarily exported `window.__memFs` from `apps/mobile/src/memFs.ts` (reverted; do not commit) and served
+  `examples/plugins` from a tiny CORS python server, then opened Plugins to make the app rescan.
+
 ## Left to do
 
 ### Finish / polish the local feature

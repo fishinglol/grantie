@@ -4,11 +4,12 @@ A board of colourful note cards that lives **inside a note**, like a sticky-note
 in place on desktop and phone.
 
 - Permissions: **Draw its own blocks inside your notes** (`editor.blocks`) and **Change the open note**
-  (`editor.read` / `editor.write`, only for the two commands that add a board to the note). It never reads your other notes and has no network.
+  (`editor.read` / `editor.write`, only for the two commands that add a board to the note) and **See what you type on an empty line** (`editor.input`, only for
+  its entry in the `//` list). It never reads your other notes and has no network. Needs plugin API 4.
 - Install: from the **Store** tab of Plugins (desktop), or copy this folder to `<vault>/.granite/plugins/cards/`
   (it syncs to your phone), then switch it on under Plugins on each device.
 - Use: open a note and pick **Turn this page into a card board** from the **⋯** button at the top right of the page (phone: the ⋮
-  menu). Or run **Insert a card board** from the Plugins screen, or type a ```` ```cards ```` fence yourself: each board is one
+  menu). Or type **`//`** on an empty line and pick **Cards**, or run **Insert a card board** from the Plugins screen, or type a ```` ```cards ```` fence yourself: each board is one
   fenced block, so a note can hold several. A page that already has text keeps it, below the board.
 - The board is stored as text between the fences, one card per line (JSON), so it is a normal Markdown note that syncs and diffs like
   any other. While the cursor is inside the block (or after **`</>`**) it shows as that text. A board whose text no longer parses is

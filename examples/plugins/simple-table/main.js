@@ -1,6 +1,6 @@
 // Simple Table: a table drawn in place, inside a note. Plain JS, no dependencies; runs in the plugin sandbox on
 // desktop and phone. The table is stored as a normal Markdown table between ```simple-table fences, so the note
-// still reads (and diffs, and syncs) as text. Type // alone on an empty line to start one; paste cells copied
+// still reads (and diffs, and syncs) as text. Type // alone on an empty line and pick Table to start one; paste cells copied
 // from Excel / Sheets (tab-separated) and they turn into one.
 
 const LANG = "simple-table";
@@ -118,10 +118,8 @@ const CSS = `
 body { font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--text, #e6e9f0); }
 .wrap { padding: 2px 0 4px; overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; }
-td { padding: 0; border: 1px solid var(--line); vertical-align: top; }
+td { padding: 0; border: 1px solid var(--line); vertical-align: top; position: relative; }
 td.hd { background: color-mix(in srgb, var(--text, #e6e9f0) 7%, transparent); }
-td.hd { position: relative; }
-td.g { width: 26px; min-width: 26px; border: 0; background: none; text-align: center; vertical-align: middle; }
 textarea { display: block; width: 100%; min-width: 96px; margin: 0; padding: 6px 10px; border: 0; background: transparent; color: inherit; font: inherit; resize: none; overflow: hidden; outline: none; }
 textarea.hd { font-weight: 700; }
 textarea::placeholder { color: var(--text-faint, #5c6474); font-weight: 400; }
@@ -130,6 +128,8 @@ button { font: inherit; cursor: pointer; }
 .x { width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text-dim, #8b93a7); font-size: 15px; line-height: 20px; opacity: 0; }
 .x:hover { background: var(--panel-hover, #3a4055); color: var(--text, #e6e9f0); }
 .x.col { position: absolute; top: 3px; right: 3px; width: 18px; height: 18px; line-height: 18px; font-size: 14px; }
+.x.row { position: absolute; top: 50%; right: 3px; margin-top: -10px; }
+td.last textarea { padding-right: 24px; }
 table:hover .x, .wrap:focus-within .x { opacity: 0.7; }
 .foot { display: flex; align-items: center; gap: 6px; padding-top: 4px; }
 .foot .grow { flex: 1; }
@@ -285,7 +285,7 @@ function startTable(root, model, source, block) {
           e.stopPropagation();
           pasteInto(r, c, parseTsv(text));
         });
-        const td = h("td", { class: r === 0 ? "hd" : "" }, ta);
+        const td = h("td", { class: (r === 0 ? "hd" : "") + (c === n - 1 ? " last" : "") }, ta);
         if (r === 0 && n > 1) {
           const x = h("button", { class: "x col", tabindex: "-1", title: "Delete this column", "aria-label": "Delete this column" }, "×");
           x.addEventListener("click", () => delCol(c));
@@ -293,14 +293,12 @@ function startTable(root, model, source, block) {
         }
         tr.append(td);
       });
-      // Right edge: delete this row (the header row can't be deleted).
-      const gutter = h("td", { class: "g" });
+      // Delete this row: a × at the right end of its last cell (the header row can't be deleted).
       if (r > 0) {
-        const x = h("button", { class: "x", tabindex: "-1", title: "Delete this row", "aria-label": "Delete this row" }, "×");
+        const x = h("button", { class: "x row", tabindex: "-1", title: "Delete this row", "aria-label": "Delete this row" }, "×");
         x.addEventListener("click", () => delRow(r));
-        gutter.append(x);
+        tr.lastElementChild.append(x);
       }
-      tr.append(gutter);
       table.append(tr);
     });
     wrap.append(table);
@@ -357,8 +355,8 @@ if (typeof granite !== "undefined") {
     };
   });
 
-  // Type // alone on an empty line → a blank 3×3 table there.
-  granite.input.trigger("//", () => fence(blankTable(3, 3)));
+  // In the list that opens when the user types // alone on an empty line → a blank 3×3 table there.
+  granite.input.addItem({ id: "table", name: "Table", description: "Rows and columns you type into", insert: () => fence(blankTable(3, 3)) });
 
   // Paste cells copied from Excel / Sheets → a table (the first row becomes the header).
   granite.input.onPaste(({ text }) => {

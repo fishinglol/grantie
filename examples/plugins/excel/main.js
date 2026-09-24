@@ -2591,6 +2591,13 @@ if (typeof granite !== "undefined") {
     },
   });
 
+  granite.input.addItem({
+    id: "sheet",
+    name: "Spreadsheet",
+    description: "A grid with formulas, like Excel",
+    insert: () => "```sheet\n" + serializeSheet(emptySheet()) + "\n```",
+  });
+
   granite.commands.add({
     id: "insert",
     name: "Insert a spreadsheet",

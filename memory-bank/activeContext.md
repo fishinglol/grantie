@@ -82,6 +82,12 @@ read-only. Confirmed: desktop only; split via ⋯ → "Split right" (no tabs); r
 - Also this session: a new note is created **empty** (no `# name` line; the title above the text is the name).
 - Checked in the browser previews only (desktop preview + Expo web at phone size); not on the Samsung phone or in the Tauri window.
 
+## Session 2026-09-24 (newest) — `//` list, calendar opens beside, phone check
+User asked for: a `//` list of plugin things, calendar notes opening beside the calendar (Obsidian-like screenshot), and fixes for phone bugs in the table/calendar. Done (details: `progress.md`
+"`//` list, open-beside, table layout, frame-reuse bug"): plugin API 4, the list, open-beside (desktop split, phone back pill), table layout fix, a real bug in plugin-frame reuse.
+**Open**: the phone bug the user sees is NOT reproduced (works in the phone web preview) - ask for a screenshot after they run `npm run ship` and restart the app; installed plugin copies need UPDATE in the Store
+(Simple Table 1.1.0, Calendar 1.1.0, Cards 1.2.0, Excel 1.4.0) - the `//` list shows the old Simple Table as one entry until then. Not committed / pushed yet.
+
 ## Session 2026-09-24 (latest) — table bugs, endless Drive copies, Calendar plugin
 User (Thai) reported: a Simple Table "disappearing", rows/columns "wrong", and `my own schedule (Drive copy ...)` files multiplying on the phone. Findings and fixes (details: `progress.md`):
 1. **Table "disappears" on Backspace** = the hidden closing fence being eaten. Fixed for all plugin blocks (`backspaceAfterBlock`).

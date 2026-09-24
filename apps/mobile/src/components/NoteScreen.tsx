@@ -7,13 +7,15 @@ import type { NoteEditorHandle, NoteEditorProps } from './NoteEditor.types';
 
 export interface NoteScreenProps extends NoteEditorProps {
   dirty: boolean;
+  /** Set when a plugin opened this note from another page (the calendar): a pill that goes back there. */
+  back?: { name: string; onPress: () => void };
   onOpenSidebar: () => void;
   onOpenMenu: () => void;
 }
 
 /** One note, full screen: round sidebar and ⋮ buttons, then the live editor (which shows the note's editable title). */
 const NoteScreen = forwardRef<NoteEditorHandle, NoteScreenProps>(function NoteScreen(
-  { dirty, onOpenSidebar, onOpenMenu, ...editor },
+  { dirty, back, onOpenSidebar, onOpenMenu, ...editor },
   ref,
 ) {
   return (
@@ -22,6 +24,13 @@ const NoteScreen = forwardRef<NoteEditorHandle, NoteScreenProps>(function NoteSc
         <Pressable onPress={onOpenSidebar} style={styles.round} accessibilityLabel="Open sidebar">
           <Icon name="page-layout-sidebar-left" size={24} />
         </Pressable>
+        {back && (
+          <Pressable onPress={back.onPress} style={styles.back} accessibilityLabel={`Back to ${back.name}`}>
+            <Text style={styles.backText} numberOfLines={1}>
+              ‹ {back.name}
+            </Text>
+          </Pressable>
+        )}
         <View style={styles.right}>
           {dirty && <View style={styles.dirty} />}
           <Pressable onPress={onOpenMenu} style={styles.round} accessibilityLabel="Note menu">
@@ -55,6 +64,8 @@ const styles = StyleSheet.create({
   bar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 52, paddingHorizontal: 16, paddingBottom: 8 },
   round: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.panel, alignItems: 'center', justifyContent: 'center' },
   right: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  back: { flexShrink: 1, height: 40, paddingHorizontal: 16, borderRadius: 20, backgroundColor: colors.panel, justifyContent: 'center', marginHorizontal: 8 },
+  backText: { color: colors.text, fontSize: 15, fontWeight: '600' },
   dirty: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.accent },
   empty: { color: colors.textFaint, fontSize: 16, padding: 18 },
 });

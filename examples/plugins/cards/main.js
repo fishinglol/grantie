@@ -710,6 +710,13 @@ if (typeof granite !== "undefined") {
     },
   });
 
+  granite.input.addItem({
+    id: "cards",
+    name: "Cards",
+    description: "Sticky-note cards, in a grid",
+    insert: () => "```cards\n" + serializeBoard(emptyBoard(false)) + "\n```",
+  });
+
   granite.commands.add({
     id: "insert",
     name: "Insert a card board",

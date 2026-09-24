@@ -80,6 +80,8 @@ declared permissions, explicit per-device enable**.
   Obsidian plugin Just Simple Calendar: month / weeks / year views, multi-day bars, click opens a note, double-click / long-press an empty day creates a dated note). Settings
   live in the block text (`view / date / end / title / week / page`). Details, what is not ported (hover preview, right-click menu) and what is unverified (real phone, big
   vaults) in `progress.md` "Calendar plugin + plugin API 3".
+- **API 4 (2026-09-24)**: `granite.input.addItem(...)` (an entry in the `//` list; the editor draws the list) and `granite.vault.open(path, { beside })`. `//` is now owned by the list, not by one
+  plugin's trigger (`input.trigger` still works for other texts, and a legacy `//` trigger appears as one entry). Simple Table 1.1.0, Calendar 1.1.0, Cards 1.2.0, Excel 1.4.0 use it.
 - **Next**: command palette (Cmd+P) so commands aren't only reachable from the Plugins screen; CodeMirror
   extension / event / settings APIs; plugin registry + install-from-URL; docs site; a Worker layer for hangs;
   `desktopOnly` plugins are hidden on the phone but never exercised.
