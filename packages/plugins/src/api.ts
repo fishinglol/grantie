@@ -84,6 +84,8 @@ export interface GraniteApi {
     read(path: string): Promise<string>;
     /** vault.write: only `.md` notes inside the vault; never the hidden `.granite` folder. */
     write(path: string, text: string): Promise<void>;
+    /** vault.read (API 3): open a note in the editor, in place of the one showing now. */
+    open(path: string): Promise<void>;
   };
   /** Show a short message. No permission needed. */
   notice(message: string): void;
@@ -101,6 +103,7 @@ export const METHOD_PERMISSION: Record<string, Permission | null> = {
   "vault.list": "vault.read",
   "vault.read": "vault.read",
   "vault.write": "vault.write",
+  "vault.open": "vault.read",
   notice: null,
 };
 

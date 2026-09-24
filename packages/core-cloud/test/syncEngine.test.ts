@@ -143,6 +143,65 @@ test("both sides changed to the same bytes: no copy is made", async () => {
   assert.equal((await sync.sync()).conflicted, 0);
 });
 
+test("another device re-uploading the text we last synced is no conflict: the newer edit here wins, no copy", async () => {
+  const { fs, provider, sync } = setup();
+  await fs.writeTextFile("/vault/welcome.md", "v1");
+  await sync.sync();
+  // The phone saves the note it just downloaded, unchanged: Drive gets a new timestamp, same text.
+  await provider.upload({ folderId: "folder-1", path: "welcome.md", data: new TextEncoder().encode("v1"), existingId: provider.remote.get("welcome.md")!.id });
+  await fs.writeTextFile("/vault/welcome.md", "v2");
+
+  const res = await sync.sync();
+
+  assert.deepEqual((await listLocalFiles(fs, vaultDir)).map((f) => f.path), ["welcome.md"]);
+  assert.equal(await fs.readTextFile("/vault/welcome.md"), "v2");
+  assert.equal(text(provider.remote.get("welcome.md")!.data), "v2");
+  assert.equal(res.items.find((i) => i.path === "welcome.md")!.conflictCopy, undefined);
+});
+
+test("records from before hashes existed get one on the next sync, so the echo case is covered right after updating", async () => {
+  const { fs, provider, indexStore, sync } = setup();
+  await fs.writeTextFile("/vault/welcome.md", "v1");
+  await sync.sync();
+  delete indexStore.current.files["welcome.md"]!.hash; // as the old version left it
+  await sync.sync();
+  await provider.upload({ folderId: "folder-1", path: "welcome.md", data: new TextEncoder().encode("v1"), existingId: provider.remote.get("welcome.md")!.id });
+  await fs.writeTextFile("/vault/welcome.md", "v2");
+
+  await sync.sync();
+
+  assert.deepEqual((await listLocalFiles(fs, vaultDir)).map((f) => f.path), ["welcome.md"]);
+  assert.equal(text(provider.remote.get("welcome.md")!.data), "v2");
+});
+
+test("a file saved here with unchanged text does not overwrite a newer edit from elsewhere", async () => {
+  const { fs, provider, sync } = setup();
+  await fs.writeTextFile("/vault/welcome.md", "v1");
+  await sync.sync();
+  await provider.upload({ folderId: "folder-1", path: "welcome.md", data: new TextEncoder().encode("newer, from the desktop"), existingId: provider.remote.get("welcome.md")!.id });
+  await fs.writeTextFile("/vault/welcome.md", "v1"); // same text, new timestamp
+
+  await sync.sync();
+
+  assert.deepEqual((await listLocalFiles(fs, vaultDir)).map((f) => f.path), ["welcome.md"]);
+  assert.equal(await fs.readTextFile("/vault/welcome.md"), "newer, from the desktop");
+  assert.equal(text(provider.remote.get("welcome.md")!.data), "newer, from the desktop");
+});
+
+test("a file saved here with unchanged text is not uploaded again", async () => {
+  const { fs, provider, sync } = setup();
+  await fs.writeTextFile("/vault/welcome.md", "v1");
+  await sync.sync();
+  const uploads = provider.uploads.length;
+  await fs.writeTextFile("/vault/welcome.md", "v1");
+
+  await sync.sync();
+  const res = await sync.sync();
+
+  assert.equal(provider.uploads.length, uploads);
+  assert.equal(res.items.find((i) => i.path === "welcome.md")!.action, "skip");
+});
+
 test("a conflict copy that conflicts again does not spawn a copy of itself", async () => {
   const { fs, provider, sync } = setup();
   const copy = "welcome (Drive copy 2026-09-03 14-05-09).md";

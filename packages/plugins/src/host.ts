@@ -13,6 +13,8 @@ export interface HostAdapter {
   listNotes(): Promise<string[]>;
   readNote(path: string): Promise<string>;
   writeNote(path: string, text: string): Promise<void>;
+  /** Show this note in the editor (vault-relative path). */
+  openNote(path: string): Promise<void>;
   notice(message: string): void;
 }
 
@@ -74,7 +76,8 @@ function bootstrapHtml(network: boolean, block: boolean): string {
     vault: Object.freeze({
       list: function () { return call("vault.list", []); },
       read: function (p) { return call("vault.read", [p]); },
-      write: function (p, t) { return call("vault.write", [p, t]); }
+      write: function (p, t) { return call("vault.write", [p, t]); },
+      open: function (p) { return call("vault.open", [p]); }
     }),
     notice: function (m) { send({ k: "call", n: 0, method: "notice", args: [String(m)] }); }
   });
@@ -492,6 +495,8 @@ export class PluginHost {
         return this.#adapter.readNote(safeNotePath(args[0]));
       case "vault.write":
         return this.#adapter.writeNote(safeNotePath(args[0]), text(1));
+      case "vault.open":
+        return this.#adapter.openNote(safeNotePath(args[0]));
       case "blocks.register": {
         const lang = text(0);
         if (!/^[a-z][a-z0-9-]{0,29}$/.test(lang)) throw new Error(`"${lang}" is not a block language (lower-case letters, digits, dashes)`);

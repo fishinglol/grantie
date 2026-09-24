@@ -27,6 +27,11 @@ export interface SyncRecord {
   remoteId: string;
   remoteModified: string;
   localModifiedMs: number;
+  /**
+   * Hash of the bytes both sides held after that sync. A new timestamp with the same bytes (a device
+   * saving a note it didn't change) is then not taken for an edit. Absent in records written before it existed.
+   */
+  hash?: string;
 }
 
 export interface SyncIndex {

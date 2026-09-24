@@ -81,6 +81,15 @@ so "changed since then" is distinguishable from "was already like that". It
 lives in the OS app-config dir, never in the vault — the vault must stay a clean
 folder of the user's `.md` files and assets.
 
+## Pattern: a new timestamp is not an edit (content hash in the sync record)
+`SyncRecord.hash` (cyrb53 of the bytes both sides held after the last sync, set by `#push` / `#pull` in `syncEngine.ts`). Timestamps alone can't tell an edit
+from a device re-saving a file it just downloaded (the phone did, every few seconds, which forked `note (Drive copy ...)` files and let the stale side overwrite
+the newer edit). Rules, in `#apply`: an `upload` whose bytes still equal the hash is skipped (only the local timestamp is re-recorded); a `conflict` where one
+side still equals the hash is settled for the side that really changed, with no copy; a conflict with identical bytes, or on a file that is itself a copy, makes
+no copy either. Records written before hashes existed get one on the next sync while unchanged (`skip` / `unchanged`). `planSync` is unchanged (still
+timestamp-only and pure); the hash check is in the executor because it needs the bytes. A note really edited on both devices inside one sync window still forks
+(deliberate: nothing is lost). The desktop app is single-instance (Tauri plugin) so two copies of it can't fork files either.
+
 ## Pattern: never lose a byte, even when we can't merge
 When both sides changed, v0.1 keeps *both*: the remote version is written beside
 the note as `note (Drive copy <timestamp>).md` and the local version stays
@@ -195,6 +204,22 @@ shrinks the visual viewport.
   handler → `input-done`. Held-back text is restored if the plugin declines, fails or takes over 5 s. Only text the plugin registered for is ever sent to it,
   and only if it holds `editor.input`.
 - Trigger match is on the **whole line after the input**, not where the character lands (IME / fast typing / caret ambiguity).
+
+## Pattern: Backspace next to a plugin block selects it first
+A plugin block (```` ```lang ```` fence drawn by a plugin) hides its fences, so a cursor at the end of the closing fence, or at the start of the line after it, is
+invisible and the next Backspace would eat a backtick and turn the block into raw text. `backspaceAfterBlock` (`LiveEditor.tsx`, first `Backspace` binding, gets
+`blocksRef`): at those two spots the first Backspace selects the whole block (it shows as highlighted text), a second deletes it (like an image); an empty line
+under a block (not the note's last) is just removed. Delete (forward) at the end of the line above a block is NOT handled.
+
+## Pattern: plugin API 3 = `vault.open`
+`granite.vault.open(path)` (permission `vault.read`, path checked by `safeNotePath`) -> `HostAdapter.openNote(rel)`. Desktop: `usePlugins` gets an `openNote`
+argument, `NoteApp` passes `load(join(dir, rel))` (into the active pane). Phone: the block page sends the `vault` request `{ op: 'open', path }`, `App.tsx`'s
+`pluginVault` calls `openNote`. A plugin using it sets `"minApiVersion": 3`. Used by the Calendar plugin.
+
+## Pattern: phone applies a published update on first open
+`App.tsx` (production builds only: `!__DEV__ && Updates.isEnabled`) calls `checkForUpdateAsync` -> `fetchUpdateAsync` -> `flush()` (save the open note) ->
+`reloadAsync`, once per launch. Without it expo-updates only runs a downloaded update on the *next* cold start, so a fix stayed invisible for one extra
+restart. Not exercised in dev; needs a real `npm run ship`.
 
 ## Pattern: uninstall = unload + forget + delete the folder + sync
 `usePlugins.uninstall` (desktop) / `uninstallPlugin` (phone): unload from the host (its blocks become plain text), remove the id from `plugins.json`, delete

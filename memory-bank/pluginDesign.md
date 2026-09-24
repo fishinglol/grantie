@@ -76,6 +76,10 @@ declared permissions, explicit per-device enable**.
   example folder only shows in a running dev server after touching `pluginCatalog.ts` (or a restart).
 - **API 2 + Simple Table + Uninstall (2026-09-24)**: permission `editor.input`, `granite.input.trigger / onPaste` (typing a text alone on an empty line; pasting
   tab-separated cells), `API_VERSION` 2, an Uninstall button on both apps, and the Simple Table plugin that uses them. Details in `progress.md`.
+- **API 3 + Calendar (2026-09-24)**: `granite.vault.open(path)` (permission `vault.read`), `API_VERSION` 3, and the Calendar plugin (`examples/plugins/calendar`, a port of the MIT
+  Obsidian plugin Just Simple Calendar: month / weeks / year views, multi-day bars, click opens a note, double-click / long-press an empty day creates a dated note). Settings
+  live in the block text (`view / date / end / title / week / page`). Details, what is not ported (hover preview, right-click menu) and what is unverified (real phone, big
+  vaults) in `progress.md` "Calendar plugin + plugin API 3".
 - **Next**: command palette (Cmd+P) so commands aren't only reachable from the Plugins screen; CodeMirror
   extension / event / settings APIs; plugin registry + install-from-URL; docs site; a Worker layer for hangs;
   `desktopOnly` plugins are hidden on the phone but never exercised.

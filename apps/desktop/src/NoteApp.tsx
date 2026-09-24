@@ -410,6 +410,9 @@ export default function NoteApp({
       if (dir) void refreshVaultFiles(dir);
       void runSync();
     },
+    openNote: async (rel) => {
+      if (dir) await load(join(dir, rel));
+    },
   });
 
   rescanPlugins.current = plugins.refresh;

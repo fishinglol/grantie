@@ -453,6 +453,34 @@ function fenceRanges(doc: Text, pos: number) {
   return null;
 }
 
+/**
+ * Backspace next to a plugin block must not eat its hidden closing ``` (the block would suddenly turn into raw text).
+ * At the block's end, or at the start of the line after it, the first Backspace selects the block, which shows its text
+ * highlighted; a second one deletes it, like an image. An empty line after it (not the note's last) is simply removed.
+ */
+function backspaceAfterBlock(view: EditorView, blocks: BlockRenderer | null): boolean {
+  const { state } = view;
+  const { doc } = state;
+  const sel = state.selection.main;
+  if (!blocks || !sel.empty) return false;
+  const line = doc.lineAt(sel.head);
+  const below = sel.head === line.from && line.number > 1;
+  const fence = below ? doc.line(line.number - 1) : sel.head === line.to ? line : null;
+  if (!fence) return false;
+  let node: ReturnType<ReturnType<typeof syntaxTree>["resolveInner"]> | null = syntaxTree(state).resolveInner(fence.to, -1);
+  while (node && node.name !== "FencedCode") node = node.parent;
+  if (!node || node.to !== fence.to || node.getChildren("CodeMark").length < 2) return false;
+  const info = node.getChild("CodeInfo");
+  const lang = info ? state.sliceDoc(info.from, info.to).trim().split(/\s+/)[0]! : "";
+  if (!lang || !blocks.langs().includes(lang)) return false;
+  if (below && line.length === 0 && line.number < doc.lines) {
+    view.dispatch({ changes: { from: line.from, to: line.from + 1 }, userEvent: "delete.backward" });
+  } else {
+    view.dispatch({ selection: { anchor: doc.lineAt(node.from).from, head: fence.to }, scrollIntoView: true });
+  }
+  return true;
+}
+
 /** A plugin block: the plugin's own page, in a sandboxed frame, in the flow of the note. */
 class BlockWidget extends WidgetType {
   constructor(
@@ -1055,6 +1083,7 @@ export default function LiveEditor({ ref, title, readOnly = false, value, embeds
                 return true;
               },
             })),
+            { key: "Backspace", run: (v) => backspaceAfterBlock(v, blocksRef.current ?? null) },
           ]),
           keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
           indentUnit.of("  "),

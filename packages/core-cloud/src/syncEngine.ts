@@ -5,6 +5,7 @@ import { conflictCopyName, countDeletionUnits, planSync } from "./syncPlan.ts";
 import {
   emptyIndex,
   type LocalFile,
+  type SyncAction,
   type SyncOutcome,
   type SyncIndex,
   type SyncPlanItem,
@@ -68,6 +69,19 @@ const under = (paths: Iterable<string>, dir: string) => [...paths].some((p) => p
 
 /** What `conflictCopyName` puts in a copy's name. */
 const COPY_MARK = " (Drive copy ";
+
+/** 53-bit content hash (cyrb53): tells "same bytes as last sync" apart from a real edit. Not for security. */
+function contentHash(data: Uint8Array): string {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (const b of data) {
+    h1 = Math.imul(h1 ^ b, 2654435761);
+    h2 = Math.imul(h2 ^ b, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return `${data.length}:${(4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36)}`;
+}
 
 /** A batch of deletions this small is applied without question; larger ones must also be a minority of the vault. */
 const MAX_UNATTENDED_DELETES = 5;
@@ -185,13 +199,21 @@ export class VaultSync {
 
     for (const item of plan) {
       if (item.action === "skip") {
+        // A record from before hashes existed: the file is unchanged since that sync, so its bytes are that sync's.
+        const rec = index.files[item.path];
+        if (rec && !rec.hash && item.reason === "unchanged") {
+          try {
+            rec.hash = contentHash(await this.#fs.readBinaryFile(join(this.#vaultDir, item.path)));
+          } catch {
+            // Unreadable right now; the next sync tries again.
+          }
+        }
         items.push({ path: item.path, action: "skip" });
         continue;
       }
       onProgress?.(done, actionable.length, item);
       try {
-        const conflictCopy = await this.#apply(item, folderId, remoteByPath, index);
-        items.push({ path: item.path, action: item.action, conflictCopy });
+        items.push({ path: item.path, ...(await this.#apply(item, folderId, remoteByPath, index)) });
       } catch (e) {
         items.push({ path: item.path, action: item.action, error: String(e) });
       }
@@ -292,50 +314,64 @@ export class VaultSync {
     folderId: string,
     remoteByPath: Map<string, { id: string; path: string; modifiedTime: string }>,
     index: SyncIndex,
-  ): Promise<string | undefined> {
+  ): Promise<{ action: SyncAction; conflictCopy?: string }> {
     const remote = remoteByPath.get(item.path);
+    const rec = index.files[item.path];
+    const { action } = item;
 
-    if (item.action === "upload") {
+    if (action === "upload") {
+      // Saved here without a change (same bytes as the last sync): nothing to send, just note the new timestamp.
+      const abs = join(this.#vaultDir, item.path);
+      if (rec?.hash && contentHash(await this.#fs.readBinaryFile(abs)) === rec.hash) {
+        rec.localModifiedMs = (await this.#fs.stat(abs)).modifiedMs;
+        return { action: "skip" };
+      }
       await this.#push(item.path, folderId, remote?.id, index);
-      return undefined;
+      return { action };
     }
 
-    if (item.action === "delete-local") {
+    if (action === "delete-local") {
       await this.#fs.removeFile(join(this.#vaultDir, item.path));
       delete index.files[item.path];
       await this.#pruneEmptyFolders(dirname(item.path));
-      return undefined;
+      return { action };
     }
 
-    if (item.action === "delete-remote") {
+    if (action === "delete-remote") {
       if (!remote) throw new Error(`no remote file for ${item.path}`);
       await this.#provider.trash(remote.id);
       delete index.files[item.path];
-      return undefined;
+      return { action };
     }
 
-    if (item.action === "download") {
+    if (action === "download") {
       if (!remote) throw new Error(`no remote file for ${item.path}`);
       await this.#pull(remote.id, item.path, item.path, remote.modifiedTime, index);
-      return undefined;
+      return { action };
     }
 
     // conflict: keep both. The remote copy lands beside the note under a new
     // name, the local file stays authoritative at its own path and is pushed.
     if (!remote) throw new Error(`no remote file for ${item.path}`);
-    // Two things are never worth a copy: both sides already hold the same bytes (only the timestamps
-    // differ), and a conflict copy itself (copies of copies just pile up; the local file wins).
     const remoteData = await this.#provider.download(remote.id);
     const localData = await this.#fs.readBinaryFile(join(this.#vaultDir, item.path));
+    // A side that still holds the bytes of the last sync only got a new timestamp (another device saved the
+    // note unchanged), so it isn't a conflict: the side that really changed wins, with no copy.
+    if (rec?.hash && contentHash(localData) === rec.hash) {
+      await this.#pull(remote.id, item.path, item.path, remote.modifiedTime, index);
+      return { action: "download" };
+    }
+    // Also never worth a copy: both sides already hold the same bytes, the remote is unchanged since the last
+    // sync, or the file is a conflict copy itself (copies of copies just pile up; the local file wins).
     const same = remoteData.length === localData.length && remoteData.every((b, i) => b === localData[i]);
-    if (same || item.path.includes(COPY_MARK)) {
+    if (same || (rec?.hash && contentHash(remoteData) === rec.hash) || item.path.includes(COPY_MARK)) {
       await this.#push(item.path, folderId, remote.id, index);
-      return undefined;
+      return { action };
     }
     const copyPath = conflictCopyName(item.path, this.#now());
     await this.#fs.writeBinaryFile(join(this.#vaultDir, copyPath), remoteData);
     await this.#push(item.path, folderId, remote.id, index);
-    return copyPath;
+    return { action, conflictCopy: copyPath };
   }
 
   /** After a note is deleted here because it was deleted elsewhere, drop the folders it leaves empty. */
@@ -361,6 +397,7 @@ export class VaultSync {
       remoteId: uploaded.id,
       remoteModified: uploaded.modifiedTime,
       localModifiedMs: stat.modifiedMs,
+      hash: contentHash(data),
     };
   }
 
@@ -380,7 +417,7 @@ export class VaultSync {
     await this.#fs.writeBinaryFile(abs, data);
     if (indexKey) {
       const stat = await this.#fs.stat(abs);
-      index.files[indexKey] = { remoteId: fileId, remoteModified, localModifiedMs: stat.modifiedMs };
+      index.files[indexKey] = { remoteId: fileId, remoteModified, localModifiedMs: stat.modifiedMs, hash: contentHash(data) };
     }
   }
 }

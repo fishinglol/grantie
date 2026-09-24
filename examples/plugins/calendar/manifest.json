@@ -1,0 +1,16 @@
+{
+  "id": "calendar",
+  "name": "Calendar",
+  "version": "1.0.0",
+  "description": "Your notes on a calendar, by a date in their properties: a month, an endless scroll of weeks, or the whole year. Notes that span several days show as one bar. Tap a note to open it; double-click (or long-press on a phone) an empty day to create a note on it. Turn a whole page into a calendar from the ⋯ menu, or type ```calendar in a note. Based on Just Simple Calendar by David Hurtado (MIT).",
+  "tagline": "Your notes by date: month, weeks or year",
+  "author": "Granite, from Just Simple Calendar by David Hurtado",
+  "minApiVersion": 3,
+  "permissions": [
+    "editor.blocks",
+    "editor.read",
+    "editor.write",
+    "vault.read",
+    "vault.write"
+  ]
+}

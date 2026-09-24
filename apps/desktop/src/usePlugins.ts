@@ -17,13 +17,15 @@ export interface UsePluginsArgs {
   notify: (message: string) => void;
   /** A plugin wrote this note; refresh the sidebar (and sync). */
   onWroteNote: (rel: string) => void;
+  /** Show this note (vault-relative) in the active pane. */
+  openNote: (rel: string) => Promise<void>;
 }
 
 /**
  * Runs the plugins this device has switched on for as long as the app is open (so a plugin that changes how
  * the editor looks stays in effect), and exposes what the Plugins screen needs.
  */
-export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNote }: UsePluginsArgs) {
+export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNote, openNote }: UsePluginsArgs) {
   const [installed, setInstalled] = useState<InstalledPlugin[] | null>(null);
   const [enabled, setEnabled] = useState<string[]>([]);
   const [failed, setFailed] = useState<Record<string, string>>({});
@@ -33,8 +35,8 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
   const host = useRef<PluginHost | null>(null);
   /** What the editor is given to draw plugin blocks; stable, so it can be passed on the first render. */
   const [blocks] = useState(() => new BlockBridge());
-  const latest = useRef({ hasNote, notes, notify, onWroteNote });
-  latest.current = { hasNote, notes, notify, onWroteNote };
+  const latest = useRef({ hasNote, notes, notify, onWroteNote, openNote });
+  latest.current = { hasNote, notes, notify, onWroteNote, openNote };
 
   useEffect(() => {
     if (!vaultDir) return;
@@ -56,6 +58,7 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
           await tauriFs.writeTextFile(join(vaultDir, rel), text);
           latest.current.onWroteNote(rel);
         },
+        openNote: (rel) => latest.current.openNote(rel),
         notice: (m) => latest.current.notify(m),
       },
       () => setCommands(h.commands()),

@@ -116,7 +116,9 @@
   otherwise `npm install` fails to resolve (root `overrides` pin react 19.2.3). The phone loads it only inside the editor WebView page
   (`apps/mobile/editor-web`, ~200 KB more inlined into `editorHtml.ts`); the RN side imports only the pure `@granite/canvas/format`.
 - **Tests:** `npm test` inside `packages/{core-notes,core-cloud,plugins,canvas}` (`node --test` runs the TS directly; no enums / private params).
-  Plugin example code is loaded with `node:vm` in `packages/plugins/test/*.test.ts` (cards, excel, simple-table).
+  Plugin example code is loaded with `node:vm` in `packages/plugins/test/*.test.ts` (cards, excel, simple-table, calendar).
+- **Phone OTA updates:** `apps/mobile` `npm run ship` (`build:editor` then `eas update --channel preview --platform android`). `expo-updates` is used from `App.tsx`
+  to apply an update right after it downloads (see systemPatterns). The Expo Go / dev build does not exercise it.
 - **Headless screenshots for plugin Store pages:** a Node script drives `/Applications/Google Chrome.app` over CDP against the desktop dev server
   (port 1420), then `cwebp -q 82` (in `/usr/local/bin`) makes the `.webp`; a fresh profile shows the first-run vault page ("Skip setup").
 - **fs capabilities** now also include `fs:allow-rename` (`$HOME`, `$DOCUMENT`) for moving

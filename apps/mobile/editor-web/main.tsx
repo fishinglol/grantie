@@ -214,6 +214,7 @@ function Page() {
         listNotes: () => vault({ op: "list" }) as Promise<string[]>,
         readNote: (path) => vault({ op: "read", path }) as Promise<string>,
         writeNote: async (path, text) => void (await vault({ op: "write", path, text })),
+        openNote: async (path) => void (await vault({ op: "open", path })),
         notice: (message) => send({ type: "notice", message }),
       },
       () => send({ type: "plugin-commands", commands: h.commands() }),

@@ -1,6 +1,6 @@
 # Active Context
 
-_Last updated: 2026-09-21_
+_Last updated: 2026-09-24_
 
 ## Current focus
 **Phone app + sync** (branch `feat/mobile-live-editor`, pushed; PR into `main` not opened yet) — see
@@ -81,6 +81,16 @@ read-only. Confirmed: desktop only; split via ⋯ → "Split right" (no tabs); r
   a mock was built and removed). Real ones need a plugin server, or a local-only "my review" feature if the user wants one.
 - Also this session: a new note is created **empty** (no `# name` line; the title above the text is the name).
 - Checked in the browser previews only (desktop preview + Expo web at phone size); not on the Samsung phone or in the Tauri window.
+
+## Session 2026-09-24 (latest) — table bugs, endless Drive copies, Calendar plugin
+User (Thai) reported: a Simple Table "disappearing", rows/columns "wrong", and `my own schedule (Drive copy ...)` files multiplying on the phone. Findings and fixes (details: `progress.md`):
+1. **Table "disappears" on Backspace** = the hidden closing fence being eaten. Fixed for all plugin blocks (`backspaceAfterBlock`).
+2. **Endless Drive copies + a table reverting while typing** = timestamp-only sync treated a device re-saving unchanged bytes as an edit. Fixed with `SyncRecord.hash` in `core-cloud` (+4 tests, 55 total).
+   The phone needs the new build (`npm run ship`); an update is now applied on first open (`expo-updates` in `App.tsx`). The desktop is single-instance.
+   Old copies were moved to the Trash by hand (8 files, twice).
+3. **"Row / column wrong"**: never reproduced (`+ Row`, `+ Column`, Tab behave in the preview). Most likely the same sync revert. **Ask the user again** if it persists after both apps are updated.
+4. **Calendar plugin** (port of Just Simple Calendar, MIT) + plugin API 3 (`vault.open`). Not yet run on a real phone.
+Open: why the phone re-saves an unchanged note (not found; harmless now); Delete-forward above a plugin block still joins it to the fence.
 
 ## Session 2026-09-24 (later) — Uninstall, plugin API 2, Simple Table
 User asked for an Uninstall button on plugins, no plugin buttons on the canvas bar for plugins that aren't installed (already how it worked), and a new

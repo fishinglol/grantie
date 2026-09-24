@@ -3,6 +3,7 @@ import { Alert, AppState, BackHandler, Platform, Share, StyleSheet, View } from 
 import { StatusBar } from 'expo-status-bar';
 import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
+import * as Updates from 'expo-updates';
 import { IMAGE_FILE, basename, dirname, embedImage, join, moveFolder, noteTitle, relocateLinks, renamedNoteFile } from '@granite/core-notes';
 import { PLUGINS_DIR, discoverPlugins, readPluginCode, type CommandInfo, type InstalledPlugin } from '@granite/plugins';
 import { GoogleDriveProvider, VaultSync, type DeviceCode, type GoogleSession } from '@granite/core-cloud';
@@ -151,6 +152,21 @@ export default function App() {
     },
     [flush, say],
   );
+
+  // A published update is used as soon as it is downloaded, not only after the next restart: save the open note, then reload.
+  useEffect(() => {
+    if (__DEV__ || !Updates.isEnabled) return;
+    void (async () => {
+      try {
+        if (!(await Updates.checkForUpdateAsync()).isAvailable) return;
+        await Updates.fetchUpdateAsync();
+        await flush();
+        await Updates.reloadAsync();
+      } catch {
+        // Offline or no update server: keep running this version.
+      }
+    })();
+  }, [flush]);
 
   // First launch: make sure there is a vault, list it, and open the welcome note.
   useEffect(() => {
@@ -483,6 +499,7 @@ export default function App() {
   const pluginVault = useCallback(
     async (request: PluginVaultRequest): Promise<unknown> => {
       if (request.op === 'list') return (await scanVault(fs)).notes.filter((n) => !isCanvas(n));
+      if (request.op === 'open') return void (await openNote(request.path));
       const abs = join(VAULT_DIR, request.path);
       if (request.op === 'read') return fs.readTextFile(abs);
       await fs.mkdirp(dirname(abs));
@@ -491,7 +508,7 @@ export default function App() {
       void syncNow.current();
       return null;
     },
-    [refresh],
+    [refresh, openNote],
   );
 
   /** Move a note into `folder` ("" = vault root), keeping its relative image links pointing at the same files. */

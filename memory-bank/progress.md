@@ -1,6 +1,6 @@
 # Progress
 
-_Last updated: 2026-09-21_
+_Last updated: 2026-09-24_
 
 ## Done
 - **`conflict_cleaner` CLI v0.1** — finds & resolves sync-conflict files (Python,
@@ -456,6 +456,44 @@ pasted become that table.
   **Not verified**: typing `//` with a phone soft keyboard / IME (Android composition may not go through CodeMirror's `inputHandler` the same way), a real Excel
   clipboard (only a synthetic paste event with the same text was tried), the Tauri window. Not built: column widths, alignment buttons, sorting, drag reorder,
   focusing the first cell of a table that `//` just created (the user clicks a cell).
+- **Fix (2026-09-24): table "disappearing" on Backspace.** From the line under a plugin block, Backspace used to put the (invisible)
+  cursor at the end of the hidden closing ``` and the next one ate a backtick, so the block turned into raw text. Now
+  `backspaceAfterBlock` (`LiveEditor.tsx`, all plugin blocks): at the block's end or the start of the line after it, the first Backspace
+  selects the block (shown as highlighted text), a second deletes it (like images); an empty line under it (not the note's last) is just
+  removed. Verified in the desktop web preview. Not handled: Delete (forward) at the end of the line *above* a block joins it to the
+  opening fence. User also said "row and column also wrong" — not yet explained (asked what they meant).
+- **Fix (2026-09-24): endless `(Drive copy …)` files + a table reverting while typing (desktop + phone open).** Evidence in the
+  user's vault (`~/Documents/GraniteVault-new`): 5 copies of `my own schedule.md` 12-25 s apart, each holding the *previous* desktop
+  version. So one device gave Drive a new timestamp with unchanged bytes (the phone, likely; why it re-saves is **not found**), and
+  timestamp-only sync read that as an edit: a conflict + copy on the desktop, or the stale side winning and overwriting the newer edit
+  (the table "going back"). Fix in `core-cloud`: `SyncRecord.hash` (cyrb53 of the bytes at the last sync, set by push/pull);
+  an upload whose bytes equal it is skipped; a conflict where one side still equals it goes to the side that really changed, no copy.
+  3 new tests in `syncEngine.test.ts`. Old index records have no hash until their next push/pull. Needs both apps updated
+  (phone: `npm run ship`). The existing 5 copies are older versions and were left for the user to delete.
+  - **Follow-up the same day:** 3 more copies appeared 15:00–15:01, made by the *phone* (their file times on the desktop are later than
+    their names = downloaded). The update was published 14:55, and expo-updates (default settings, no `Updates.*` code in the app)
+    only runs a downloaded update on the *next* cold start, so the phone was still on the old sync. Also closed a gap: records
+    without `hash` (written by the old code) get one on the next sync while the file is still unchanged (`skip`/`unchanged`), so
+    a device's first conflict after updating is covered too. Test added. A note really edited on both devices within one sync
+    window still (correctly) gets a copy.
+
+### Calendar plugin + plugin API 3 (2026-09-24, desktop and phone)
+User linked github.com/DavidHurtadoAI/just-simple-calendar (an Obsidian plugin, MIT) and asked for it in the phone app. Answers: notes with a date in their
+properties; all 3 views; full page + inside a note. It cannot be dropped in (it is built on Obsidian's Bases API), so it is a **port**:
+`examples/plugins/calendar` (id `calendar`, block language `calendar`, `LICENSE` kept, credit in the header of `main.js`, `README.md` and the manifest author).
+The date math, `layoutDays` lanes, the three views and the CSS are theirs (CSS re-pointed at Granite's theme variables); reading, opening and creating notes are Granite's.
+- **Plugin API 3** (`API_VERSION` 3): `granite.vault.open(path)` (permission `vault.read`), `HostAdapter.openNote`. Desktop: `usePlugins` `openNote` -> `load(join(dir, rel))`.
+  Phone: `vault` request `{ op: 'open' }` -> `App.tsx` `openNote`. A plugin sets `"minApiVersion": 3`.
+- **Storage**: the block text is the settings (`view: month|infinite|linear`, `date`, `end`, `title`, `week`, `page: 1`). A note's date comes from its front matter
+  (`properties()` in `main.js`, top-level `key: value` only; a list value reads as "").
+- **Behaviour**: click/tap a note opens it; double-click an empty day (phone: long-press 550 ms) creates `YYYY-MM-DD.md` (or `... 2.md`) with the date property and opens it;
+  ⚙ edits the property names and week start (saved into the block); ↻ re-reads the notes (the plugin reads every note once per mount and on ↻, not live).
+- **Not ported**: hover preview, right-click menu (open in tab / to the right / delete) - no host API for them.
+- **Verified** (desktop web preview + headless Chrome at 1440x900 and 390 wide): month/weeks/year render, multi-day bars with continuation arrows, lanes, click opens the
+  note, double-click creates and opens a dated note, the calendar as a whole page and inside a note. 3 real screenshots in `screenshots/` (so the Store lists it).
+  Tests: `packages/plugins/test/calendar.test.ts` (settings, dates, grid, ranges, lanes, front matter).
+  **Not verified**: the phone itself (WebView, touch, long-press to create), a real vault with hundreds of notes (it reads every note on mount), Tauri window.
+  Fixed on the way: the year view showed a stray header row (`[hidden]` lost to `display: grid`), narrow screens lost the room for the continuation arrow.
 
 ## Left to do
 
