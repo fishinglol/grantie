@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { createRoot } from "react-dom/client";
 import { LiveEditor, type LiveEditorHandle } from "@granite/live-editor";
 import { CanvasView, type CanvasHandle } from "@granite/canvas";
 import type { InlineFormat } from "@granite/core-notes";
 import { BlockBridge, PluginHost } from "@granite/plugins/host";
-import type { PluginManifest } from "@granite/plugins";
+import { API_VERSION, type PluginManifest } from "@granite/plugins";
 import "@granite/live-editor/live-editor.css";
 import "@granite/canvas/canvas.css";
 import "./editor.css";
@@ -36,6 +36,10 @@ import "./editor.css";
  *              plugin-status { id, error|null }     a plugin started or failed to
  *              plugin-result { n, error? }          a command finished
  *              vault { id, request }                a plugin wants to list / read / write notes
+ *
+ * A plugin opening a note "beside" (the calendar) does not go through the app: the page shows that note in a sheet
+ * that slides up over the bottom of the screen, in a second editor inside this same page (no second WebView, so
+ * little extra memory), and reads / writes it with the same `vault` requests. The plugin's call finishes when the sheet closes.
  */
 type Inbound =
   | { type: "init"; value: string; notePath: string; embeds: [string, string][]; title: string; canvas?: CanvasInfo }
@@ -161,7 +165,7 @@ function useSwipeToOpenSidebar(on: boolean) {
     let start: { x: number; y: number; time: number } | null = null;
     const onStart = (e: TouchEvent) => {
       const t = e.touches[0];
-      const skip = !t || e.touches.length !== 1 || (e.target instanceof Element && e.target.closest(".cm-table-wrap, .cm-img-wrap, .format-bar"));
+      const skip = !t || e.touches.length !== 1 || (e.target instanceof Element && e.target.closest(".cm-table-wrap, .cm-img-wrap, .format-bar, .sheet-layer"));
       start = skip ? null : { x: t!.clientX, y: t!.clientY, time: Date.now() };
     };
     const onEnd = (e: TouchEvent) => {
@@ -187,6 +191,60 @@ function useSwipeToOpenSidebar(on: boolean) {
   }, [on]);
 }
 
+/** How far (px) the sheet has to be pulled down to close it. */
+const SHEET_CLOSE_PULL = 110;
+
+/**
+ * A note in a sheet that slides up over the bottom of the page (the calendar stays visible above it): a heading, a handle to
+ * pull it down, and a second editor. It is the same page and the same JS as the main editor, so it costs no second WebView.
+ */
+function Sheet({ name, text, notePath, embeds, blocks, editor, onChange, onClose }: {
+  name: string;
+  text: string;
+  notePath: string;
+  embeds: ReadonlyMap<string, string>;
+  blocks: BlockBridge;
+  editor: RefObject<LiveEditorHandle | null>;
+  onChange: (text: string) => void;
+  onClose: () => void;
+}) {
+  const [pull, setPull] = useState<number | null>(null);
+  const from = useRef(0);
+  return (
+    <div className="sheet-layer">
+      <div className="sheet-backdrop" onClick={onClose} />
+      <div className="sheet" style={pull === null ? undefined : { transform: `translateY(${pull}px)`, transition: "none", animation: "none" }}>
+        <div
+          className="sheet-grab"
+          onPointerDown={(e) => {
+            from.current = e.clientY;
+            e.currentTarget.setPointerCapture(e.pointerId);
+            setPull(0);
+          }}
+          onPointerMove={(e) => pull !== null && setPull(Math.max(0, e.clientY - from.current))}
+          onPointerUp={() => {
+            const far = (pull ?? 0) > SHEET_CLOSE_PULL;
+            setPull(null);
+            if (far) onClose();
+          }}
+          onPointerCancel={() => setPull(null)}
+        >
+          <div className="sheet-handle" />
+          <div className="sheet-head">
+            <span className="sheet-name">{name}</span>
+            <button type="button" className="sheet-close" aria-label="Close" onPointerDown={(e) => e.stopPropagation()} onClick={onClose}>
+              ×
+            </button>
+          </div>
+        </div>
+        <div className="sheet-body">
+          <LiveEditor ref={editor} value={text} embeds={embeds} blocks={blocks} notePath={notePath} toUrl={toUrl} onChange={onChange} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Page() {
   const [canvas, setCanvas] = useState<CanvasInfo | null>(null);
   useVisibleArea();
@@ -201,6 +259,71 @@ function Page() {
   const board = useRef<CanvasHandle>(null);
   const host = useRef<PluginHost | null>(null);
   const [blocks] = useState(() => new BlockBridge());
+  const openBeside = useRef<(path: string) => Promise<void>>(() => Promise.resolve());
+  const [sheet, setSheet] = useState<{ path: string; text: string } | null>(null);
+  const sheetEditor = useRef<LiveEditorHandle>(null);
+  /** The sheet note's edit that is not written yet (written shortly after typing stops, and when the sheet closes). */
+  const sheetSave = useRef<{ path: string; text: string; timer: number } | null>(null);
+  /** Finishes the plugin's `vault.open` call when the sheet closes. */
+  const sheetDone = useRef<(() => void) | null>(null);
+
+  /** `final`: the note is done being edited, so the app also refreshes its note list. */
+  const saveSheet = async (final: boolean) => {
+    const pending = sheetSave.current;
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    sheetSave.current = null;
+    try {
+      await vault({ op: "write", path: pending.path, text: pending.text, quiet: !final });
+    } catch (e) {
+      send({ type: "notice", message: `Could not save ${pending.path}: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  };
+  const closeSheet = async () => {
+    await saveSheet(true); // the calendar reads the notes again once this finishes, so the edit has to be on disk first
+    setSheet(null);
+    sheetDone.current?.();
+    sheetDone.current = null;
+  };
+  openBeside.current = async (path) => {
+    // The note this page is showing (the calendar's own note is on the calendar too): opening it beside itself would be two editors on one file.
+    try {
+      if (notePath && decodeURI(notePath).endsWith(`/${path}`)) return;
+    } catch {
+      // not a URI: nothing to compare
+    }
+    const text = (await vault({ op: "read", path })) as string;
+    await saveSheet(true);
+    sheetDone.current?.();
+    return new Promise<void>((resolve) => {
+      sheetDone.current = resolve;
+      setSheet({ path, text });
+    });
+  };
+  const onSheetChange = (text: string) => {
+    if (!sheet) return;
+    clearTimeout(sheetSave.current?.timer);
+    sheetSave.current = { path: sheet.path, text, timer: window.setTimeout(() => void saveSheet(false), 700) };
+    setSheet({ path: sheet.path, text });
+  };
+  useEffect(() => {
+    const onHide = () => document.visibilityState === "hidden" && void saveSheet(true);
+    document.addEventListener("visibilitychange", onHide);
+    return () => document.removeEventListener("visibilitychange", onHide);
+  }, []);
+  const sheetUi = sheet && (
+    <Sheet
+      key={sheet.path}
+      name={sheet.path.replace(/^.*\//, "").replace(/\.md$/i, "")}
+      text={sheet.text}
+      notePath={`${(notePath ?? "").replace(/[^/]*$/, "")}${sheet.path.replace(/^.*\//, "")}`}
+      embeds={embeds}
+      blocks={blocks}
+      editor={sheetEditor}
+      onChange={onSheetChange}
+      onClose={() => void closeSheet()}
+    />
+  );
   /** What each running plugin was started from, to notice when the app sends a changed one. */
   const started = useRef(new Map<string, string>());
 
@@ -214,7 +337,10 @@ function Page() {
         listNotes: () => vault({ op: "list" }) as Promise<string[]>,
         readNote: (path) => vault({ op: "read", path }) as Promise<string>,
         writeNote: async (path, text) => void (await vault({ op: "write", path, text })),
-        openNote: async (path, options) => void (await vault({ op: "open", path, beside: options?.beside === true })),
+        openNote: async (path, options) => {
+          if (options?.beside) return openBeside.current(path);
+          await vault({ op: "open", path });
+        },
         notice: (message) => send({ type: "notice", message }),
       },
       () => send({ type: "plugin-commands", commands: h.commands() }),
@@ -288,6 +414,11 @@ function Page() {
     for (const { manifest, code } of wanted) {
       const signature = `${manifest.version}:${code.length}:${manifest.permissions.join(",")}`;
       if (started.current.get(manifest.id) === signature) continue;
+      // Same rule as the desktop: a plugin that needs newer plugin features than this app has is not started (it would crash on the first missing call).
+      if ((manifest.minApiVersion ?? 1) > API_VERSION) {
+        send({ type: "plugin-status", id: manifest.id, error: "needs a newer version of Granite" });
+        continue;
+      }
       started.current.set(manifest.id, signature);
       h.load(manifest, code).then(
         () => send({ type: "plugin-status", id: manifest.id, error: null }),
@@ -321,6 +452,7 @@ function Page() {
           readNote={(file) => vault({ op: "read", path: file }) as Promise<string>}
           onOpenFile={(file) => send({ type: "open", file })}
         />
+        {sheetUi}
       </div>
     );
   }
@@ -341,7 +473,8 @@ function Page() {
         toUrl={toUrl}
         onChange={onChange}
       />
-      <FormatBar onFormat={(kind) => editor.current?.format(kind)} />
+      <FormatBar onFormat={(kind) => (document.activeElement?.closest(".sheet") ? sheetEditor : editor).current?.format(kind)} />
+      {sheetUi}
     </div>
   );
 }

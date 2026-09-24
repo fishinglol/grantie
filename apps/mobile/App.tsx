@@ -81,8 +81,6 @@ export default function App() {
   const [revision, setRevision] = useState(0);
   const editor = useRef<NoteEditorHandle>(null);
   const openRel = useRef<string | null>(null);
-  /** The page a note was opened from by a plugin ("beside"): the pill at the top goes back to it. */
-  const [backRel, setBackRel] = useState<string | null>(null);
   const pending = useRef<string | null>(null);
   /** The note's current text, for sharing. */
   const latest = useRef('');
@@ -140,7 +138,6 @@ export default function App() {
     async (rel: string) => {
       try {
         await flush(); // finish saving the note we are leaving
-        setBackRel(null);
         const text = await fs.readTextFile(join(VAULT_DIR, rel));
         openRel.current = rel;
         pending.current = null;
@@ -503,17 +500,14 @@ export default function App() {
     async (request: PluginVaultRequest): Promise<unknown> => {
       if (request.op === 'list') return (await scanVault(fs)).notes.filter((n) => !isCanvas(n));
       if (request.op === 'open') {
-        // "Beside" has no room on a phone: the note opens full screen, with a pill to get back to the page it was opened from.
-        const from = openRel.current;
         await openNote(request.path);
-        setBackRel(request.beside && from && from !== request.path ? from : null);
         return;
       }
       const abs = join(VAULT_DIR, request.path);
       if (request.op === 'read') return fs.readTextFile(abs);
       await fs.mkdirp(dirname(abs));
       await fs.writeTextFile(abs, request.text);
-      await refresh();
+      if (!request.quiet) await refresh(); // the sheet saves as it goes and asks for the list to be refreshed once, when it closes
       void syncNow.current();
       return null;
     },
@@ -670,7 +664,6 @@ export default function App() {
           title={noteTitle(basename(open.rel))}
           onRename={renameNote}
           dirty={dirty}
-          back={backRel ? { name: noteTitle(basename(backRel)), onPress: () => void openNote(backRel) } : undefined}
           onChange={onChange}
           onSwipeRight={() => setSidebar(true)}
           plugins={runningPlugins}

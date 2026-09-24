@@ -223,7 +223,7 @@ one is `destroy`ed). Without the check, a note switch table -> calendar kept the
 
 ## Pattern: open-beside
 `granite.vault.open(path, { beside: true })`: the host passes the calling block's element as `origin`; desktop finds its pane through `data-pane`, splits if needed and loads the note in the other pane;
-the phone opens it full screen and remembers where it came from (`backRel`) for a back pill. See `progress.md` "`//` list, open-beside ...".
+the phone page (`editor-web/main.tsx`) shows it in a bottom sheet with a second `LiveEditor` in the same WebView (no second WebView, saves via `vault write quiet`); the call resolves when the sheet closes. See `progress.md` "`//` list, open-beside ...".
 
 ## Pattern: plugin API 3 = `vault.open`
 `granite.vault.open(path)` (permission `vault.read`, path checked by `safeNotePath`) -> `HostAdapter.openNote(rel)`. Desktop: `usePlugins` gets an `openNote`

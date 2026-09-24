@@ -34,8 +34,8 @@ property names are yours to choose: change them with ⚙ on the calendar.
   changed dates elsewhere).
 - **Click (tap) a note** to open it. **Double-click an empty day** (on a phone: **long-press** it) to create a note on that day:
   `2026-09-26.md`, with the date already filled in, and it opens. On the desktop the note opens **beside** the calendar (a split view,
-  calendar on the left, note on the right; the next note you click replaces the one on the right). On a phone there is no room for two
-  halves, so the note opens full screen with a **‹ back** button to the calendar at the top.
+  calendar on the left, note on the right; the next note you click replaces the one on the right). On a phone the note slides up as a sheet over the bottom
+  of the screen (calendar still visible above it): pull it down or tap outside to close it, and the calendar then reads your notes again.
 - Type **`//`** on an empty line and pick **Calendar** to put one inside the note you are writing.
 - **⚙** sets the date property, the end date property, a title property (shown instead of the file name) and whether weeks
   start on Monday or Sunday.

@@ -84,7 +84,7 @@ read-only. Confirmed: desktop only; split via ⋯ → "Split right" (no tabs); r
 
 ## Session 2026-09-24 (newest) — `//` list, calendar opens beside, phone check
 User asked for: a `//` list of plugin things, calendar notes opening beside the calendar (Obsidian-like screenshot), and fixes for phone bugs in the table/calendar. Done (details: `progress.md`
-"`//` list, open-beside, table layout, frame-reuse bug"): plugin API 4, the list, open-beside (desktop split, phone back pill), table layout fix, a real bug in plugin-frame reuse.
+"`//` list, open-beside, table layout, frame-reuse bug"): plugin API 4, the list, open-beside (desktop split; phone: bottom sheet with a second editor in the same WebView, changed later on 2026-09-24 from a back pill), table layout fix, a real bug in plugin-frame reuse.
 **Open**: the phone bug the user sees is NOT reproduced (works in the phone web preview) - ask for a screenshot after they run `npm run ship` and restart the app; installed plugin copies need UPDATE in the Store
 (Simple Table 1.1.0, Calendar 1.1.0, Cards 1.2.0, Excel 1.4.0) - the `//` list shows the old Simple Table as one entry until then. Not committed / pushed yet.
 

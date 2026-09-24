@@ -117,6 +117,10 @@
   (`apps/mobile/editor-web`, ~200 KB more inlined into `editorHtml.ts`); the RN side imports only the pure `@granite/canvas/format`.
 - **Tests:** `npm test` inside `packages/{core-notes,core-cloud,plugins,canvas}` (`node --test` runs the TS directly; no enums / private params).
   Plugin example code is loaded with `node:vm` in `packages/plugins/test/*.test.ts` (cards, excel, simple-table, calendar).
+- **Which desktop app is the user running? Check first** (`ps aux | grep -i granite`). Since 2026-09-24 afternoon they run **`/Applications/Granite.app`**, a *release build* with the
+  frontend baked in (built 11:51 that day), NOT `tauri dev`. Source changes reach it only after `cd apps/desktop && npm run tauri build -- --bundles app` (first build ~6 min, then ~1 min)
+  and replacing the app with `src-tauri/target/release/bundle/macos/Granite.app`. Symptoms of a stale app: "unknown permission editor.input", plugin blocks shown as raw text, features missing while the
+  phone works. `tauri dev` and the installed app must not run together (single-instance plugin). The phone app has the same trap: an OTA needs a restart (or two on builds before 15:39) to apply.
 - **Phone OTA updates:** `apps/mobile` `npm run ship` (`build:editor` then `eas update --channel preview --platform android`). `expo-updates` is used from `App.tsx`
   to apply an update right after it downloads (see systemPatterns). The Expo Go / dev build does not exercise it.
 - **Headless screenshots for plugin Store pages:** a Node script drives `/Applications/Google Chrome.app` over CDP against the desktop dev server

@@ -512,12 +512,20 @@ calendar to open it beside the calendar (a screenshot of Obsidian's calendar | n
   Entries: Calendar, Cards, Spreadsheet, Table (plugins bumped: simple-table 1.1.0, calendar 1.1.0, cards 1.2.0, excel 1.4.0, all `minApiVersion` 4; **installed copies in a vault are old until the user taps UPDATE in
   the Store**; Simple Table's `//` trigger is gone from 1.1.0, its entry replaces it).
 - **Open beside**: desktop `NoteApp` `openNote(rel, { beside, origin })`: splits if there is one pane, target = the pane other than the one holding `origin` (`[data-pane]`), then `load()`; the next click replaces
-  the right pane. Phone: no room for two halves, so `App.tsx` opens the note full screen and shows a **‹ Cal** pill (`NoteScreen` prop `back`, state `backRel`, cleared by any other `openNote`) that goes back.
-  A bottom-sheet second editor was considered and NOT built (a second editor needs its own save/doc state in `App.tsx`); ask if the pill is not enough.
+  the right pane. **Phone (changed 2026-09-24)**: the note slides up as a **bottom sheet** (85% height, handle, ×, pull down or tap outside to close) over the calendar. To use little RAM it is a **second
+  `LiveEditor` inside the same WebView page** (`Sheet` in `editor-web/main.tsx`), NOT a second WebView (estimate 5-15 MB vs 40-80 MB; not measured on a device). The page handles the plugin's
+  `vault.open(path,{beside:true})` itself: `vault read` -> sheet; edits are written by `vault write` with `quiet:true` (App.tsx skips `refresh()`), 700 ms after typing stops, on `visibilitychange` hidden, and on close
+  (`quiet:false`, so the sidebar list refreshes). The plugin's `open` call **resolves when the sheet closes**; Calendar 1.2.0 then re-reads its notes if the call took over 1 s (on desktop it resolves at once, no rescan).
+  Guards: opening the note the page itself shows does nothing (the calendar's own note is on its calendar). The sheet has a read-only name (no rename); relative image links in it resolve against the main note's folder
+  (`![[x.png]]` works everywhere). Removed: the ‹ back pill (`backRel`, `NoteScreen` `back`, `op:'open'.beside`).
 - **Verified** (desktop web preview + phone web preview at 390 px + headless Chrome): the list with 4 plugins, filter `//ta` -> Table -> Enter, tap on a row, calendar click -> split, second click replaces the right pane,
-  double-click a day creates+opens on the right, phone pill goes back, table fits 390 px. Tests: `packages/plugins/test/menu-items.test.ts` (each plugin's entry and manifest; 55 pass).
-  **Not verified**: the real phone (touch on the list, soft keyboard placement of the list, the pill), the Tauri window, the list on a phone with the soft keyboard covering the lower half (CodeMirror flips it above).
+  double-click a day creates+opens on the right, table fits 390 px. Phone sheet (2026-09-24 evening, standalone harness page faking the app at 390 px): tap a note -> sheet, typing saves quietly, × closes, calendar rescans (a date changed behind it moved the note), double-click an empty day creates+opens in the sheet, dragging the handle down closes. Tests: `packages/plugins/test/menu-items.test.ts` (each plugin's entry and manifest; 55 pass).
+  **Not verified**: the real phone (touch on the list, soft keyboard vs. the sheet, finger drag on the handle, RAM), the Tauri window, the list on a phone with the soft keyboard covering the lower half (CodeMirror flips it above).
 - New Store picture for Simple Table: `screenshots/00-slash-list.webp`.
+- **Follow-up (17:50): the user's screenshots showed errors that were stale builds, not code bugs.** Desktop: `/Applications/Granite.app` (built 11:51) reported `unknown permission "editor.input"` and drew
+  `calendar` blocks as raw text. Phone: toast `granite.vault.open is not a function` (an older phone editor running the Calendar synced from the desktop vault). Fixes: rebuilt the desktop app
+  (`npm run tauri build -- --bundles app`, output `src-tauri/target/release/bundle/macos/Granite.app`; the user must replace the installed one), the phone editor page now refuses a plugin whose
+  `minApiVersion` > `API_VERSION` ("needs a newer version of Granite", same as desktop; only helps builds from now on), and Calendar 1.1.1 shows "Update the Granite app..." when `vault.open` is missing.
 - Preview tip: the phone web preview keeps files only in memory (`memFs`); to seed it I temporarily exported `window.__memFs` from `apps/mobile/src/memFs.ts` (reverted; do not commit) and served
   `examples/plugins` from a tiny CORS python server, then opened Plugins to make the app rescan.
 

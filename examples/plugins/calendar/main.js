@@ -314,8 +314,16 @@ function mountCalendar(body, source, block) {
   });
 
   // ── opening and creating notes ──
-  // "beside": the desktop keeps the calendar and opens the note in the other half of a split; the phone opens it full screen with a way back.
-  const open = (path) => void granite.vault.open(path, { beside: true }).catch((e) => granite.notice(String(e.message || e)));
+  // "beside": the desktop keeps the calendar and opens the note in the other half of a split; the phone slides the note up over the
+  // bottom of the screen. The phone's call only finishes when that sheet is closed: the dates may have changed by then, so read the notes again.
+  const open = (path) => {
+    if (typeof granite.vault.open !== "function") return granite.notice("Update the Granite app to open notes from the calendar");
+    const started = Date.now();
+    granite.vault.open(path, { beside: true }).then(
+      () => (Date.now() - started > 1000 ? load() : undefined),
+      (e) => granite.notice(String(e.message || e)),
+    );
+  };
   async function createNote(day) {
     if (creating || !parseDay(day)) return;
     if (!cfg.date) return granite.notice("Choose a date property first (⚙)");
@@ -327,7 +335,7 @@ function mountCalendar(body, source, block) {
       await granite.vault.write(path, `---\n${cfg.date}: ${day}\n---\n`);
       notes.push({ path, name: path.slice(0, -3), props: { [cfg.date]: day } });
       render();
-      await granite.vault.open(path, { beside: true });
+      open(path);
     } catch (e) {
       granite.notice(`Could not create the note: ${e.message || e}`);
     } finally {
