@@ -25,6 +25,14 @@ export interface BlockHandle {
   update?(source: string): void;
 }
 
+/** What was on the clipboard when the user pasted. */
+export interface PasteClip {
+  /** `text/plain`, e.g. the tab-separated rows of copied spreadsheet cells. */
+  text: string;
+  /** `text/html` ("" when there is none). */
+  html: string;
+}
+
 export interface GraniteApi {
   commands: {
     /**
@@ -57,6 +65,18 @@ export interface GraniteApi {
      */
     register(lang: string, render: (el: HTMLElement, source: string, block: BlockContext) => BlockHandle | void): void;
   };
+  input: {
+    /**
+     * editor.input (API 2): when the user types `text` (1–8 characters, e.g. `//`) alone on an empty line, that text is removed and
+     * whatever `handler` returns is put there instead (return `null` to put the typed text back). Not inside code blocks.
+     */
+    trigger(text: string, handler: () => string | null | Promise<string | null>): Promise<void>;
+    /**
+     * editor.input (API 2): the user pasted something that has tabs in it (rows copied from Excel or Sheets). Return the text to
+     * insert instead, or `null` to let the paste through untouched. One handler per plugin; it has 5 seconds.
+     */
+    onPaste(handler: (clip: PasteClip) => string | null | Promise<string | null>): Promise<void>;
+  };
   vault: {
     /** vault.read: vault-relative paths of every note, e.g. `Projects/plan.md`. */
     list(): Promise<string[]>;
@@ -77,6 +97,7 @@ export const METHOD_PERMISSION: Record<string, Permission | null> = {
   "editor.setText": "editor.write",
   "editor.setStyle": "editor.style",
   "blocks.register": "editor.blocks",
+  "input.register": "editor.input",
   "vault.list": "vault.read",
   "vault.read": "vault.read",
   "vault.write": "vault.write",

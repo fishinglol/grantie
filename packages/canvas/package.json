@@ -1,0 +1,30 @@
+{
+  "name": "@granite/canvas",
+  "version": "0.1.0",
+  "description": "Obsidian-compatible canvas (JSON Canvas `.canvas` files): the file format (pure) and the board view (React DOM + React Flow), shared by the desktop app and the phone app's WebView.",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./format": "./src/jsonCanvas.ts",
+    "./canvas.css": "./src/canvas.css"
+  },
+  "scripts": {
+    "test": "node --test 'test/**/*.test.ts'",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@granite/core-notes": "*",
+    "@granite/live-editor": "*",
+    "@xyflow/react": "^12.8.0"
+  },
+  "peerDependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.1.8",
+    "typescript": "~5.8.3"
+  }
+}

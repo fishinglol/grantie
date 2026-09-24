@@ -1,3 +1,4 @@
+import { VAULT_DIR } from '../vault';
 import type { NoteEditorProps, PluginVaultRequest } from './NoteEditor.types';
 
 /**
@@ -18,7 +19,9 @@ export function createEditorBridge(post: (message: object) => void, getProps: ()
     sendEmbeds: () => ready && post({ type: 'embeds', embeds: [...getProps().embeds] }),
     sendPlugins,
     sendTitle: () => ready && post({ type: 'title', title: getProps().title }),
+    sendFiles: () => ready && getProps().canvas && post({ type: 'files', ...getProps().canvas }),
     insert: (text: string) => post({ type: 'insert', text }),
+    addFile: (file: string) => post({ type: 'add-file', file }),
     runPluginCommand(pluginId: string, commandId: string): Promise<void> {
       const n = ++runSeq;
       return new Promise((resolve, reject) => {
@@ -39,7 +42,14 @@ export function createEditorBridge(post: (message: object) => void, getProps: ()
       switch (msg.type) {
         case 'ready':
           ready = true;
-          post({ type: 'init', value: props.initialText, notePath: props.path, embeds: [...props.embeds], title: props.title });
+          post({
+            type: 'init',
+            value: props.initialText,
+            notePath: props.path,
+            embeds: [...props.embeds],
+            title: props.title,
+            ...(props.canvas && { canvas: { vaultDir: VAULT_DIR, ...props.canvas } }),
+          });
           sendPlugins();
           break;
         case 'change':
@@ -53,6 +63,9 @@ export function createEditorBridge(post: (message: object) => void, getProps: ()
           break;
         case 'swipe-right':
           props.onSwipeRight();
+          break;
+        case 'open':
+          props.onOpenFile(String(msg.file));
           break;
         case 'notice':
           props.onNotice(String(msg.message));

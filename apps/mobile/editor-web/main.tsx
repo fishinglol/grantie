@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { LiveEditor, type LiveEditorHandle } from "@granite/live-editor";
+import { CanvasView, type CanvasHandle } from "@granite/canvas";
 import type { InlineFormat } from "@granite/core-notes";
 import { BlockBridge, PluginHost } from "@granite/plugins/host";
 import type { PluginManifest } from "@granite/plugins";
 import "@granite/live-editor/live-editor.css";
+import "@granite/canvas/canvas.css";
 import "./editor.css";
 
 /**
@@ -12,7 +14,10 @@ import "./editor.css";
  * the app (React Native) sends the note in and receives every edit back over
  * `postMessage`, and does all file access itself.
  *
- * app → page   init { value, notePath, embeds }   a note was opened
+ * app → page   init { value, notePath, embeds, canvas? }  a note was opened; `canvas` { vaultDir, notes, images } = it is a
+ *                                                    `.canvas` file, shown as a canvas offering those notes and images
+ *              files { notes, images }             (canvas) the vault's notes / images changed
+ *              add-file { file }                   (canvas) put this vault file on the canvas as a card
  *              value { value }                     the text changed outside the editor (sync)
  *              embeds { embeds }                   the vault's image index changed
  *              insert { text }                     add a block (e.g. an image link) at the cursor
@@ -23,6 +28,7 @@ import "./editor.css";
  *              rename-result { n, ok }             answer to a rename
  *              swipe-right                          a quick swipe to the right: the app opens the sidebar
  * page → app   rename { n, title }                  the heading was edited: rename the file
+ *              open { file }                        (canvas) a note card was opened
  *              ready                               the page can take `init`
  *              change { value }                    the user edited the note
  *              notice { message }                  a plugin wants to show a message
@@ -32,7 +38,9 @@ import "./editor.css";
  *              vault { id, request }                a plugin wants to list / read / write notes
  */
 type Inbound =
-  | { type: "init"; value: string; notePath: string; embeds: [string, string][]; title: string }
+  | { type: "init"; value: string; notePath: string; embeds: [string, string][]; title: string; canvas?: CanvasInfo }
+  | { type: "files"; notes: string[]; images: string[] }
+  | { type: "add-file"; file: string }
   | { type: "title"; title: string }
   | { type: "rename-result"; n: number; ok: boolean }
   | { type: "value"; value: string }
@@ -41,6 +49,8 @@ type Inbound =
   | { type: "plugins"; plugins: { manifest: PluginManifest; code: string }[] }
   | { type: "plugin-run"; n: number; pluginId: string; commandId: string }
   | { type: "vault-result"; id: number; ok: boolean; value?: unknown; error?: string };
+
+type CanvasInfo = { vaultDir: string; notes: string[]; images: string[] };
 
 declare global {
   interface Window {
@@ -145,8 +155,9 @@ function useVisibleArea() {
 }
 
 /** A quick swipe to the right anywhere on the note asks the app to open the sidebar (like Obsidian's phone app). */
-function useSwipeToOpenSidebar() {
+function useSwipeToOpenSidebar(on: boolean) {
   useEffect(() => {
+    if (!on) return; // on a canvas a one-finger drag pans it
     let start: { x: number; y: number; time: number } | null = null;
     const onStart = (e: TouchEvent) => {
       const t = e.touches[0];
@@ -173,12 +184,13 @@ function useSwipeToOpenSidebar() {
       document.removeEventListener("touchend", onEnd);
       document.removeEventListener("touchcancel", cancel);
     };
-  }, []);
+  }, [on]);
 }
 
 function Page() {
+  const [canvas, setCanvas] = useState<CanvasInfo | null>(null);
   useVisibleArea();
-  useSwipeToOpenSidebar();
+  useSwipeToOpenSidebar(canvas === null);
   const [value, setValue] = useState("");
   const [notePath, setNotePath] = useState<string | null>(null);
   const [embeds, setEmbeds] = useState<ReadonlyMap<string, string>>(new Map());
@@ -186,6 +198,7 @@ function Page() {
   const renames = useRef(new Map<number, (ok: boolean) => void>());
   const renameSeq = useRef(0);
   const editor = useRef<LiveEditorHandle>(null);
+  const board = useRef<CanvasHandle>(null);
   const host = useRef<PluginHost | null>(null);
   const [blocks] = useState(() => new BlockBridge());
   /** What each running plugin was started from, to notice when the app sends a changed one. */
@@ -226,8 +239,11 @@ function Page() {
         setEmbeds(new Map(msg.embeds));
         setNotePath(msg.notePath);
         setTitle(msg.title);
+        setCanvas(msg.canvas ?? null);
         setValue(msg.value);
-      } else if (msg.type === "title") setTitle(msg.title);
+      } else if (msg.type === "files") setCanvas((c) => c && { ...c, notes: msg.notes, images: msg.images });
+      else if (msg.type === "add-file") board.current?.addFile(msg.file);
+      else if (msg.type === "title") setTitle(msg.title);
       else if (msg.type === "rename-result") {
         renames.current.get(msg.n)?.(msg.ok);
         renames.current.delete(msg.n);
@@ -282,6 +298,32 @@ function Page() {
     }
   }
 
+  const onChange = (text: string) => {
+    setValue(text);
+    send({ type: "change", value: text });
+  };
+
+  if (canvas && notePath) {
+    return (
+      <div className="page">
+        <CanvasView
+          ref={board}
+          value={value}
+          onChange={onChange}
+          canvasPath={notePath}
+          vaultDir={canvas.vaultDir}
+          notes={canvas.notes}
+          images={canvas.images}
+          embeds={embeds}
+          toUrl={toUrl}
+          blocks={blocks}
+          readNote={(file) => vault({ op: "read", path: file }) as Promise<string>}
+          onOpenFile={(file) => send({ type: "open", file })}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="page">
       <LiveEditor
@@ -296,10 +338,7 @@ function Page() {
           send({ type: "rename", n, title: t });
         }) } : undefined}
         toUrl={toUrl}
-        onChange={(text) => {
-          setValue(text);
-          send({ type: "change", value: text });
-        }}
+        onChange={onChange}
       />
       <FormatBar onFormat={(kind) => editor.current?.format(kind)} />
     </div>

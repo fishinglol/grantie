@@ -3,7 +3,7 @@
 A plugin is a folder with two files:
 
 - `manifest.json`: `id` (also the folder name), `name`, `version`, and the `permissions` it needs
-  (`editor.read`, `editor.write`, `vault.read`, `vault.write`, `network`).
+  (`editor.read`, `editor.write`, `editor.style`, `editor.blocks`, `editor.input`, `vault.read`, `vault.write`, `network`).
 - `main.js`: plain JavaScript that uses the `granite` global.
 
 ## Install
@@ -13,5 +13,5 @@ device**. Nothing runs until you enable it.
 
 ## Write your own
 Keep to the API in `packages/plugins/src/api.ts` (`GraniteApi`): `commands.add`, `editor.getText / getSelection /
-replaceSelection / setStyle`, `vault.list / read / write`, `notice`. Everything is async and works the same on desktop and
+replaceSelection / setStyle`, `blocks.register`, `input.trigger / onPaste`, `vault.list / read / write`, `notice`. Everything is async and works the same on desktop and
 phone. Plugins run in a sandbox with no DOM access to the app and no network unless `network` is declared.

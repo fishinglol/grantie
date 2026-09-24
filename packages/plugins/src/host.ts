@@ -19,6 +19,7 @@ export interface HostAdapter {
 /** A command that hasn't finished after this long is assumed stuck; its plugin is shut down. */
 const COMMAND_TIMEOUT_MS = 15_000;
 const START_TIMEOUT_MS = 5_000;
+const INPUT_TIMEOUT_MS = 5_000;
 
 /**
  * The page a plugin runs in. It gets an opaque origin (`sandbox` without `allow-same-origin`), so it
@@ -30,7 +31,7 @@ function bootstrapHtml(network: boolean, block: boolean): string {
   const csp = `default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'${block ? "; style-src 'unsafe-inline'; img-src data:" : ""}${network ? "; connect-src https:" : ""}`;
   return `<!doctype html><meta http-equiv="Content-Security-Policy" content="${csp}">${block ? "<style>html,body{margin:0;background:transparent}</style>" : ""}<script>
 (function () {
-  var host = window.parent, pending = {}, seq = 0, commands = {}, isBlock = false, blockFns = {}, blockHandle = null;
+  var host = window.parent, pending = {}, seq = 0, commands = {}, isBlock = false, blockFns = {}, blockHandle = null, triggers = {}, pasteFn = null;
   function applyVars(vars) { for (var k in vars) document.documentElement.style.setProperty(k, vars[k]); }
   function send(m) { host.postMessage(m, "*"); }
   function call(method, args) {
@@ -58,6 +59,18 @@ function bootstrapHtml(network: boolean, block: boolean): string {
       blockFns[lang] = fn;
       if (!isBlock) return call("blocks.register", [lang]);
     } }),
+    input: Object.freeze({
+      trigger: function (text, fn) {
+        if (typeof text !== "string" || typeof fn !== "function") throw new Error("input.trigger needs (text, handler)");
+        triggers[text] = fn;
+        if (!isBlock) return call("input.register", ["trigger", text]);
+      },
+      onPaste: function (fn) {
+        if (typeof fn !== "function") throw new Error("input.onPaste needs a handler");
+        pasteFn = fn;
+        if (!isBlock) return call("input.register", ["paste", ""]);
+      }
+    }),
     vault: Object.freeze({
       list: function () { return call("vault.list", []); },
       read: function (p) { return call("vault.read", [p]); },
@@ -94,6 +107,14 @@ function bootstrapHtml(network: boolean, block: boolean): string {
     } else if (m.k === "result") {
       var p = pending[m.n]; delete pending[m.n];
       if (p) { if (m.ok) p.resolve(m.value); else p.reject(new Error(m.error)); }
+    } else if (m.k === "input-run") {
+      Promise.resolve().then(function () {
+        var fn = m.kind === "paste" ? pasteFn : triggers[m.text];
+        return fn ? (m.kind === "paste" ? fn({ text: String(m.text), html: String(m.html) }) : fn()) : null;
+      }).then(
+        function (v) { send({ k: "input-done", n: m.n, value: typeof v === "string" ? v : null }); },
+        function (err) { send({ k: "input-done", n: m.n, value: null, error: String(err && err.message || err) }); }
+      );
     } else if (m.k === "run") {
       Promise.resolve().then(function () { return commands[m.id] && commands[m.id](); }).then(
         function () { send({ k: "done", n: m.n }); },
@@ -153,6 +174,10 @@ interface Loaded {
   /** Languages this plugin draws (```lang fences). */
   blockLangs: Set<string>;
   commands: Map<string, { name: string; page: boolean }>;
+  /** Texts the user may type alone on a line to trigger it, and whether it takes over pasted spreadsheet text. */
+  triggers: Set<string>;
+  paste: boolean;
+  inputs: Map<number, { resolve: (value: string | null) => void; timer: ReturnType<typeof setTimeout> }>;
   runs: Map<number, { resolve: () => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>;
   code: string;
   started?: { resolve: () => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> };
@@ -182,7 +207,7 @@ export class PluginHost {
     frame.setAttribute("aria-hidden", "true");
     frame.style.cssText = "display:none;width:0;height:0;border:0";
     frame.srcdoc = bootstrapHtml(manifest.permissions.includes("network"), false);
-    const entry: Loaded = { manifest, frame, blockLangs: new Set(), commands: new Map(), runs: new Map(), code };
+    const entry: Loaded = { manifest, frame, blockLangs: new Set(), commands: new Map(), triggers: new Set(), paste: false, inputs: new Map(), runs: new Map(), code };
     this.#plugins.set(manifest.id, entry);
     const started = new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -211,6 +236,10 @@ export class PluginHost {
       clearTimeout(run.timer);
       run.reject(new Error("plugin was stopped"));
     }
+    for (const input of entry.inputs.values()) {
+      clearTimeout(input.timer);
+      input.resolve(null);
+    }
     if (entry.started) {
       clearTimeout(entry.started.timer);
       entry.started.reject(new Error("plugin was stopped"));
@@ -225,6 +254,11 @@ export class PluginHost {
   /** Languages of the fenced blocks running plugins draw. */
   blockLangs(): string[] {
     return [...new Set([...this.#plugins.values()].flatMap((p) => [...p.blockLangs]))];
+  }
+
+  /** Name of the running plugin that draws ```lang blocks. */
+  blockLabel(lang: string): string {
+    return [...this.#plugins.values()].find((p) => p.blockLangs.has(lang))?.manifest.name ?? lang;
   }
 
   /**
@@ -253,6 +287,34 @@ export class PluginHost {
         frame.remove();
       },
     };
+  }
+
+  /** Texts running plugins want to see typed alone on a line. */
+  inputTriggers(): string[] {
+    return [...new Set([...this.#plugins.values()].flatMap((p) => [...p.triggers]))];
+  }
+
+  /** True when a running plugin wants to see pasted spreadsheet text. */
+  hasPasteHook(): boolean {
+    return [...this.#plugins.values()].some((p) => p.paste);
+  }
+
+  /**
+   * Ask the plugin that registered `trigger` (or the paste hook) what to insert. Resolves null when it declines, fails or
+   * takes longer than 5 seconds (the editor then leaves the typed or pasted text alone).
+   */
+  runInput(kind: "trigger" | "paste", payload: { text: string; html?: string }): Promise<string | null> {
+    const entry = [...this.#plugins.values()].find((p) => (kind === "paste" ? p.paste : p.triggers.has(payload.text)));
+    if (!entry) return Promise.resolve(null);
+    const n = ++this.#runSeq;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        entry.inputs.delete(n);
+        resolve(null);
+      }, INPUT_TIMEOUT_MS);
+      entry.inputs.set(n, { resolve, timer });
+      entry.frame.contentWindow?.postMessage({ k: "input-run", n, kind, text: payload.text, html: payload.html ?? "" }, "*");
+    });
   }
 
   commands(): CommandInfo[] {
@@ -361,6 +423,15 @@ export class PluginHost {
         entry.commands.set(String(d.id), { name: String(d.name), page: d.page === true });
         this.#onCommands();
         break;
+      case "input-done": {
+        const input = entry.inputs.get(Number(d.n));
+        if (!input) break;
+        entry.inputs.delete(Number(d.n));
+        clearTimeout(input.timer);
+        if (d.error) this.#adapter.notice(`${entry.manifest.name}: ${String(d.error)}`);
+        input.resolve(typeof d.value === "string" && d.value.length <= MAX_BLOCK_SOURCE ? d.value : null);
+        break;
+      }
       case "done": {
         const run = entry.runs.get(Number(d.n));
         if (!run) break;
@@ -428,6 +499,17 @@ export class PluginHost {
         this.#onBlocks();
         return;
       }
+      case "input.register": {
+        const entry = this.#plugins.get(manifest.id);
+        if (text(0) === "paste") {
+          if (entry) entry.paste = true;
+        } else {
+          const trigger = text(1);
+          if (trigger.length < 1 || trigger.length > 8 || /\s/.test(trigger)) throw new Error(`"${trigger}" is not a trigger (1–8 characters, no spaces)`);
+          entry?.triggers.add(trigger);
+        }
+        return;
+      }
       case "notice":
         return this.#adapter.notice(text(0));
     }
@@ -442,6 +524,7 @@ export class BlockBridge {
   host: PluginHost | null = null;
   readonly #listeners = new Set<() => void>();
   langs = (): string[] => this.host?.blockLangs() ?? [];
+  label = (lang: string): string => this.host?.blockLabel(lang) ?? lang;
   subscribe = (listener: () => void): (() => void) => {
     this.#listeners.add(listener);
     return () => void this.#listeners.delete(listener);
@@ -450,6 +533,10 @@ export class BlockBridge {
     if (!this.host) throw new Error("plugins are not running");
     return this.host.mountBlock(lang, el, source, actions);
   };
+  triggers = (): string[] => this.host?.inputTriggers() ?? [];
+  hasPasteHook = (): boolean => this.host?.hasPasteHook() ?? false;
+  runInput = (kind: "trigger" | "paste", payload: { text: string; html?: string }): Promise<string | null> =>
+    this.host?.runInput(kind, payload) ?? Promise.resolve(null);
   /** Call from the host's `onBlocksChanged`. */
   changed = (): void => this.#listeners.forEach((l) => l());
 }

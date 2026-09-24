@@ -18,10 +18,11 @@ const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function NoteEd
     [],
   );
 
-  useImperativeHandle(ref, () => ({ insert: bridge.insert, runPluginCommand: bridge.runPluginCommand }), [bridge]);
+  useImperativeHandle(ref, () => ({ insert: bridge.insert, runPluginCommand: bridge.runPluginCommand, addFile: bridge.addFile }), [bridge]);
   useEffect(() => void bridge.sendEmbeds(), [props.embeds, bridge]);
   useEffect(() => bridge.sendPlugins(), [props.plugins, bridge]);
   useEffect(() => void bridge.sendTitle(), [props.title, bridge]);
+  useEffect(() => void bridge.sendFiles(), [props.canvas, bridge]);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {

@@ -836,6 +836,8 @@ button.skip:disabled { opacity: 0.4; cursor: default; }
   inset: 0;
   z-index: 3000;
   display: grid;
+  /* minmax(0, …): wide content inside a dialog (the store's screenshot row) must not stretch the column and push the card off-centre */
+  grid-template-columns: minmax(0, 1fr);
   place-items: center;
   padding: 24px;
   background: rgba(8, 10, 15, 0.7);
@@ -931,6 +933,10 @@ button.skip:disabled { opacity: 0.4; cursor: default; }
   cursor: pointer;
 }
 .plugin-commands button:hover { background: var(--accent); color: #0f1219; }
+.plugin-uninstall { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; color: var(--text-dim); }
+.plugin-uninstall button { padding: 4px 12px; border: 0; border-radius: 8px; background: var(--panel-hover); color: var(--text); font: inherit; cursor: pointer; }
+.plugin-uninstall button.danger { color: #e07a7a; }
+.plugin-uninstall button.danger:hover { background: #c9605f; color: #fff; }
 
 .plugin-tabs { display: flex; gap: 4px; margin: 0 0 12px; padding: 3px; border-radius: 9px; background: var(--panel); }
 .plugin-tabs button { flex: 1; padding: 5px 0; border: 0; border-radius: 7px; background: transparent; color: var(--text-dim); font: inherit; cursor: pointer; }
@@ -951,6 +957,9 @@ button.skip:disabled { opacity: 0.4; cursor: default; }
 .pane-divider { flex: 0 0 5px; cursor: col-resize; background: rgba(255, 255, 255, 0.06); }
 .pane-divider:hover, .pane-divider.dragging { background: var(--accent); }
 .pane-empty { margin: auto; color: var(--text-faint); font-size: 14px; }
+
+/* A canvas's right-hand controls start under the page menu (⋯, reading mode) instead of behind it. */
+.editor-pane .granite-canvas .react-flow__panel.top.right { top: 44px; }
 
 /* New pane of a split: pick a folder/note to open in it */
 .pane-picker { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 48px 24px 24px; overflow: auto; }

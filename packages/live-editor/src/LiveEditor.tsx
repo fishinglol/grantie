@@ -368,13 +368,77 @@ export interface BlockActions {
 export interface BlockRenderer {
   /** Languages that currently have a renderer. */
   langs(): string[];
+  /** Name to show for a language's blocks (the plugin's name), e.g. on the canvas toolbar. */
+  label?(lang: string): string;
   /** `listener` runs when `langs()` changed. Returns the unsubscribe. */
   subscribe(listener: () => void): () => void;
+  /** Texts plugins want to see typed alone on an empty line (`//`), and the plugin's answer: what to put there, or null. */
+  triggers?(): string[];
+  /** True when a plugin wants to see pasted spreadsheet text (anything with a tab in it). */
+  hasPasteHook?(): boolean;
+  runInput?(kind: "trigger" | "paste", payload: { text: string; html?: string }): Promise<string | null>;
   /** Draw a block into `el`. */
   mount(lang: string, el: HTMLElement, source: string, actions: BlockActions): { update(source: string): void; destroy(): void };
 }
 
 const blockMounts = new WeakMap<HTMLElement, ReturnType<BlockRenderer["mount"]>>();
+
+/**
+ * Put what a plugin returned at `from`–`to`. Text with line breaks (a table, say) gets its own paragraph, with
+ * blank lines around it as needed; a single line goes in as typed.
+ */
+function insertPluginText(view: EditorView, from: number, to: number, text: string) {
+  const { doc } = view.state;
+  from = Math.min(from, doc.length);
+  to = Math.min(Math.max(to, from), doc.length);
+  let insert = text;
+  if (text.includes("\n")) {
+    const before = doc.sliceString(Math.max(0, from - 2), from);
+    const after = doc.sliceString(to, to + 1);
+    insert = (from === 0 || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n") + text + (after === "" || after === "\n" ? "\n" : "\n\n");
+  }
+  view.dispatch({ changes: { from, to, insert }, selection: { anchor: from + insert.length }, scrollIntoView: true, userEvent: "input.plugin" });
+}
+
+/**
+ * Plugin input hooks: typing a trigger (`//`) alone on an empty line, and pasting text that has tabs in it (rows
+ * copied from a spreadsheet). The plugin answers asynchronously; until it does, the typed / pasted text is held back,
+ * and if it declines (or fails) the text goes in as if nothing had happened.
+ */
+function pluginInput(getBlocks: () => BlockRenderer | null) {
+  return [
+    EditorView.inputHandler.of((view, from, to, text) => {
+      const blocks = getBlocks();
+      const { state } = view;
+      if (!blocks?.triggers || !blocks.runInput || from !== to || text === "" || text.includes("\n") || state.facet(readingFacet)) return false;
+      const line = state.doc.lineAt(from);
+      // What the line would read after this input. Judged as a whole (not by where the character lands) because
+      // typing `/` next to an existing `/` may be reported as inserted before or after it.
+      const typed = state.sliceDoc(line.from, from) + text + state.sliceDoc(from, line.to);
+      if (!blocks.triggers().includes(typed) || inCodeBlock(state, from)) return false;
+      view.dispatch({ changes: { from: line.from, to: line.to }, userEvent: "delete" });
+      void blocks.runInput("trigger", { text: typed }).then((out) => insertPluginText(view, line.from, line.from, out ?? typed));
+      return true;
+    }),
+    EditorView.domEventHandlers({
+      paste(event, view) {
+        const blocks = getBlocks();
+        const text = event.clipboardData?.getData("text/plain") ?? "";
+        if (!blocks?.hasPasteHook?.() || !blocks.runInput || !text.includes("\t") || view.state.facet(readingFacet)) return false;
+        const { from, to } = view.state.selection.main;
+        if (inCodeBlock(view.state, from)) return false;
+        event.preventDefault();
+        const html = event.clipboardData?.getData("text/html") ?? "";
+        void blocks.runInput("paste", { text, html }).then((out) => {
+          if (out !== null) return insertPluginText(view, from, to, out);
+          const end = Math.min(to, view.state.doc.length);
+          view.dispatch({ changes: { from: Math.min(from, end), to: end, insert: text }, selection: { anchor: Math.min(from, end) + text.length }, userEvent: "input.paste" });
+        });
+        return true;
+      },
+    }),
+  ];
+}
 
 /** From the opening fence line at `pos`: the whole block and the text between its fences (`empty` when there is none). */
 function fenceRanges(doc: Text, pos: number) {
@@ -1008,6 +1072,7 @@ export default function LiveEditor({ ref, title, readOnly = false, value, embeds
             getBlocks: () => blocksRef.current ?? null,
           }),
           dropField,
+          pluginInput(() => blocksRef.current ?? null),
           EditorView.updateListener.of((u) => {
             if (u.docChanged && !u.transactions.some((t) => t.annotation(External))) {
               onChangeRef.current(u.state.doc.toString());

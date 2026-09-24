@@ -74,6 +74,8 @@ declared permissions, explicit per-device enable**.
   image picker (`<input type=file>` in the sandboxed frame) on a real phone WebView / the real Tauri window. Not built: reminders,
   collaborators, drawing, labels, drag-reorder, multi-select. Gotcha: `Vite` caches the `import.meta.glob` list, so a brand-new
   example folder only shows in a running dev server after touching `pluginCatalog.ts` (or a restart).
+- **API 2 + Simple Table + Uninstall (2026-09-24)**: permission `editor.input`, `granite.input.trigger / onPaste` (typing a text alone on an empty line; pasting
+  tab-separated cells), `API_VERSION` 2, an Uninstall button on both apps, and the Simple Table plugin that uses them. Details in `progress.md`.
 - **Next**: command palette (Cmd+P) so commands aren't only reachable from the Plugins screen; CodeMirror
   extension / event / settings APIs; plugin registry + install-from-URL; docs site; a Worker layer for hangs;
   `desktopOnly` plugins are hidden on the phone but never exercised.

@@ -20,6 +20,11 @@ test("bad manifests fail with a readable message", () => {
   assert.throws(() => parseManifest({ ...good, minApiVersion: "1" }), /whole number/);
 });
 
+test("the input hooks need the editor.input permission", () => {
+  assert.equal(METHOD_PERMISSION["input.register"], "editor.input");
+  assert.deepEqual(parseManifest({ ...good, permissions: ["editor.input"] }).permissions, ["editor.input"]);
+});
+
 test("plugins may only touch Markdown notes inside the vault", () => {
   assert.equal(safeNotePath("Projects/plan.md"), "Projects/plan.md");
   for (const bad of ["../secret.md", "/etc/passwd.md", "a/../b.md", ".granite/plugins/x/main.md", "notes.txt", "C:/x.md", "a\\b.md", "", 5]) {

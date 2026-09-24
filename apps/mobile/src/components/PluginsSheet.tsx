@@ -17,6 +17,8 @@ export interface PluginsSheetProps {
   /** Plugins the Store can install (bundled with the app). */
   catalog: CatalogPlugin[];
   onInstall: (entry: CatalogPlugin) => Promise<void>;
+  /** Delete the plugin's folder (by folder name). */
+  onUninstall: (folder: string) => void;
   onToggle: (id: string, on: boolean) => void;
   onRun: (command: CommandInfo) => void;
   onRefresh: () => void;
@@ -24,8 +26,26 @@ export interface PluginsSheetProps {
 }
 
 /** The phone's Plugins screen: what is installed, switch on/off, and run commands. */
-export default function PluginsSheet({ visible, installed, enabled, errors, commands, hasNote, catalog, onInstall, onToggle, onRun, onRefresh, onClose }: PluginsSheetProps) {
+export default function PluginsSheet({ visible, installed, enabled, errors, commands, hasNote, catalog, onInstall, onUninstall, onToggle, onRun, onRefresh, onClose }: PluginsSheetProps) {
   const [tab, setTab] = useState<'installed' | 'store'>('installed');
+  /** The plugin (folder) whose Uninstall was tapped once and now asks "Sure?". */
+  const [sure, setSure] = useState<string | null>(null);
+  const uninstallRow = (folder: string) =>
+    sure === folder ? (
+      <View style={styles.sure}>
+        <Text style={styles.version}>Delete it from the vault (and your computer)?</Text>
+        <Pressable onPress={() => (setSure(null), onUninstall(folder))} style={styles.dangerBtn}>
+          <Text style={styles.dangerText}>Uninstall</Text>
+        </Pressable>
+        <Pressable onPress={() => setSure(null)} style={styles.command}>
+          <Text style={styles.commandText}>Cancel</Text>
+        </Pressable>
+      </View>
+    ) : (
+      <Pressable onPress={() => setSure(folder)} style={styles.uninstall}>
+        <Text style={styles.dangerLink}>Uninstall</Text>
+      </Pressable>
+    );
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose} />
@@ -54,6 +74,7 @@ export default function PluginsSheet({ visible, installed, enabled, errors, comm
                 <View key={plugin.folder} style={[styles.card, styles.broken]}>
                   <Text style={styles.name}>{plugin.folder}</Text>
                   <Text style={styles.error}>Can't load: {plugin.error}</Text>
+                  {uninstallRow(plugin.folder)}
                 </View>
               );
             }
@@ -101,6 +122,7 @@ export default function PluginsSheet({ visible, installed, enabled, errors, comm
                     ))}
                   </View>
                 )}
+                {uninstallRow(plugin.folder)}
               </View>
             );
           })}
@@ -151,6 +173,11 @@ const styles = StyleSheet.create({
   command: { backgroundColor: colors.panelHover, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14 },
   pressed: { backgroundColor: colors.accent },
   commandText: { color: colors.text, fontSize: 14, fontWeight: '600' },
+  uninstall: { alignSelf: 'flex-start', paddingVertical: 4 },
+  dangerLink: { color: colors.danger, fontSize: 14, fontWeight: '600' },
+  sure: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
+  dangerBtn: { backgroundColor: colors.danger, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14 },
+  dangerText: { color: colors.bg, fontSize: 14, fontWeight: '700' },
   actions: { flexDirection: 'row', gap: 10, paddingTop: 8 },
   secondary: { flex: 1, backgroundColor: colors.panel, borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
   secondaryText: { color: colors.text, fontSize: 16, fontWeight: '600' },

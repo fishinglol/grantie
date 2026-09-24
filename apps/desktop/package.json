@@ -12,6 +12,7 @@
     "test:e2e": "node test-e2e-real.mjs"
   },
   "dependencies": {
+    "@granite/canvas": "*",
     "@granite/core-cloud": "*",
     "@granite/core-importer": "*",
     "@granite/core-notes": "*",

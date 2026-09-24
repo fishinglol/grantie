@@ -396,6 +396,67 @@ _Last updated: 2026-09-21_
   `opts` with edited labels/colours), and Remove dropdown (clears `t`/`opts`, keeps the cell's text). 24 tests still pass.
   Pushed to the real vault's plugin copy too. Not checked on the phone or in Tauri.
 
+### Canvas mode, Obsidian-style (2026-09-24, desktop and phone; not yet checked on a real device)
+The user sent an Obsidian screenshot ("Drag from below or double click / Space + Drag to pan / ⌘ + Scroll to zoom") and asked for the
+same canvas. Confirmed with them: desktop **and** phone; use React Flow (`@xyflow/react`, MIT, approved); text cards + arrows, note cards,
+image cards, colours + groups; and **installed plugins (Excel, Cards) appear as buttons on the bottom bar** and are dragged onto the board.
+- **`packages/canvas` (`@granite/canvas`, new)**: `jsonCanvas.ts` = the `.canvas` file format, **JSON Canvas 1.0** (Obsidian's own, so files
+  open in both; unknown fields such as `metadata` and `styleAttributes` are kept; tab-indented like Obsidian). Pure, 7 tests. `CanvasView.tsx` +
+  `canvas.css` = the board (React DOM + React Flow). Same shape as the note editor: `value` (file text) / `onChange`, so the app saves, syncs,
+  renames and deletes a canvas like any note. Exports: `.` (view + format), `./format` (pure, for the phone's RN side), `./canvas.css`.
+- **What it does**: double-click empty space = text card (Markdown, the same live editor as notes, so `![[image]]` works); drag a dot on a
+  card's edge to draw an arrow; let go on empty space = new card joined to it; let go on a card = joins that card; drag from the bottom bar or
+  click it (Card / Note / Media / one per plugin); box-select; selection menu (delete, colour, zoom to selection, edit, open note, create
+  group); Obsidian's 6 preset colours; groups (dragging one moves the cards inside); arrow colour / label / reverse; note cards show the note
+  live and open on double-click; image cards; drop a note from the sidebar or a file from Finder onto the board; undo/redo (own history, each
+  typed edit is one step); zoom buttons, help card; reading mode (the book button) makes it look/pan/zoom only.
+- **Plugins on the canvas** need no plugin API change: a text card whose whole text is a ```` ```sheet ```` / ```` ```cards ```` fence is drawn by
+  that plugin's block (the bar button makes one, seeded `{"page":1}` so it fills the card). `BlockRenderer` got an optional `label(lang)`
+  (`BlockBridge`/`PluginHost.blockLabel`) so the bar can say "Excel". Button icons for `sheet`/`cards` are in `CanvasView.tsx` (`PLUGIN_ICONS`,
+  `PLUGIN_SEED`); any other plugin gets a puzzle piece and an empty fence. The page-level "⋯" plugin commands are hidden on a canvas.
+- **Desktop** (`NoteApp.tsx`): the sidebar lists `.canvas` files with a grid icon and has a "New canvas" button; a canvas opens in a pane like a
+  note (split view works; `key={p}` remounts per file); `noteTitle`/`renamedNoteFile` in core-notes know `.canvas`; plugins' `vault.list` gets
+  notes only; `mime.ts` maps `.canvas` to JSON for Drive. **Phone**: `editor-web/main.tsx` shows `CanvasView` when `init` carries `canvas`
+  (new messages `files`, `add-file`, `open`, documented at the top of that file); `App.tsx` creates/opens/lists canvases, ⋮ → "Add image" on a
+  canvas adds a card; sidebar has a canvas button. Touch: bigger connection dots, one-finger pan, swipe-right-to-open-sidebar is off on a canvas
+  (it would fight panning; the round button top left opens the sidebar there). `editorHtml.ts` was regenerated (750 → 947 KB).
+- **Checked**: `npm test` in core-notes/core-cloud/plugins/canvas, `tsc` for every package + desktop + phone + editor-web, `expo export` (Android),
+  and by hand in the desktop preview (cards, typing, arrows both ways, colour, box-select, group + move + name, undo/redo, Excel formula inside a
+  card, drag from the bar, note card) and the phone preview at 375 px (create, cards, note picker, reopen keeps the content).
+  **Not checked**: the real Tauri window (Finder drops onto the board), Samsung phone (pinch zoom, long touch, real WebView), Obsidian opening a
+  Granite canvas and vice versa, a real Drive sync of a `.canvas`. Note: `tsc -b` in `apps/desktop` reports one older error in `vite.config.ts`
+  (unused `@ts-expect-error`) that is unrelated; the app source is clean with `tsc --noEmit`.
+- **Not built** (Obsidian has, we don't): link cards (`type: "link"` files render but can't be made), edge-style options (straight/curved), snap to
+  grid/alignment guides, copy-paste of cards, card duplicate, minimap, edge labels' colour, search inside a canvas, canvases inside note embeds,
+  dragging a card out of a group to detach it (membership is geometric, as in JSON Canvas), and a `.canvas` link from a note (`[[Board]]`).
+
+### Uninstall, plugin API 2 (typing / paste hooks) and the Simple Table plugin (2026-09-24, desktop and phone)
+User asked (Thai, from screenshots): (1) an **Uninstall** button on installed plugins, (2) the canvas bottom bar must not show a plugin's button unless it is
+installed (already true: the bar lists only *running* plugins' block languages; verified by uninstalling, the button and the card's rendering both go away),
+(3) a new plugin **Simple Table**: type `//` on an empty line to get a table (bordered grid, bold centred header, add rows), and rows copied from Excel and
+pasted become that table.
+- **Uninstall**: desktop `usePlugins.uninstall` (unload, drop from `plugins.json`, delete `.granite/plugins/<id>`, rescan, sync) + `PluginsDialog` two-step
+  button ("Uninstall" then "Delete this plugin from the vault (and your phone)? Uninstall / Cancel"; the folder is user data if hand-made). Phone: `App.tsx`
+  `uninstallPlugin` + `PluginsSheet` link with the same two steps. The deletion syncs (Drive trash) so the other device drops the plugin too. Blocks
+  already in notes turn back into plain text (nothing is lost). Tauri's `fs:allow-remove` already covered `.granite`, so no Rust rebuild.
+- **Plugin API 2** (`API_VERSION` 2; a plugin sets `"minApiVersion": 2`): permission `editor.input`; `granite.input.trigger(text, handler)` (text typed alone on an
+  empty line, 1-8 chars, not in code blocks; the handler returns Markdown to put there, or null) and `granite.input.onPaste(({text, html}) => string | null)` (only
+  offered text with a tab in it, i.e. spreadsheet cells; 5 s limit; null = paste as usual). Host: `PluginHost.inputTriggers / hasPasteHook / runInput`, exposed on
+  `BlockBridge` and read by `LiveEditor` through the optional members of `BlockRenderer` (`pluginInput()` in `LiveEditor.tsx`: a CodeMirror `inputHandler` +
+  `paste` handler; multi-line results are put on their own paragraph). Works the same on the phone (the editor page and host are shared). Gotchas found: the
+  line is judged **as a whole after the input** (typing `/` next to `/` can be reported as inserted before or after it, and fast typing arrives as one 2-char
+  change), and a scripted `.click()` does not trigger the canvas bar's pointer-down buttons (use real mouse events when testing).
+- **Simple Table** (`examples/plugins/simple-table`, id `simple-table`, block language `simple-table`, permissions `editor.blocks` + `editor.input` + `editor.write`): stored as
+  a normal Markdown pipe table between ```` ```simple-table ```` fences (alignment marks kept; a cell is one line, `|` escaped, ``` neutralised). UI in the block frame:
+  textarea cells that auto-grow (Thai wraps), Tab / Shift+Tab / Enter / arrows, Tab or Enter in the last row adds a row, `+ Row` / `+ Column`, × on a header (delete
+  column) and at the end of a row, `</>` (show as text), Delete table, paste of several cells into a cell fills from there. Excel cells: `parseTsv` handles quotes,
+  `\r\n`, embedded line breaks. Also a button on the canvas bar (icon + smaller card, `PLUGIN_ICONS` / `PLUGIN_SIZE` in `CanvasView.tsx`). Tests:
+  `packages/plugins/test/simple-table.test.ts` (storage and TSV only; the UI was checked in the desktop preview: `//`, typing, Tab/Enter, Excel paste with Thai text, two
+  tables in a note, canvas card, uninstall). Three real screenshots (headless Chrome driving the dev server) are in its `screenshots/`, so the Store lists it.
+  **Not verified**: typing `//` with a phone soft keyboard / IME (Android composition may not go through CodeMirror's `inputHandler` the same way), a real Excel
+  clipboard (only a synthetic paste event with the same text was tried), the Tauri window. Not built: column widths, alignment buttons, sorting, drag reorder,
+  focusing the first cell of a table that `//` just created (the user clicks a cell).
+
 ## Left to do
 
 ### Finish / polish the local feature

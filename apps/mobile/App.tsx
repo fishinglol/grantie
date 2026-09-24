@@ -6,6 +6,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { IMAGE_FILE, basename, dirname, embedImage, join, moveFolder, noteTitle, relocateLinks, renamedNoteFile } from '@granite/core-notes';
 import { PLUGINS_DIR, discoverPlugins, readPluginCode, type CommandInfo, type InstalledPlugin } from '@granite/plugins';
 import { GoogleDriveProvider, VaultSync, type DeviceCode, type GoogleSession } from '@granite/core-cloud';
+import { emptyCanvas, serializeCanvas } from '@granite/canvas/format';
 
 import { expoFs } from './src/expoFs';
 import { memFs } from './src/memFs';
@@ -29,6 +30,7 @@ import type { NoteEditorHandle, PluginVaultRequest } from './src/components/Note
 const isWeb = Platform.OS === 'web';
 const fs = isWeb ? memFs : expoFs;
 const SAVE_DELAY_MS = 700;
+const isCanvas = (rel: string) => rel.toLowerCase().endsWith('.canvas');
 
 async function readBytes(uri: string): Promise<Uint8Array> {
   if (isWeb) return new Uint8Array(await (await fetch(uri)).arrayBuffer());
@@ -446,6 +448,26 @@ export default function App() {
     [enabledPlugins, refreshPlugins, say, session, runSync],
   );
 
+  /** Switch a plugin off and delete its folder (sync then removes it from the desktop too). */
+  const uninstallPlugin = useCallback(
+    async (folder: string) => {
+      const name = installed.find((p) => p.folder === folder)?.manifest?.name ?? folder;
+      try {
+        const id = installed.find((p) => p.folder === folder)?.manifest?.id;
+        const next = enabledPlugins.filter((e) => e !== id);
+        setEnabledPlugins(next);
+        await pluginStore.save({ enabled: next });
+        await fs.removeDir(join(VAULT_DIR, PLUGINS_DIR, folder));
+        await refreshPlugins();
+        say(`Uninstalled ${name}`);
+        if (session) void runSync();
+      } catch (e) {
+        say(`Couldn't uninstall ${name}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+    [installed, enabledPlugins, refreshPlugins, say, session, runSync],
+  );
+
   /** Plugins the editor page should be running right now. */
   const runningPlugins = useMemo(
     () =>
@@ -460,7 +482,7 @@ export default function App() {
   /** A plugin's request for the vault. The page already limited it to vault-relative Markdown paths. */
   const pluginVault = useCallback(
     async (request: PluginVaultRequest): Promise<unknown> => {
-      if (request.op === 'list') return (await scanVault(fs)).notes;
+      if (request.op === 'list') return (await scanVault(fs)).notes.filter((n) => !isCanvas(n));
       const abs = join(VAULT_DIR, request.path);
       if (request.op === 'read') return fs.readTextFile(abs);
       await fs.mkdirp(dirname(abs));
@@ -532,7 +554,7 @@ export default function App() {
   );
 
   const create = useCallback(
-    async (kind: 'note' | 'folder', folder: string, name: string) => {
+    async (kind: 'note' | 'folder' | 'canvas', folder: string, name: string) => {
       const clean = name.replace(/[\\/:*?"<>|]/g, '-');
       try {
         if (kind === 'folder') {
@@ -542,10 +564,11 @@ export default function App() {
           await refresh();
           return;
         }
-        const file = /\.(md|markdown)$/i.test(clean) ? clean : `${clean}.md`;
+        const ext = kind === 'canvas' ? '.canvas' : '.md';
+        const file = (kind === 'canvas' ? /\.canvas$/i : /\.(md|markdown)$/i).test(clean) ? clean : `${clean}${ext}`;
         const rel = folder ? `${folder}/${file}` : file;
         if (await fs.exists(join(VAULT_DIR, rel))) return say(`"${file}" already exists`);
-        await fs.writeTextFile(join(VAULT_DIR, rel), '');
+        await fs.writeTextFile(join(VAULT_DIR, rel), kind === 'canvas' ? serializeCanvas(emptyCanvas()) : '');
         await refresh();
         await openNote(rel);
       } catch (err) {
@@ -576,7 +599,9 @@ export default function App() {
       }
       await fs.mkdirp(join(noteDir, 'assets'));
       await fs.writeBinaryFile(join(noteDir, named.relativeSrc), await readBytes(asset.uri));
-      editor.current?.insert(IMAGE_FILE.test(fileName) ? named.markdown : `[${fileName}](${named.relativeSrc})`);
+      // On a canvas the picture becomes a card (vault-relative path); in a note, a link at the cursor.
+      if (isCanvas(rel)) editor.current?.addFile(join(dirname(rel), named.relativeSrc).replace(/^\.?\//, ''));
+      else editor.current?.insert(IMAGE_FILE.test(fileName) ? named.markdown : `[${fileName}](${named.relativeSrc})`);
       say('Added image to assets/');
       void runSync();
     } catch (err) {
@@ -594,6 +619,15 @@ export default function App() {
       setPluginsOpen(true);
     },
   };
+
+  /** What a canvas offers to put on it: the vault's notes and images (vault-relative). */
+  const canvasFiles = useMemo(
+    () => ({
+      notes: scan.notes.filter((n) => !isCanvas(n)),
+      images: [...scan.images.values()].filter((p) => p.startsWith(`${VAULT_DIR}/`)).map((p) => p.slice(VAULT_DIR.length + 1)).sort(),
+    }),
+    [scan],
+  );
 
   const shareNote = () => Share.share({ message: latest.current }).catch(() => say('Sharing is not available here'));
 
@@ -622,6 +656,8 @@ export default function App() {
               return error ? { ...rest, [id]: error } : rest;
             })
           }
+          canvas={isCanvas(open.rel) ? canvasFiles : undefined}
+          onOpenFile={(file) => void openNote(file)}
           onOpenSidebar={() => setSidebar(true)}
           onOpenMenu={() => setMenu(true)}
         />
@@ -654,7 +690,7 @@ export default function App() {
             { label: 'Share note', icon: 'share-variant-outline', onPress: shareNote },
           ],
           // Plugin actions for the whole page ("Turn this page into a sheet").
-          ...(pluginCommands.some((c) => c.page)
+          ...(pluginCommands.some((c) => c.page) && !(open && isCanvas(open.rel))
             ? [
                 pluginCommands
                   .filter((c) => c.page)
@@ -727,6 +763,7 @@ export default function App() {
         hasNote={open !== null}
         catalog={CATALOG}
         onInstall={installPlugin}
+        onUninstall={(folder) => void uninstallPlugin(folder)}
         onToggle={(id, on) => void togglePlugin(id, on)}
         onRun={(c) => {
           setPluginsOpen(false); // the message it shows would sit behind this sheet

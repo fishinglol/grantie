@@ -15,7 +15,7 @@ export interface NoteListProps {
   syncing: boolean;
   onOpen: (note: string) => void;
   /** Create a note or folder called `name` inside `folder` ("" = vault root). */
-  onCreate: (kind: 'note' | 'folder', folder: string, name: string) => void;
+  onCreate: (kind: 'note' | 'folder' | 'canvas', folder: string, name: string) => void;
   /** A note was dragged into `folder` ("" = vault root). */
   onMove: (note: string, folder: string) => void;
   /** A folder was long-pressed: the app offers to move or delete it. */
@@ -38,7 +38,7 @@ export default function NoteList({ notes, folders, selected, title, syncing, onO
   const [tapped, setActiveFolder] = useState('');
   /** A folder that was moved or deleted no longer counts as the target for new notes. */
   const activeFolder = tapped === '' || folders.includes(tapped) ? tapped : '';
-  const [creating, setCreating] = useState<'note' | 'folder' | null>(null);
+  const [creating, setCreating] = useState<'note' | 'folder' | 'canvas' | null>(null);
   const [name, setName] = useState('');
   /** Note being dragged, where the finger is, and the folder ("" = root) it would land in. */
   const [dragging, setDragging] = useState<{ note: string; x: number; y: number; over: string } | null>(null);
@@ -148,6 +148,7 @@ export default function NoteList({ notes, folders, selected, title, syncing, onO
                   pressed && styles.pressed,
                 ]}
               >
+                {row.rel.toLowerCase().endsWith('.canvas') && <Icon name="view-grid-outline" size={20} color={colors.textDim} />}
                 <Text style={[styles.label, { marginLeft: 4 }]} numberOfLines={1}>
                   {noteTitle(nameOf(row.rel))}
                 </Text>
@@ -160,7 +161,7 @@ export default function NoteList({ notes, folders, selected, title, syncing, onO
               value={name}
               onChangeText={setName}
               onSubmitEditing={commit}
-              placeholder={creating === 'note' ? 'Note name' : 'Folder name'}
+              placeholder={creating === 'note' ? 'Note name' : creating === 'canvas' ? 'Canvas name' : 'Folder name'}
               placeholderTextColor={colors.textFaint}
               style={styles.input}
               returnKeyType="done"
@@ -176,6 +177,9 @@ export default function NoteList({ notes, folders, selected, title, syncing, onO
         </Pressable>
         <Pressable onPress={() => setCreating(creating === 'folder' ? null : 'folder')} hitSlop={10} style={styles.tool}>
           <Icon name="folder-plus-outline" size={26} color={creating === 'folder' ? colors.accent : colors.text} />
+        </Pressable>
+        <Pressable onPress={() => setCreating(creating === 'canvas' ? null : 'canvas')} hitSlop={10} style={styles.tool} accessibilityLabel="New canvas">
+          <Icon name="view-grid-plus-outline" size={26} color={creating === 'canvas' ? colors.accent : colors.text} />
         </Pressable>
         {folders.length > 0 && (
           <Pressable onPress={() => setCollapsed(allCollapsed ? new Set() : new Set(folders))} hitSlop={10} style={styles.tool}>

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { PERMISSION_LABELS, PLUGINS_DIR, type PluginManifest } from "@granite/plugins";
+import { PERMISSION_LABELS, PLUGINS_DIR, type InstalledPlugin, type PluginManifest } from "@granite/plugins";
 import PluginStore from "./PluginStore";
 import { CATALOG } from "./pluginCatalog";
 import type { PluginsState } from "./usePlugins";
@@ -25,11 +25,34 @@ function Permissions({ manifest }: { manifest: PluginManifest }) {
   );
 }
 
+/** "Uninstall", then "Sure? Uninstall / Cancel" so a stray click doesn't delete a plugin's folder. */
+function Uninstall({ id, sure, setSure, onConfirm }: { id: string; sure: string | null; setSure: (id: string | null) => void; onConfirm: () => void }) {
+  return (
+    <div className="plugin-uninstall">
+      {sure === id ? (
+        <>
+          <span>Delete this plugin from the vault (and your phone)?</span>
+          <button className="danger" onClick={onConfirm}>Uninstall</button>
+          <button onClick={() => setSure(null)}>Cancel</button>
+        </>
+      ) : (
+        <button className="danger" onClick={() => setSure(id)}>Uninstall</button>
+      )}
+    </div>
+  );
+}
+
 /** Lists the plugins in the vault (switch on, run commands) and the store where more can be installed. */
 export default function PluginsDialog({ plugins, onClose }: PluginsDialogProps) {
-  const { installed, enabled, failed, commands, loadError, refresh, toggle, install, run } = plugins;
+  const { installed, enabled, failed, commands, loadError, refresh, toggle, install, uninstall, run } = plugins;
   const [tab, setTab] = useState<"installed" | "store">("installed");
   const [busy, setBusy] = useState<string | null>(null);
+  /** The plugin whose Uninstall button was pressed once and now asks "Sure?". */
+  const [sure, setSure] = useState<string | null>(null);
+  const remove = (plugin: InstalledPlugin) => {
+    setSure(null);
+    void uninstall(plugin);
+  };
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -79,6 +102,7 @@ export default function PluginsDialog({ plugins, onClose }: PluginsDialogProps) 
                     <strong>{plugin.folder}</strong>
                   </div>
                   <p className="modal-error">Can't load: {plugin.error}</p>
+                  <Uninstall id={plugin.folder} sure={sure} setSure={setSure} onConfirm={() => remove(plugin)} />
                 </li>
               );
             }
@@ -108,6 +132,7 @@ export default function PluginsDialog({ plugins, onClose }: PluginsDialogProps) 
                     ))}
                   </div>
                 )}
+                <Uninstall id={m.id} sure={sure} setSure={setSure} onConfirm={() => remove(plugin)} />
               </li>
             );
           })}

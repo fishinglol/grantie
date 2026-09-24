@@ -22,12 +22,13 @@ const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function NoteEd
     [],
   );
 
-  useImperativeHandle(ref, () => ({ insert: bridge.insert, runPluginCommand: bridge.runPluginCommand }), [bridge]);
+  useImperativeHandle(ref, () => ({ insert: bridge.insert, runPluginCommand: bridge.runPluginCommand, addFile: bridge.addFile }), [bridge]);
 
   // Vault images were (re)indexed, or the set of enabled plugins changed, after the page loaded.
   useEffect(() => void bridge.sendEmbeds(), [props.embeds, bridge]);
   useEffect(() => bridge.sendPlugins(), [props.plugins, bridge]);
   useEffect(() => void bridge.sendTitle(), [props.title, bridge]);
+  useEffect(() => void bridge.sendFiles(), [props.canvas, bridge]);
 
   return (
     <WebView

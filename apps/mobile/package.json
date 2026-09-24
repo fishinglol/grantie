@@ -5,6 +5,7 @@
   "dependencies": {
     "@expo/metro-runtime": "~57.0.14",
     "@expo/vector-icons": "^15.0.2",
+    "@granite/canvas": "*",
     "@granite/core-cloud": "*",
     "@granite/core-notes": "*",
     "@granite/live-editor": "*",
@@ -14,6 +15,7 @@
     "expo-file-system": "~57.0.6",
     "expo-image-picker": "~57.0.14",
     "expo-status-bar": "~57.0.1",
+    "expo-updates": "~57.0.23",
     "expo-web-browser": "~57.0.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
@@ -36,7 +38,8 @@
     "prestart": "npm run build:editor",
     "preweb": "npm run build:editor",
     "preios": "npm run build:editor",
-    "preandroid": "npm run build:editor"
+    "preandroid": "npm run build:editor",
+    "eas-build-post-install": "npm run build:editor"
   },
   "private": true
 }

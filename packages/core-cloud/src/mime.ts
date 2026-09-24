@@ -5,6 +5,7 @@ const BY_EXT: Record<string, string> = {
   ".markdown": "text/markdown",
   ".txt": "text/plain",
   ".json": "application/json",
+  ".canvas": "application/json", // JSON Canvas
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",

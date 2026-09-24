@@ -1,6 +1,7 @@
-const NOTE_EXT = /\.(md|markdown)$/i;
+/** Notes, and canvases (which the sidebar lists and renames the same way). */
+const NOTE_EXT = /\.(md|markdown|canvas)$/i;
 
-/** A note's name as people see it: the file name without `.md`. */
+/** A note's name as people see it: the file name without `.md` (or `.canvas`). */
 export const noteTitle = (fileName: string): string => fileName.replace(NOTE_EXT, "");
 
 /**

@@ -1,0 +1,14 @@
+{
+  "id": "simple-table",
+  "name": "Simple Table",
+  "version": "1.0.0",
+  "description": "A plain table you can type straight into: add rows and columns, Tab and Enter to move around. Type // on an empty line to start one, or paste cells copied from Excel or Google Sheets and they become a table. Stored as an ordinary Markdown table.",
+  "tagline": "Type // for a table, paste from Excel",
+  "author": "Granite",
+  "minApiVersion": 2,
+  "permissions": [
+    "editor.blocks",
+    "editor.input",
+    "editor.write"
+  ]
+}

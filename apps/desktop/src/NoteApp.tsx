@@ -13,6 +13,7 @@ import { usePlugins } from "./usePlugins";
 import { http } from "./googleLogin";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { LiveEditor, IMAGE_FILE, type LiveEditorHandle } from "@granite/live-editor";
+import { CanvasView, emptyCanvas, serializeCanvas, type CanvasHandle } from "@granite/canvas";
 import { indexStore } from "./stores";
 import { folderFs, moveFile, tauriFs } from "./tauriFs";
 import { ensureSampleVault, vaultDir } from "./vault";
@@ -22,6 +23,8 @@ const repo = new NoteRepository(tauriFs);
 const MAX_ATTACH_BYTES = 50 * 1024 * 1024;
 
 type AttachInput = { name: string; data: Uint8Array };
+
+const isCanvas = (p: string | null | undefined) => Boolean(p?.toLowerCase().endsWith(".canvas"));
 
 /**
  * Tauri's drag-drop position is typed PhysicalPosition, but wry only reports real
@@ -93,11 +96,13 @@ export default function NoteApp({
   /** Folder (relative to the vault, "" = root) that new notes/folders are created in. */
   const [activeFolder, setActiveFolder] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [creating, setCreating] = useState<"note" | "folder" | null>(null);
+  const [creating, setCreating] = useState<"note" | "folder" | "canvas" | null>(null);
   /** Note or folder being dragged in the sidebar, and the folder ("" = root) it is hovering over. */
   const [drag, setDrag] = useState<{ file: string; folder: boolean; x: number; y: number; over: string | null } | null>(null);
   const justDragged = useRef(false);
   const editorRefs = [useRef<LiveEditorHandle>(null), useRef<LiveEditorHandle>(null)];
+  /** Per pane, when it shows a canvas. */
+  const canvasRefs = [useRef<CanvasHandle>(null), useRef<CanvasHandle>(null)];
   /** The active pane's editor: what plugins, pasted files and the format shortcuts talk to. */
   const editorRef = useMemo<RefObject<LiveEditorHandle | null>>(
     () => ({ get current() { return editorRefs[activeRef.current]!.current; } }) as RefObject<LiveEditorHandle | null>,
@@ -137,7 +142,7 @@ export default function NoteApp({
             const isAssets = inAssets || e.name === "assets";
             if (!isAssets) folders.push(childRel);
             await walk(join(current, e.name), childRel, isAssets);
-          } else if (e.name.endsWith(".md") || e.name.endsWith(".markdown")) {
+          } else if (/\.(md|markdown|canvas)$/.test(e.name)) {
             files.push(rel ? `${rel}/${e.name}` : e.name);
           } else if (IMAGE_FILE.test(e.name) && !images.has(e.name.toLowerCase())) {
             images.set(e.name.toLowerCase(), join(current, e.name));
@@ -328,7 +333,7 @@ export default function NoteApp({
   }, [docs, saveDoc]);
 
   const startCreate = useCallback(
-    (kind: "note" | "folder") => {
+    (kind: "note" | "folder" | "canvas") => {
       setShowSidebar(true);
       setCollapsed((prev) => {
         if (!prev.has(activeFolder)) return prev;
@@ -361,13 +366,14 @@ export default function NoteApp({
           setActiveFolder(relOf(clean));
           setStatus(`Created folder ${relOf(clean)}`);
         } else {
-          const fileName = /\.(md|markdown)$/i.test(clean) ? clean : `${clean}.md`;
+          const ext = kind === "canvas" ? /\.canvas$/i : /\.(md|markdown)$/i;
+          const fileName = ext.test(clean) ? clean : `${clean}.${kind === "canvas" ? "canvas" : "md"}`;
           const newPath = join(parent, fileName);
           if (await tauriFs.exists(newPath)) {
             setStatus(`"${fileName}" already exists`);
             return;
           }
-          await repo.save(newPath, "");
+          await repo.save(newPath, kind === "canvas" ? serializeCanvas(emptyCanvas()) : "");
           await refreshVaultFiles(dir);
           await load(newPath);
           void runSync();
@@ -386,11 +392,19 @@ export default function NoteApp({
     return () => window.removeEventListener("keydown", onKey);
   }, [menu]);
 
+  /** Markdown notes only (the sidebar also lists canvases). */
+  const noteFiles = useMemo(() => vaultFiles.filter((f) => !isCanvas(f)), [vaultFiles]);
+  /** Vault-relative paths of the vault's images, for a canvas's "Add media". */
+  const imageFiles = useMemo(
+    () => (dir ? [...vaultImages.values()].filter((p) => p.startsWith(`${dir}/`)).map((p) => p.slice(dir.length + 1)).sort() : []),
+    [vaultImages, dir],
+  );
+
   const plugins = usePlugins({
     vaultDir: dir,
     editor: editorRef,
-    hasNote: path !== null,
-    notes: vaultFiles,
+    hasNote: path !== null && !isCanvas(path),
+    notes: noteFiles,
     notify: setStatus,
     onWroteNote: () => {
       if (dir) void refreshVaultFiles(dir);
@@ -573,8 +587,14 @@ export default function NoteApp({
       if (!started) return;
       justDragged.current = true;
       setTimeout(() => (justDragged.current = false), 0);
-      const target = dropTarget(ev);
       setDrag(null);
+      // A note dropped on a canvas becomes a card there.
+      const pane = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>(".editor-pane .granite-canvas")?.closest<HTMLElement>(".editor-pane");
+      if (pane && !folder) {
+        canvasRefs[Number(pane.dataset.pane)]?.current?.addFile(file, { x: ev.clientX, y: ev.clientY });
+        return;
+      }
+      const target = dropTarget(ev);
       if (target !== null) void (folder ? moveFolderTo : moveNote)(file, target);
     };
     window.addEventListener("mousemove", onMove);
@@ -595,6 +615,8 @@ export default function NoteApp({
       }
       const noteDir = dirname(path);
       const blocks: string[] = [];
+      /** On a canvas each file becomes a card (vault-relative paths) instead of a link in the text. */
+      const cards: string[] = [];
       setBusy(true);
       try {
         for (const file of files) {
@@ -610,6 +632,7 @@ export default function NoteApp({
           }
           await tauriFs.mkdirp(join(noteDir, "assets"));
           await tauriFs.writeBinaryFile(join(noteDir, named.relativeSrc), file.data);
+          if (dir && isCanvas(path)) cards.push(join(noteDir, named.relativeSrc).slice(dir.length + 1));
           blocks.push(
             IMAGE_FILE.test(file.name)
               ? named.markdown
@@ -617,7 +640,8 @@ export default function NoteApp({
           );
         }
         if (blocks.length > 0) {
-          editorRefs[pane]!.current?.insertBlock(blocks.join("\n\n"), at);
+          if (cards.length > 0) cards.forEach((file, n) => canvasRefs[pane]!.current?.addFile(file, at && { x: at.x + n * 30, y: at.y + n * 30 }));
+          else editorRefs[pane]!.current?.insertBlock(blocks.join("\n\n"), at);
           setStatus(`Added ${blocks.length} file${blocks.length > 1 ? "s" : ""} to assets/`);
           void runSync();
         }
@@ -628,7 +652,7 @@ export default function NoteApp({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [runSync],
+    [runSync, dir],
   );
   const attachRef = useRef(attachFiles);
   attachRef.current = attachFiles;
@@ -780,11 +804,11 @@ export default function NoteApp({
     if (creating && rel === activeFolder) {
       rows.push(
         <li key="__new" className="tree-new" style={indent}>
-          <span className="file-icon">{creating === "folder" ? <FolderIcon /> : <FileIcon />}</span>
+          <span className="file-icon">{creating === "folder" ? <FolderIcon /> : creating === "canvas" ? <CanvasIcon /> : <FileIcon />}</span>
           <input
             autoFocus
             className="tree-input"
-            placeholder={creating === "folder" ? "Folder name" : "Note name"}
+            placeholder={creating === "folder" ? "Folder name" : creating === "canvas" ? "Canvas name" : "Note name"}
             onKeyDown={(e) => {
               if (e.key === "Enter") void commitCreate(e.currentTarget.value);
               else if (e.key === "Escape") setCreating(null);
@@ -856,7 +880,7 @@ export default function NoteApp({
             className={isActive ? "active" : ""}
           >
             <span className="chevron" />
-            <span className="file-icon"><FileIcon /></span>
+            <span className="file-icon">{isCanvas(file) ? <CanvasIcon /> : <FileIcon />}</span>
             <span className="file-name">{noteTitle(file.slice(file.lastIndexOf("/") + 1))}</span>
             {docs[fullPath]?.dirty && <span className="dirty-dot" title="Unsaved changes" />}
           </button>
@@ -870,7 +894,7 @@ export default function NoteApp({
     <div className={drag ? "app is-dragging" : "app"}>
       {drag && (
         <div className="drag-ghost" style={{ left: drag.x + 12, top: drag.y + 12 }}>
-          {drag.folder ? <FolderIcon /> : <FileIcon />}
+          {drag.folder ? <FolderIcon /> : isCanvas(drag.file) ? <CanvasIcon /> : <FileIcon />}
           <span>{drag.folder ? drag.file.slice(drag.file.lastIndexOf("/") + 1) : noteTitle(drag.file.slice(drag.file.lastIndexOf("/") + 1))}</span>
         </div>
       )}
@@ -895,6 +919,9 @@ export default function NoteApp({
                   </button>
                   <button title="New folder" aria-label="New folder" onClick={() => startCreate("folder")} disabled={busy}>
                     <NewFolderIcon />
+                  </button>
+                  <button title="New canvas" aria-label="New canvas" onClick={() => startCreate("canvas")} disabled={busy}>
+                    <CanvasIcon />
                   </button>
                   {vaultFolders.length > 0 && (
                     <button
@@ -969,7 +996,7 @@ export default function NoteApp({
                   <>
                     {p && (
                       <PageMenu
-                        commands={plugins.commands.filter((c) => c.page)}
+                        commands={isCanvas(p) ? [] : plugins.commands.filter((c) => c.page)}
                         onRun={(c) => void plugins.run(c)}
                         onOpenPlugins={() => setShowPlugins(true)}
                         reading={reading[i]!}
@@ -979,17 +1006,36 @@ export default function NoteApp({
                         onClosePane={() => closePane(i)}
                       />
                     )}
-                    <LiveEditor
-                      ref={editorRefs[i]}
-                      title={p ? { name: noteTitle(basename(p)), onRename: (title) => renameNote(title, p) } : undefined}
-                      readOnly={reading[i]! || !p}
-                      embeds={vaultImages}
-                      blocks={plugins.blocks}
-                      value={p ? (docs[p]?.text ?? "") : ""}
-                      notePath={p}
-                      toUrl={convertFileSrc}
-                      onChange={(text) => p && editDoc(p, text)}
-                    />
+                    {p && dir && isCanvas(p) ? (
+                      <CanvasView
+                        key={p}
+                        ref={canvasRefs[i]}
+                        value={docs[p]?.text ?? ""}
+                        onChange={(text) => editDoc(p, text)}
+                        readOnly={reading[i]!}
+                        canvasPath={p}
+                        vaultDir={dir}
+                        notes={noteFiles}
+                        images={imageFiles}
+                        embeds={vaultImages}
+                        toUrl={convertFileSrc}
+                        blocks={plugins.blocks}
+                        readNote={(file) => tauriFs.readTextFile(join(dir, file))}
+                        onOpenFile={(file) => pickForPane(i, file)}
+                      />
+                    ) : (
+                      <LiveEditor
+                        ref={editorRefs[i]}
+                        title={p ? { name: noteTitle(basename(p)), onRename: (title) => renameNote(title, p) } : undefined}
+                        readOnly={reading[i]! || !p}
+                        embeds={vaultImages}
+                        blocks={plugins.blocks}
+                        value={p ? (docs[p]?.text ?? "") : ""}
+                        notePath={p}
+                        toUrl={convertFileSrc}
+                        onChange={(text) => p && editDoc(p, text)}
+                      />
+                    )}
                   </>
                 )}
               </div>
@@ -1027,7 +1073,7 @@ export default function NoteApp({
       )}
       {deleting && (
         <DeleteDialog
-          name={deleting.file.slice(deleting.file.lastIndexOf("/") + 1).replace(/\.(md|markdown)$/i, "")}
+          name={noteTitle(deleting.file.slice(deleting.file.lastIndexOf("/") + 1))}
           folderNotes={deleting.folder ? vaultFiles.filter((f) => f.startsWith(`${deleting.file}/`)).length : undefined}
           synced={Boolean(session)}
           onCancel={() => setDeleting(null)}
@@ -1155,6 +1201,9 @@ const NewNoteIcon = () => (
 );
 const NewFolderIcon = () => (
   <svg {...svgProps}><path d={FOLDER_PATH} /><path d="M12 11v6M9 14h6" /></svg>
+);
+const CanvasIcon = () => (
+  <svg {...svgProps}><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /></svg>
 );
 const CollapseAllIcon = () => (
   <svg {...svgProps}><path d="M7 20l5-5 5 5M7 4l5 5 5-5" /></svg>

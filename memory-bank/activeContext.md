@@ -82,6 +82,19 @@ read-only. Confirmed: desktop only; split via ⋯ → "Split right" (no tabs); r
 - Also this session: a new note is created **empty** (no `# name` line; the title above the text is the name).
 - Checked in the browser previews only (desktop preview + Expo web at phone size); not on the Samsung phone or in the Tauri window.
 
+## Session 2026-09-24 (later) — Uninstall, plugin API 2, Simple Table
+User asked for an Uninstall button on plugins, no plugin buttons on the canvas bar for plugins that aren't installed (already how it worked), and a new
+**Simple Table** plugin (type `//` for a table; Excel paste becomes a table). Built: uninstall on desktop + phone, plugin API 2 (`editor.input`,
+`input.trigger`, `input.onPaste`), the plugin with 3 real screenshots. See `progress.md` "Uninstall, plugin API 2 …". Phone: Reload in Expo Go
+(`editorHtml.ts` and `pluginCatalog.ts` were regenerated); desktop: no Rust rebuild needed.
+
+## Session 2026-09-24 — canvas mode (Obsidian-style), desktop + phone
+User (Thai, from an Obsidian screenshot) asked "can you make our app have canvas mode like Obsidian's". Answers: desktop + phone; React Flow
+(new dependency `@xyflow/react`, approved); text/note/image cards, arrows, colours, groups; **plugins (Excel, Cards) as icons on the bottom bar**.
+Built as new package `packages/canvas` (JSON Canvas 1.0 `.canvas` files, Obsidian-compatible). Details, limits and what is unchecked:
+`progress.md` "Canvas mode". Files are ordinary vault files (sidebar, sync, rename, delete, split view all work); plugins draw inside text
+cards through the existing block mechanism. Needs the user's check in the Tauri window and on the phone (reload Expo Go: `editorHtml.ts` changed).
+
 ## Mobile session (2026-09-20, after the desktop PR merged) — phone version
 Goal from the user: "update it for phone version" — same UI as desktop. Confirmed: add
 `react-native-webview`; scope was "everything incl. Google sign-in + sync".

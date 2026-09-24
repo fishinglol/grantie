@@ -21,7 +21,9 @@ next app release.
 - `id`: lower-case letters, digits and dashes, equal to the folder name, not used by another plugin.
 - Raise `version` whenever `main.js` or the manifest changes, or users never see **Update**.
 - Ask only for the `permissions` the plugin really uses, and say why in the README. The risky ones are `network`
-  (data can leave the device), `vault.write`, `vault.read` and `editor.style` (CSS applies to the whole app).
+  (data can leave the device), `vault.write`, `vault.read`, `editor.style` (CSS applies to the whole app) and
+  `editor.input` (the plugin is shown what the user types alone on a line and what they paste).
+- Set `"minApiVersion": 2` if the plugin uses `input.trigger` / `input.onPaste` (API 2); older Granite versions then leave it alone.
 - Show notes' text with `textContent`, never by building HTML from it.
 - It must work on the phone as well as the desktop, or set `"desktopOnly": true`.
 

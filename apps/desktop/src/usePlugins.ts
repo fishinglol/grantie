@@ -142,6 +142,28 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
     [vaultDir, enabled, refresh, notify],
   );
 
+  /** Switch a plugin off and delete its folder (which also removes it from the phone through sync). Its blocks in notes turn back into plain text. */
+  const uninstall = useCallback(
+    async (plugin: InstalledPlugin) => {
+      const id = plugin.folder;
+      const name = plugin.manifest?.name ?? id;
+      if (!vaultDir) return;
+      try {
+        host.current?.unload(plugin.manifest?.id ?? id);
+        const next = enabled.filter((e) => e !== plugin.manifest?.id);
+        setEnabled(next);
+        await pluginStore.save({ enabled: next });
+        await tauriFs.removeDir(join(vaultDir, PLUGINS_DIR, id));
+        await refresh();
+        latest.current.onWroteNote(`${PLUGINS_DIR}/${id}`);
+        notify(`Uninstalled ${name}`);
+      } catch (e) {
+        notify(`Couldn't uninstall ${name}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+    [vaultDir, enabled, refresh, notify],
+  );
+
   const run = useCallback(
     async (c: CommandInfo) => {
       try {
@@ -153,7 +175,7 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
     [notify],
   );
 
-  return { installed, enabled, failed, commands, loadError, blocks, refresh, toggle, install, run };
+  return { installed, enabled, failed, commands, loadError, blocks, refresh, toggle, install, uninstall, run };
 }
 
 export type PluginsState = ReturnType<typeof usePlugins>;
