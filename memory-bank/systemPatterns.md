@@ -9,6 +9,9 @@ apps/
 packages/
   core-notes/   parsing, image embedding, note repository   (pure + port)  BUILT v0.1
   core-cloud/   OAuth, cloud provider port, two-way sync engine (pure + ports) BUILT v0.1
+  live-editor/  CodeMirror live-preview editor shared by both apps                BUILT
+  canvas/       JSON Canvas (.canvas) format (pure) + React Flow board view, shared by both apps  BUILT
+  plugins/      plugin manifest, API types, discovery, sandboxed host             BUILT v1
   core-sync/    Yjs CRDT doc <-> markdown file  (PLANNED, not built)
 conflict_cleaner/   standalone Python CLI, unrelated to the app runtime
 ```
@@ -144,6 +147,21 @@ Relative links (`![](assets/a.png)`, `[f](x.pdf)`) depend on the note's folder, 
 runs `relocateLinks(text, oldDir, newDir)` (URLs, anchors and absolute paths untouched),
 after flushing any unsaved edits and refusing to overwrite an existing file.
 
+## Pattern: folders are synced as records, like files
+`VaultSync` runs a folder pass after the file pass. `SyncIndex.folders` holds the folders both sides had after the last
+sync; a folder missing on one side but in that list was deleted there. Empty folders sync (created on the other side);
+a folder is only removed while **empty**, so nothing inside can be lost. Upgrade path: with no folder history and
+file records present, empty one-sided folders are leftovers of the old file-only sync and are cleaned up; a brand-new device
+just copies. `countDeletionUnits` counts a wholly-deleted folder as one deletion for the "too many deletions" breaker.
+`moveFolder` (core-notes) moves file by file and rewrites relative links that point outside the folder.
+
+## Pattern: inline formatting is a pure toggle over "marker zones"
+`toggleFormat(text, from, to, kind)` (core-notes) returns edits + the selection to restore. Every `*`, `~`, `<u>` / `</u>` touching the
+text is one zone; a format is on if the zone has enough of its marker on both sides; new markers go on the outside. Underline is
+`<u>` (not Markdown). Desktop binds Mod-B/I/U/Shift-X; the phone shows a B I S U bar *inside the WebView page* (buttons act on
+`pointerdown` + `preventDefault` to keep focus), pinned to `visualViewport` so it sits above the keyboard even when Android only
+shrinks the visual viewport.
+
 ## Gotchas (each cost real debugging time)
 - **Verify UI changes on a fresh page load.** The `EditorView` is created once per mount, so
   hot-reload keeps old extensions; the reload guard at the bottom of `LiveEditor.tsx` fixes
@@ -154,6 +172,33 @@ after flushing any unsaved edits and refusing to overwrite an existing file.
 - No regex lookbehind (older WKWebView). No `window.prompt` (unreliable in Tauri).
 - Capability changes (`src-tauri/capabilities/default.json`) are compiled in — `tauri dev`
   must rebuild/restart before they take effect.
+
+## Pattern: canvas = a vault file edited as text (`packages/canvas`, 2026-09-24)
+- A `.canvas` file is **JSON Canvas 1.0** (Obsidian's format). `CanvasView` is controlled like the note editor: `value` (file text) / `onChange`, so the app's
+  existing save, auto-save, sync, rename, delete and split-view code treats it as one more file (`NoteApp` only switches the pane's component by extension;
+  `noteTitle` / `renamedNoteFile` know `.canvas`). `jsonCanvas.ts` is pure and keeps unknown fields (`metadata`, `styleAttributes`), so round-tripping an
+  Obsidian canvas loses nothing.
+- **React Flow holds geometry and selection; the file holds everything else.** `toData` merges React Flow's positions/sizes into each node's original object;
+  `build` does the reverse. Nodes are kept groups-first so groups paint under cards. Group membership is geometric (`nodesInGroup`), as in JSON Canvas.
+- **Own undo/redo** (a stack of file texts): each change is one step, and a whole typing session in a card is one step (the card's editor has its own undo).
+  `lastText` marks our own writes so the value coming back from the parent isn't re-loaded. `CanvasView` is `key`ed by path and builds state before the
+  first render (so `fitView` frames a non-empty canvas once, and an empty one never jumps).
+- **Cards reuse `LiveEditor`** (text cards editable only while editing; note cards read-only), so images, tables and plugin blocks work in cards for free.
+  A text card that is exactly one plugin fence (```` ```sheet … ``` ````) is drawn by that plugin's block (`pluginLang`); the bottom bar lists one button per
+  running block language (`BlockRenderer.langs()/label()`), so a plugin that isn't installed has no button and its cards fall back to text.
+- **Phone**: the canvas runs in the same WebView page as the note editor (`editor-web/main.tsx` shows `CanvasView` when `init` carries `canvas`); vault
+  reads for note cards go over the existing `vault` bridge message. Touch: `pointer: coarse` gives bigger dots and one-finger pan.
+
+## Pattern: plugin input hooks (API 2)
+- Plugins can't see keystrokes (sandboxed frame), so the editor asks them: `pluginInput()` in `LiveEditor.tsx` (CodeMirror `inputHandler` + `paste`) calls the
+  optional `BlockRenderer.triggers / hasPasteHook / runInput`, which `BlockBridge` forwards to `PluginHost.runInput` → `input-run` message → the plugin's
+  handler → `input-done`. Held-back text is restored if the plugin declines, fails or takes over 5 s. Only text the plugin registered for is ever sent to it,
+  and only if it holds `editor.input`.
+- Trigger match is on the **whole line after the input**, not where the character lands (IME / fast typing / caret ambiguity).
+
+## Pattern: uninstall = unload + forget + delete the folder + sync
+`usePlugins.uninstall` (desktop) / `uninstallPlugin` (phone): unload from the host (its blocks become plain text), remove the id from `plugins.json`, delete
+`.granite/plugins/<id>`, rescan, sync (the deletion propagates like any note's). The UI asks twice because a hand-made plugin folder is user data.
 
 ## Pattern: chrome-free shell — sidebar footer menu, toast, in-place connect
 - The desktop window has **no header/toolbar/status bar**. Global actions live in a user

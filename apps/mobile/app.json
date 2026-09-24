@@ -16,10 +16,25 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.granite.notes",
+      "runtimeVersion": {
+        "policy": "appVersion"
+      }
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-web-browser"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "52cfdd91-389a-47ef-9a63-af70b3c97b7f"
+      }
+    },
+    "updates": {
+      "url": "https://u.expo.dev/52cfdd91-389a-47ef-9a63-af70b3c97b7f"
     }
   }
 }

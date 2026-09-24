@@ -1,12 +1,16 @@
 import { Directory, File } from 'expo-file-system';
-import type { FileSystem } from '@granite/core-notes';
+import type { VaultFileSystem } from '@granite/core-cloud';
 
 /**
- * `FileSystem` port implemented with Expo's file API (SDK 54+).
- * The desktop (Tauri) app provides an equivalent adapter over
- * `@tauri-apps/plugin-fs`. Nothing platform-specific leaks into `core-notes`.
+ * `VaultFileSystem` (note editing + what sync needs) implemented with Expo's file API.
+ * The desktop (Tauri) app provides an equivalent adapter over `@tauri-apps/plugin-fs`.
  */
-export const expoFs: FileSystem = {
+/** The vault filesystem plus renaming/moving a note, which sync doesn't need. */
+export interface MovableFs extends VaultFileSystem {
+  moveFile(from: string, to: string): Promise<void>;
+}
+
+export const expoFs: MovableFs = {
   async readTextFile(path) {
     return new File(path).text();
   },
@@ -25,11 +29,39 @@ export const expoFs: FileSystem = {
     file.write(data);
   },
 
+  async readBinaryFile(path) {
+    return new File(path).bytes();
+  },
+
   async exists(path) {
-    return new File(path).exists;
+    return new File(path).exists || new Directory(path).exists;
   },
 
   async mkdirp(path) {
     new Directory(path).create({ intermediates: true, idempotent: true });
+  },
+
+  async removeFile(path) {
+    new File(path).delete();
+  },
+
+  async removeDir(path) {
+    new Directory(path).delete(); // also deletes everything inside
+  },
+
+  async moveFile(from, to) {
+    await new File(from).move(new File(to));
+  },
+
+  async listDir(path) {
+    return new Directory(path).list().map((entry) => ({
+      name: entry.name,
+      isDirectory: entry instanceof Directory,
+    }));
+  },
+
+  async stat(path) {
+    const info = new File(path).info();
+    return { size: info.size ?? 0, modifiedMs: info.modificationTime ?? 0 };
   },
 };

@@ -1,0 +1,11 @@
+{
+  "id": "sheet",
+  "name": "Sheet",
+  "version": "1.1.0",
+  "description": "Your notes on ruled index-card paper, like real notecards. Turn it off any time from the Plugins screen.",
+  "tagline": "Your notes on ruled index-card paper",
+  "author": "Granite",
+  "permissions": [
+    "editor.style"
+  ]
+}

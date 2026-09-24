@@ -12,7 +12,7 @@ export default defineConfig(async () => ({
 
   // The `@granite/*` workspace packages are shipped as raw TS source.
   resolve: { preserveSymlinks: false },
-  optimizeDeps: { exclude: ["@granite/core-notes", "@granite/core-cloud"] },
+  optimizeDeps: { exclude: ["@granite/core-notes", "@granite/core-cloud", "@granite/live-editor", "@granite/plugins"] },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

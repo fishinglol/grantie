@@ -41,9 +41,11 @@ test("listLocalFiles walks subfolders and skips dotfiles", async () => {
   await fs.writeTextFile("/vault/welcome.md", "hi");
   await fs.writeBinaryFile("/vault/assets/a.png", new Uint8Array([1, 2, 3]));
   await fs.writeTextFile("/vault/.DS_Store", "junk");
+  await fs.writeTextFile("/vault/.obsidian/app.json", "{}");
+  await fs.writeTextFile("/vault/.granite/plugins/hello/main.js", "// plugin");
 
   const files = (await listLocalFiles(fs, vaultDir)).map((f) => f.path).sort();
-  assert.deepEqual(files, ["assets/a.png", "welcome.md"]);
+  assert.deepEqual(files, [".granite/plugins/hello/main.js", "assets/a.png", "welcome.md"]);
 });
 
 test("first sync pushes local notes and images to the remote", async () => {
@@ -174,4 +176,214 @@ test("concurrent sync() calls collapse into a single run", async () => {
 
   assert.equal(r1, r2);
   assert.equal(provider.uploads.filter((p) => p === "a.md").length, 1);
+});
+
+/** Sync once so both sides hold `files` and the index records them. */
+async function synced(files: Record<string, string>) {
+  const ctx = setup();
+  for (const [path, content] of Object.entries(files)) await ctx.fs.writeTextFile(`/vault/${path}`, content);
+  await ctx.sync.sync();
+  return ctx;
+}
+
+test("deleting a note locally trashes it on the remote and forgets it", async () => {
+  const { fs, provider, indexStore, sync } = await synced({ "a.md": "A", "b.md": "B" });
+  await fs.removeFile("/vault/a.md");
+
+  const res = await sync.sync();
+
+  assert.equal(res.deleted, 1);
+  assert.deepEqual(provider.trashed, ["a.md"]);
+  assert.equal(provider.remote.has("a.md"), false);
+  assert.equal(indexStore.current.files["a.md"], undefined);
+  assert.equal(provider.remote.has("b.md"), true);
+});
+
+test("a note deleted on another device is removed locally", async () => {
+  const { fs, provider, sync } = await synced({ "a.md": "A", "b.md": "B" });
+  provider.remote.delete("a.md");
+
+  const res = await sync.sync();
+
+  assert.equal(res.deleted, 1);
+  assert.equal(await fs.exists("/vault/a.md"), false);
+  assert.equal(await fs.exists("/vault/b.md"), true);
+});
+
+test("deleting a whole folder is allowed even when it is most of the vault, and the other device drops the empty folder", async () => {
+  const files: Record<string, string> = { "keep.md": "K" };
+  for (let i = 0; i < 10; i++) files[`Old/n${i}.md`] = `note ${i}`;
+  const { fs, provider, sync } = await synced(files);
+
+  await fs.removeDir("/vault/Old");
+  const res = await sync.sync();
+  assert.equal(res.deleted, 10);
+  assert.equal(provider.trashed.filter((p) => !p.endsWith("/")).length, 10);
+  assert.ok(provider.trashed.includes("Old/"), "the emptied folder goes to the Drive trash too");
+
+  // A second device that had the same notes learns of the deletions and tidies the empty folder.
+  const other = setup();
+  for (const [path, body] of Object.entries(files)) {
+    await other.fs.writeTextFile(`/vault/${path}`, body);
+  }
+  await other.sync.sync(); // its own fake remote, so every note is now tracked as synced
+  for (let i = 0; i < 10; i++) other.provider.remote.delete(`Old/n${i}.md`);
+  const res2 = await other.sync.sync();
+  assert.equal(res2.deleted, 10);
+  assert.equal(await other.fs.exists("/vault/Old"), false);
+  assert.equal(await other.fs.exists("/vault/keep.md"), true);
+});
+
+/** Two devices sharing one fake Drive. */
+function twoDevices() {
+  const a = setup();
+  const indexStore = memoryIndexStore();
+  const fs = new MemoryFs();
+  const sync = new VaultSync({ fs, provider: a.provider, vaultDir, remoteFolderName: "Granite Vault", indexStore });
+  return { a, b: { fs, sync, indexStore } };
+}
+
+test("an empty folder made on one device appears on the other, and deleting it there removes it here", async () => {
+  const { a, b } = twoDevices();
+  await a.fs.writeTextFile("/vault/note.md", "x");
+  await a.fs.mkdirp("/vault/Ideas/Later");
+  await a.sync.sync();
+  const got = await b.sync.sync(); // a brand-new device: copies what Drive has
+  assert.equal(await b.fs.exists("/vault/Ideas/Later"), true);
+  assert.equal(got.folders, 2);
+
+  await b.fs.removeDir("/vault/Ideas");
+  await b.sync.sync();
+  const res = await a.sync.sync();
+  assert.equal(await a.fs.exists("/vault/Ideas"), false);
+  assert.equal(res.folders, 2);
+  assert.equal(await a.fs.exists("/vault/note.md"), true);
+  assert.equal((await a.sync.sync()).folders, 0, "a settled vault reports no folder changes");
+});
+
+test("empty folders the old file-only sync left behind are cleaned up on both sides", async () => {
+  // The desktop deleted "Teat": its notes went to the Drive trash, but the empty folder stayed on Drive and on
+  // the phone, and neither device had folder history yet.
+  const { a: desktop, b: phone } = twoDevices();
+  await desktop.fs.writeTextFile("/vault/keep/a.md", "A");
+  await desktop.sync.sync();
+  await phone.sync.sync();
+  desktop.provider.folders.set("Teat", "dir-teat");
+  await phone.fs.mkdirp("/vault/Teat");
+  delete desktop.indexStore.current.folders;
+  delete phone.indexStore.current.folders;
+
+  await desktop.sync.sync(); // doesn't have it: the empty Drive folder goes to the trash
+  assert.equal(desktop.provider.folders.has("Teat"), false);
+  await phone.sync.sync(); // has it only locally, and empty: removed
+  assert.equal(await phone.fs.exists("/vault/Teat"), false);
+  assert.equal(await phone.fs.exists("/vault/keep/a.md"), true);
+  assert.equal(await desktop.fs.exists("/vault/Teat"), false);
+});
+
+test("the .granite folder is left out of folder sync", async () => {
+  const { fs, provider, sync } = setup();
+  await fs.writeTextFile("/vault/.granite/plugins/p/main.js", "//");
+  await sync.sync();
+  assert.ok(provider.folders.has(".granite/plugins/p"));
+  assert.equal((await sync.sync()).folders, 0);
+});
+
+test("a folder is never removed while it still holds a file", async () => {
+  const { a, b } = twoDevices();
+  await a.fs.mkdirp("/vault/Box");
+  await a.sync.sync();
+  await b.sync.sync();
+  await a.fs.removeDir("/vault/Box");
+  await b.fs.writeTextFile("/vault/Box/new.md", "written on the phone meanwhile");
+  await b.sync.sync(); // uploads new.md
+  await a.sync.sync(); // Box is missing here but not empty on Drive: it comes back with the note
+  assert.equal(await a.fs.exists("/vault/Box/new.md"), true);
+});
+
+test("a note edited here but deleted there is kept and re-uploaded", async () => {
+  const { fs, provider, sync } = await synced({ "a.md": "A" });
+  provider.remote.delete("a.md");
+  await fs.writeTextFile("/vault/a.md", "A edited");
+
+  const res = await sync.sync();
+
+  assert.equal(res.deleted, 0);
+  assert.equal(text(provider.remote.get("a.md")!.data), "A edited");
+});
+
+test("a sync that would delete most of the vault stops instead of doing it", async () => {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < 10; i++) files[`n${i}.md`] = `note ${i}`;
+  const { fs, provider, sync } = await synced(files);
+  provider.remote.clear(); // e.g. a failed or partial remote listing
+
+  await assert.rejects(sync.sync(), /Nothing was changed/);
+  assert.equal((await listLocalFiles(fs, vaultDir)).length, 10);
+});
+
+test("a different Drive folder resets the records instead of deleting local notes", async () => {
+  const { fs, provider, sync } = await synced({ "a.md": "A" });
+  provider.folderId = "folder-2";
+  provider.remote.clear();
+
+  await sync.sync();
+
+  assert.equal(await fs.exists("/vault/a.md"), true);
+  assert.equal(text(provider.remote.get("a.md")!.data), "A");
+});
+
+test("syncIfChanged skips the full listing when nothing changed, and runs it when something did", async () => {
+  const { fs, provider, sync } = await synced({ "a.md": "A" });
+  // The change feed also reports our own uploads, so the first poll after uploading does one no-op
+  // sync (which takes a fresh token); after that a quiet vault costs a single cheap request.
+  await sync.syncIfChanged();
+  const listsAfterSettling = provider.listCalls;
+
+  await sync.syncIfChanged();
+  assert.equal(provider.listCalls, listsAfterSettling, "nothing changed: no listing");
+
+  provider.seed("b.md", "from another device");
+  const remoteRes = await sync.syncIfChanged();
+  assert.equal(remoteRes.downloaded, 1);
+  assert.equal(await fs.readTextFile("/vault/b.md"), "from another device");
+
+  await fs.writeTextFile("/vault/a.md", "A edited");
+  const localRes = await sync.syncIfChanged();
+  assert.equal(localRes.uploaded, 1);
+});
+
+test("a failed file is retried by the next poll, not hidden by the change token", async () => {
+  const { fs, provider, sync } = setup();
+  await fs.writeTextFile("/vault/a.md", "A");
+  const realUpload = provider.upload.bind(provider);
+  let fail = true;
+  provider.upload = async (args) => {
+    if (fail) throw new Error("network down");
+    return realUpload(args);
+  };
+
+  const first = await sync.syncIfChanged();
+  assert.equal(first.failed, 1);
+
+  fail = false;
+  const second = await sync.syncIfChanged();
+  assert.equal(second.uploaded, 1);
+});
+
+test("an unreadable .granite folder is skipped instead of stopping the notes from syncing", async () => {
+  const { fs, provider, sync } = setup();
+  await fs.writeTextFile("/vault/a.md", "A");
+  await fs.writeTextFile("/vault/.granite/plugins/x/main.js", "//");
+  const realList = fs.listDir.bind(fs);
+  fs.listDir = async (path: string) => {
+    if (path.endsWith("/.granite")) throw new Error("forbidden path");
+    return realList(path);
+  };
+
+  const res = await sync.sync();
+
+  assert.equal(res.failed, 0);
+  assert.equal(text(provider.remote.get("a.md")!.data), "A");
+  assert.equal(provider.remote.has(".granite/plugins/x/main.js"), false);
 });

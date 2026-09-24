@@ -1,0 +1,13 @@
+{
+  "id": "excel",
+  "name": "Excel",
+  "version": "1.3.0",
+  "description": "A spreadsheet right inside your note, like Excel or Google Sheets: formulas, formatting, dropdowns, checkboxes. Turn a whole page into a sheet from the ⋯ menu, or type ```sheet in a note.",
+  "tagline": "A spreadsheet inside any note",
+  "author": "Granite",
+  "permissions": [
+    "editor.blocks",
+    "editor.read",
+    "editor.write"
+  ]
+}

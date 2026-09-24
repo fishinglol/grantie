@@ -1,0 +1,29 @@
+{
+  "name": "@granite/live-editor",
+  "version": "0.1.0",
+  "description": "Obsidian-style live-preview Markdown editor (CodeMirror 6 + React), shared by the desktop app and the phone app's WebView. No Tauri / React Native imports.",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./live-editor.css": "./src/live-editor.css"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/state": "^6.7.5",
+    "@codemirror/view": "^6.43.12",
+    "@granite/core-notes": "*"
+  },
+  "peerDependencies": {
+    "react": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.8",
+    "typescript": "~5.8.3"
+  }
+}

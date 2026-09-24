@@ -4,11 +4,13 @@ import {
   readDir,
   readFile,
   readTextFile,
+  remove,
   rename,
   stat,
   writeFile,
   writeTextFile,
 } from "@tauri-apps/plugin-fs";
+import type { FolderFs } from "@granite/core-notes";
 import type { DirEntry, VaultFileSystem } from "@granite/core-cloud";
 
 const isTauri = () =>
@@ -63,7 +65,8 @@ export const tauriFs: VaultFileSystem = {
   },
   async mkdirp(path) {
     if (!isTauri()) {
-      memDirs.add(path);
+      // Recursive, like the real one: the parents exist too.
+      for (let p = path; p.length > 1; p = p.slice(0, Math.max(0, p.lastIndexOf("/")))) memDirs.add(p);
       return;
     }
     try {
@@ -101,6 +104,21 @@ export const tauriFs: VaultFileSystem = {
     const entries = await readDir(path);
     return entries.map((e) => ({ name: e.name, isDirectory: e.isDirectory }));
   },
+  async removeFile(path) {
+    if (!isTauri()) {
+      memFiles.delete(path);
+      return;
+    }
+    await remove(path);
+  },
+  async removeDir(path) {
+    if (!isTauri()) {
+      for (const k of [...memFiles.keys()]) if (k.startsWith(`${path}/`)) memFiles.delete(k);
+      for (const d of [...memDirs]) if (d === path || d.startsWith(`${path}/`)) memDirs.delete(d);
+      return;
+    }
+    await remove(path, { recursive: true });
+  },
   async stat(path) {
     if (!isTauri()) {
       const val = memFiles.get(path);
@@ -123,3 +141,6 @@ export async function moveFile(from: string, to: string): Promise<void> {
   }
   await rename(from, to);
 }
+
+/** What moving a folder needs: the vault filesystem plus file moves. */
+export const folderFs: VaultFileSystem & FolderFs = { ...tauriFs, moveFile };

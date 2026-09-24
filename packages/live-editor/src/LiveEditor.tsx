@@ -1,11 +1,14 @@
+/// <reference types="vite/client" />
 import { type Ref, useEffect, useImperativeHandle, useRef } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { indentUnit, syntaxTree } from "@codemirror/language";
 import {
   Annotation,
+  Compartment,
+  EditorSelection,
   EditorState,
+  Facet,
   type Text,
   StateEffect,
   StateField,
@@ -18,12 +21,14 @@ import {
   EditorView,
   keymap,
   placeholder,
+  scrollPastEnd,
   WidgetType,
 } from "@codemirror/view";
-import { dirname, join } from "@granite/core-notes";
+import { dirname, IMAGE_FILE, join, toggleFormat, type InlineFormat } from "@granite/core-notes";
 import { openImageViewer } from "./imageViewer";
+import NoteTitle from "./NoteTitle";
 
-export const IMAGE_FILE = /\.(png|jpe?g|gif|webp|heic|avif|bmp|svg)$/i;
+export { IMAGE_FILE };
 
 /**
  * Obsidian-style "live preview" editor: the document stays plain Markdown, but
@@ -33,6 +38,22 @@ export const IMAGE_FILE = /\.(png|jpe?g|gif|webp|heic|avif|bmp|svg)$/i;
 
 const External = Annotation.define<boolean>();
 const refresh = StateEffect.define<null>();
+
+/**
+ * Reading mode: no caret, no typing, and no edits from the image toolbar. Text arriving from outside (`External`: a
+ * sync, another pane on the same note) and plugin blocks (`input.plugin`, e.g. a sheet saving itself) still go through.
+ */
+const readingFacet = Facet.define<boolean, boolean>({ combine: (values) => values.some(Boolean) });
+const readingMode = (on: boolean) =>
+  on
+    ? [
+        readingFacet.of(true),
+        EditorView.editable.of(false),
+        EditorState.transactionFilter.of((tr) =>
+          tr.docChanged && !tr.annotation(External) && !tr.isUserEvent("input.plugin") ? [] : tr,
+        ),
+      ]
+    : [];
 
 class BulletWidget extends WidgetType {
   eq() {
@@ -331,6 +352,172 @@ function renderInline(text: string, parent: HTMLElement) {
   if (last < text.length) parent.append(text.slice(last));
 }
 
+/**
+ * Lets plugins draw fenced blocks (```sheet … ```) inside the note. The app builds one (`BlockBridge` from
+ * `@granite/plugins/host`) and hands it to the editor; the editor knows nothing about plugins beyond this.
+ */
+export interface BlockActions {
+  /** Rewrite the text between the fences. */
+  save(source: string): void;
+  /** Delete the whole block, fences included. */
+  remove(): void;
+  /** Put the cursor inside the block, which turns it back into plain text. */
+  edit(): void;
+}
+
+export interface BlockRenderer {
+  /** Languages that currently have a renderer. */
+  langs(): string[];
+  /** Name to show for a language's blocks (the plugin's name), e.g. on the canvas toolbar. */
+  label?(lang: string): string;
+  /** `listener` runs when `langs()` changed. Returns the unsubscribe. */
+  subscribe(listener: () => void): () => void;
+  /** Texts plugins want to see typed alone on an empty line (`//`), and the plugin's answer: what to put there, or null. */
+  triggers?(): string[];
+  /** True when a plugin wants to see pasted spreadsheet text (anything with a tab in it). */
+  hasPasteHook?(): boolean;
+  runInput?(kind: "trigger" | "paste", payload: { text: string; html?: string }): Promise<string | null>;
+  /** Draw a block into `el`. */
+  mount(lang: string, el: HTMLElement, source: string, actions: BlockActions): { update(source: string): void; destroy(): void };
+}
+
+const blockMounts = new WeakMap<HTMLElement, ReturnType<BlockRenderer["mount"]>>();
+
+/**
+ * Put what a plugin returned at `from`–`to`. Text with line breaks (a table, say) gets its own paragraph, with
+ * blank lines around it as needed; a single line goes in as typed.
+ */
+function insertPluginText(view: EditorView, from: number, to: number, text: string) {
+  const { doc } = view.state;
+  from = Math.min(from, doc.length);
+  to = Math.min(Math.max(to, from), doc.length);
+  let insert = text;
+  if (text.includes("\n")) {
+    const before = doc.sliceString(Math.max(0, from - 2), from);
+    const after = doc.sliceString(to, to + 1);
+    insert = (from === 0 || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n") + text + (after === "" || after === "\n" ? "\n" : "\n\n");
+  }
+  view.dispatch({ changes: { from, to, insert }, selection: { anchor: from + insert.length }, scrollIntoView: true, userEvent: "input.plugin" });
+}
+
+/**
+ * Plugin input hooks: typing a trigger (`//`) alone on an empty line, and pasting text that has tabs in it (rows
+ * copied from a spreadsheet). The plugin answers asynchronously; until it does, the typed / pasted text is held back,
+ * and if it declines (or fails) the text goes in as if nothing had happened.
+ */
+function pluginInput(getBlocks: () => BlockRenderer | null) {
+  return [
+    EditorView.inputHandler.of((view, from, to, text) => {
+      const blocks = getBlocks();
+      const { state } = view;
+      if (!blocks?.triggers || !blocks.runInput || from !== to || text === "" || text.includes("\n") || state.facet(readingFacet)) return false;
+      const line = state.doc.lineAt(from);
+      // What the line would read after this input. Judged as a whole (not by where the character lands) because
+      // typing `/` next to an existing `/` may be reported as inserted before or after it.
+      const typed = state.sliceDoc(line.from, from) + text + state.sliceDoc(from, line.to);
+      if (!blocks.triggers().includes(typed) || inCodeBlock(state, from)) return false;
+      view.dispatch({ changes: { from: line.from, to: line.to }, userEvent: "delete" });
+      void blocks.runInput("trigger", { text: typed }).then((out) => insertPluginText(view, line.from, line.from, out ?? typed));
+      return true;
+    }),
+    EditorView.domEventHandlers({
+      paste(event, view) {
+        const blocks = getBlocks();
+        const text = event.clipboardData?.getData("text/plain") ?? "";
+        if (!blocks?.hasPasteHook?.() || !blocks.runInput || !text.includes("\t") || view.state.facet(readingFacet)) return false;
+        const { from, to } = view.state.selection.main;
+        if (inCodeBlock(view.state, from)) return false;
+        event.preventDefault();
+        const html = event.clipboardData?.getData("text/html") ?? "";
+        void blocks.runInput("paste", { text, html }).then((out) => {
+          if (out !== null) return insertPluginText(view, from, to, out);
+          const end = Math.min(to, view.state.doc.length);
+          view.dispatch({ changes: { from: Math.min(from, end), to: end, insert: text }, selection: { anchor: Math.min(from, end) + text.length }, userEvent: "input.paste" });
+        });
+        return true;
+      },
+    }),
+  ];
+}
+
+/** From the opening fence line at `pos`: the whole block and the text between its fences (`empty` when there is none). */
+function fenceRanges(doc: Text, pos: number) {
+  const open = doc.lineAt(pos);
+  for (let n = open.number + 1; n <= doc.lines; n++) {
+    const close = doc.line(n);
+    if (!/^\s*(`{3,}|~{3,})\s*$/.test(close.text)) continue;
+    const empty = n === open.number + 1;
+    const inner = empty ? { from: close.from, to: close.from } : { from: doc.line(open.number + 1).from, to: doc.line(n - 1).to };
+    return { whole: { from: open.from, to: close.to }, inner, empty };
+  }
+  return null;
+}
+
+/** A plugin block: the plugin's own page, in a sandboxed frame, in the flow of the note. */
+class BlockWidget extends WidgetType {
+  constructor(
+    readonly lang: string,
+    readonly source: string,
+    readonly renderer: BlockRenderer,
+  ) {
+    super();
+  }
+  eq(o: BlockWidget) {
+    return o.lang === this.lang && o.source === this.source && o.renderer === this.renderer;
+  }
+  toDOM(view: EditorView) {
+    const el = document.createElement("div");
+    el.className = "cm-plugin-block";
+    try {
+      blockMounts.set(
+        el,
+        this.renderer.mount(this.lang, el, this.source, {
+          save: (text) => this.write(view, el, text),
+          remove: () => this.write(view, el, null),
+          edit: () => {
+            const found = fenceRanges(view.state.doc, view.posAtDOM(el));
+            if (!found) return;
+            view.dispatch({ selection: { anchor: found.inner.from }, scrollIntoView: true });
+            view.focus();
+          },
+        }),
+      );
+    } catch (e) {
+      el.textContent = e instanceof Error ? e.message : String(e);
+    }
+    return el;
+  }
+  /** Keep the frame (and what is typed in it) when the note's text changes; the frame ignores its own echoes. */
+  updateDOM(dom: HTMLElement) {
+    const mount = blockMounts.get(dom);
+    if (!mount) return false;
+    mount.update(this.source);
+    return true;
+  }
+  destroy(dom: HTMLElement) {
+    blockMounts.get(dom)?.destroy();
+    blockMounts.delete(dom);
+  }
+  ignoreEvent() {
+    return true;
+  }
+  get estimatedHeight() {
+    return 200;
+  }
+  private write(view: EditorView, dom: HTMLElement, text: string | null) {
+    const { doc } = view.state;
+    const found = fenceRanges(doc, view.posAtDOM(dom));
+    if (!found) return;
+    const changes =
+      text === null
+        ? { from: found.whole.from, to: Math.min(found.whole.to + 1, doc.length), insert: "" }
+        : found.empty
+          ? { from: found.inner.from, insert: `${text}\n` }
+          : { from: found.inner.from, to: found.inner.to, insert: text };
+    view.dispatch({ changes, userEvent: "input.plugin" });
+  }
+}
+
 class TableWidget extends WidgetType {
   constructor(
     readonly source: string,
@@ -421,10 +608,10 @@ const markDeco = (cls: string) => Decoration.mark({ class: cls });
 
 const HEADING = /^ATXHeading([1-6])$/;
 
-function resolveImageSrc(src: string, baseDir: string): string {
+function resolveImageSrc(src: string, baseDir: string, toUrl: (path: string) => string): string {
   if (/^(https?:|data:|blob:)/.test(src)) return src;
   try {
-    return convertFileSrc(join(baseDir, src));
+    return toUrl(join(baseDir, src));
   } catch {
     return src;
   }
@@ -447,6 +634,17 @@ function frontmatterRange(state: EditorState): { to: number; rows: [string, stri
 
 const TABLE_DELIM = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
 const RULE = /^\s*([-*_])(\s*\1){2,}\s*$/;
+
+function inInlineCode(state: EditorState, pos: number): boolean {
+  const tree = syntaxTree(state);
+  for (let node: ReturnType<typeof tree.resolveInner> | null = tree.resolveInner(pos, 1); node; node = node.parent) {
+    if (node.name === "InlineCode") return true;
+  }
+  return false;
+}
+
+/** Underline is not Markdown, so it is written `<u>text</u>`. */
+const UNDERLINE = /<u>[^<\n]+<\/u>/g;
 
 function inCodeBlock(state: EditorState, pos: number): boolean {
   const tree = syntaxTree(state);
@@ -484,6 +682,10 @@ interface PreviewContext {
   getBaseDir: () => string;
   /** Absolute path of the vault image called `name` (Obsidian `![[name]]` embeds), if any. */
   resolveEmbed: (name: string) => string | null;
+  /** Turns a file path into a URL the page can load (Tauri's asset protocol, a `file://` URI, …). */
+  toUrl: (path: string) => string;
+  /** Plugin block renderer, when the app has one. */
+  getBlocks: () => BlockRenderer | null;
 }
 
 /** `![[image.png]]` / `![[image.png|300]]` embeds whose image can be found in the vault. */
@@ -503,7 +705,7 @@ function findEmbeds(state: EditorState, fromLine: number, ctx: PreviewContext) {
       found.push({
         from,
         to: from + m[0].length,
-        src: resolveImageSrc(abs, ""),
+        src: resolveImageSrc(abs, "", ctx.toUrl),
         name: base,
         width,
         sizeFrom: from + 3,
@@ -515,15 +717,17 @@ function findEmbeds(state: EditorState, fromLine: number, ctx: PreviewContext) {
 }
 
 function buildDecorations(state: EditorState, ctx: PreviewContext): DecorationSet {
-  const { doc, selection } = state;
+  const { doc } = state;
+  // Reading mode shows every line rendered, as if the cursor were nowhere.
+  const ranges = state.facet(readingFacet) ? [] : state.selection.ranges;
   const out: Range<Decoration>[] = [];
 
   const activeLines = new Set<number>();
-  for (const r of selection.ranges) {
+  for (const r of ranges) {
     for (let n = doc.lineAt(r.from).number; n <= doc.lineAt(r.to).number; n++) activeLines.add(n);
   }
   const onActiveLine = (pos: number) => activeLines.has(doc.lineAt(pos).number);
-  const touches = (from: number, to: number) => selection.ranges.some((r) => r.from <= to && r.to >= from);
+  const touches = (from: number, to: number) => ranges.some((r) => r.from <= to && r.to >= from);
   const hide = (from: number, to: number) => {
     if (to > from) out.push(HIDE.range(from, to));
   };
@@ -533,7 +737,7 @@ function buildDecorations(state: EditorState, ctx: PreviewContext): DecorationSe
   let skipBefore = 0;
   if (fm) {
     skipBefore = fm.to;
-    const editing = selection.ranges.some((r) => r.from < fm.to && r.to > 0);
+    const editing = ranges.some((r) => r.from < fm.to && r.to > 0);
     if (editing) {
       for (let n = 1; n <= doc.lineAt(fm.to).number; n++) {
         out.push(lineDeco("cm-fm-line").range(doc.line(n).from));
@@ -552,7 +756,7 @@ function buildDecorations(state: EditorState, ctx: PreviewContext): DecorationSe
   for (const t of tables) {
     // Raw while the cursor is inside the table. The very end of the last row doesn't count, so a
     // freshly pasted table (cursor left right after it) shows rendered, and typing a new last row keeps it live.
-    const editing = selection.ranges.some((r) => r.from < t.to && (r.to > t.from || r.from === t.from));
+    const editing = ranges.some((r) => r.from < t.to && (r.to > t.from || r.from === t.from));
     if (editing) {
       for (let n = t.first; n <= t.last; n++) out.push(lineDeco("cm-table-line").range(doc.line(n).from));
     } else {
@@ -634,7 +838,7 @@ function buildDecorations(state: EditorState, ctx: PreviewContext): DecorationSe
           const altFrom = marks[0]!.to;
           const altTo = marks[1]!.from;
           const { base, width } = splitSize(doc.sliceString(altFrom, altTo));
-          const src = resolveImageSrc(doc.sliceString(url.from, url.to), ctx.getBaseDir());
+          const src = resolveImageSrc(doc.sliceString(url.from, url.to), ctx.getBaseDir(), ctx.toUrl);
           out.push(
             Decoration.replace({
               widget: new ImageWidget({
@@ -670,6 +874,21 @@ function buildDecorations(state: EditorState, ctx: PreviewContext): DecorationSe
         case "FencedCode": {
           const first = doc.lineAt(node.from).number;
           const last = doc.lineAt(node.to).number;
+          const renderer = ctx.getBlocks();
+          const info = node.node.getChild("CodeInfo");
+          const lang = info ? doc.sliceString(info.from, info.to).trim().split(/\s+/)[0]! : "";
+          if (renderer && lang && node.node.getChildren("CodeMark").length >= 2 && renderer.langs().includes(lang)) {
+            const start = doc.line(first);
+            const end = doc.line(last);
+            // Plain text while the cursor is inside it (to edit or delete it), like a table. A cursor on the block's edge
+            // does not count: a note opens with the cursor at 0, which is the start of a sheet that is the whole page.
+            if (!ranges.some((r) => r.from < end.to && r.to > start.from)) {
+              const text = node.node.getChild("CodeText");
+              const widget = new BlockWidget(lang, text ? doc.sliceString(text.from, text.to) : "", renderer);
+              out.push(Decoration.replace({ widget, block: true }).range(start.from, end.to));
+              return false;
+            }
+          }
           for (let n = first; n <= last; n++) {
             const cls = n === first ? "cm-codeblock cm-codeblock-first" : n === last ? "cm-codeblock cm-codeblock-last" : "cm-codeblock";
             out.push(lineDeco(cls).range(doc.line(n).from));
@@ -686,6 +905,35 @@ function buildDecorations(state: EditorState, ctx: PreviewContext): DecorationSe
     },
   });
 
+  // Underlined text: the tags hide unless the cursor is on them, like the other markers.
+  for (let n = fm ? doc.lineAt(fm.to).number + 1 : 1; n <= doc.lines; n++) {
+    const line = doc.line(n);
+    if (!line.text.includes("<u>")) continue;
+    for (const m of line.text.matchAll(UNDERLINE)) {
+      const from = line.from + m.index!;
+      const to = from + m[0].length;
+      if (inTable(from, to) || inEmbed(from, to) || inCodeBlock(state, from) || inInlineCode(state, from)) continue;
+      out.push(markDeco("cm-underline").range(from + 3, to - 4));
+      if (!touches(from, to)) {
+        hide(from, from + 3);
+        hide(to - 4, to);
+      }
+    }
+  }
+
+  // Indent guide: one thin bar just left of an indented line's text (on its last indent step, a tab or two spaces).
+  // Lines indented alike form one continuous bar, and the bar steps in or out as the indent changes, so deep nesting
+  // stays a single quiet line instead of a comb. Painted on the whitespace itself, so it follows the text in any font.
+  for (let n = fm ? doc.lineAt(fm.to).number + 1 : 1; n <= doc.lines; n++) {
+    const line = doc.line(n);
+    const lead = /^[ \t]+/.exec(line.text);
+    if (!lead || lead[0].length === line.text.length || inTable(line.from, line.to) || inEmbed(line.from, line.to)) continue;
+    // On the last tab (spaces after a tab only line text up, so they don't move the bar), else on the last two spaces.
+    const tab = lead[0].lastIndexOf("\t");
+    const at = tab >= 0 ? tab : lead[0].length >= 2 ? lead[0].length - 2 : -1;
+    if (at >= 0) out.push(markDeco("cm-indent-guide").range(line.from + at, line.from + at + (tab >= 0 ? 1 : 2)));
+  }
+
   return Decoration.set(out, true);
 }
 
@@ -693,7 +941,8 @@ function livePreview(ctx: PreviewContext) {
   const field = StateField.define<DecorationSet>({
     create: (state) => buildDecorations(state, ctx),
     update(deco, tr) {
-      if (tr.docChanged || tr.selection || tr.effects.some((e) => e.is(refresh) || e.is(setSel))) {
+      // The parser works in the background, so also rebuild when it has caught up (a long note would stay half-styled).
+      if (tr.docChanged || tr.selection || syntaxTree(tr.state) !== syntaxTree(tr.startState) || tr.effects.some((e) => e.is(refresh) || e.is(setSel))) {
         return buildDecorations(tr.state, ctx);
       }
       return deco;
@@ -703,7 +952,22 @@ function livePreview(ctx: PreviewContext) {
   return field;
 }
 
+/** Wrap / unwrap the selection (or the word at the cursor) in bold, italic, strikethrough or underline markers. */
+function applyFormat(view: EditorView, format: InlineFormat): boolean {
+  const { from, to } = view.state.selection.main;
+  const edit = toggleFormat(view.state.doc.toString(), from, to, format);
+  view.dispatch({
+    changes: edit.changes,
+    selection: EditorSelection.range(edit.selection.anchor, edit.selection.head),
+    scrollIntoView: true,
+    userEvent: "input.format",
+  });
+  return true;
+}
+
 export interface LiveEditorHandle {
+  /** Toggle bold / italic / strikethrough / underline on the selection (the phone's format bar uses this). */
+  format(kind: InlineFormat): void;
   /**
    * Insert Markdown. Given `at` (viewport coordinates inside the editor) it goes
    * inline at exactly that character, like a text cursor; otherwise it becomes
@@ -713,26 +977,50 @@ export interface LiveEditorHandle {
   insertBlock(text: string, at?: { x: number; y: number }): void;
   /** Show (or with null, hide) a caret where a file dragged to `at` would be inserted. */
   showDropIndicator(at: { x: number; y: number } | null): void;
+  /** The whole note as it is in the editor right now. */
+  getText(): string;
+  /** The selected text, or "" when nothing is selected. */
+  getSelection(): string;
+  /** Replace the selection, or insert at the cursor when nothing is selected (used by plugins). */
+  replaceSelection(text: string): void;
+  /** Replace the whole note (one undo step). The cursor goes to the end, outside any plugin block. */
+  setText(text: string): void;
 }
 
 export interface LiveEditorProps {
   ref?: Ref<LiveEditorHandle>;
+  /**
+   * The note's name, shown as an editable heading above the text. It is part of the editor (not of the app around it)
+   * so a theme or plugin that restyles the editor restyles it too. `onRename` resolves false if it didn't happen.
+   */
+  title?: { name: string; onRename: (title: string) => Promise<boolean> };
+  /** Reading mode: the note can be read, scrolled and copied from, but not edited. Plugin blocks stay usable. */
+  readOnly?: boolean;
   value: string;
   /** Vault images by lower-cased file name, for resolving Obsidian `![[name.png]]` embeds. */
   embeds: ReadonlyMap<string, string>;
   /** Path of the open note; relative image links resolve against its folder. */
   notePath: string | null;
+  /** Turns a file path into a URL the page can load: Tauri's asset protocol on desktop, `file://` on phones. */
+  toUrl: (path: string) => string;
+  /** Draws the fenced blocks plugins have registered (a spreadsheet, say) in place. */
+  blocks?: BlockRenderer;
   onChange: (value: string) => void;
 }
 
-export default function LiveEditor({ ref, value, embeds, notePath, onChange }: LiveEditorProps) {
+export default function LiveEditor({ ref, title, readOnly = false, value, embeds, notePath, toUrl, blocks, onChange }: LiveEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const readingRef = useRef(new Compartment());
   const onChangeRef = useRef(onChange);
   const baseDirRef = useRef("");
   const prevPath = useRef(notePath);
   const embedsRef = useRef(embeds);
   embedsRef.current = embeds;
+  const toUrlRef = useRef(toUrl);
+  toUrlRef.current = toUrl;
+  const blocksRef = useRef(blocks);
+  blocksRef.current = blocks;
   onChangeRef.current = onChange;
   baseDirRef.current = notePath ? dirname(notePath) : "";
 
@@ -742,9 +1030,14 @@ export default function LiveEditor({ ref, value, embeds, notePath, onChange }: L
       state: EditorState.create({
         doc: value,
         extensions: [
+          readingRef.current.of(readingMode(readOnly)),
           history(),
           selectedField,
           keymap.of([
+            { key: "Mod-b", run: (v) => applyFormat(v, "bold") },
+            { key: "Mod-i", run: (v) => applyFormat(v, "italic") },
+            { key: "Mod-u", run: (v) => applyFormat(v, "underline") },
+            { key: "Mod-Shift-x", run: (v) => applyFormat(v, "strike") },
             {
               key: "Escape",
               run: (v) => {
@@ -767,12 +1060,19 @@ export default function LiveEditor({ ref, value, embeds, notePath, onChange }: L
           indentUnit.of("  "),
           markdown({ base: markdownLanguage }),
           EditorView.lineWrapping,
+          // Like Obsidian: the last line can be scrolled up to the top, and typing near the end keeps the caret
+          // out of the bottom third instead of pinning it to the bottom edge (hard to read, and under the phone's keyboard bar).
+          scrollPastEnd(),
+          EditorView.scrollMargins.of((view) => ({ bottom: view.dom.clientHeight * 0.3 })),
           placeholder("Start writing markdown…"),
           livePreview({
             getBaseDir: () => baseDirRef.current,
             resolveEmbed: (name) => embedsRef.current.get(name.toLowerCase()) ?? null,
+            toUrl: (path) => toUrlRef.current(path),
+            getBlocks: () => blocksRef.current ?? null,
           }),
           dropField,
+          pluginInput(() => blocksRef.current ?? null),
           EditorView.updateListener.of((u) => {
             if (u.docChanged && !u.transactions.some((t) => t.annotation(External))) {
               onChangeRef.current(u.state.doc.toString());
@@ -782,7 +1082,11 @@ export default function LiveEditor({ ref, value, embeds, notePath, onChange }: L
       }),
     });
     viewRef.current = view;
+    // A plugin block that is the whole page is as tall as the editor: publish that height as a CSS variable.
+    const resize = new ResizeObserver(() => host.current?.style.setProperty("--editor-h", `${view.scrollDOM.clientHeight}px`));
+    resize.observe(view.scrollDOM);
     return () => {
+      resize.disconnect();
       view.destroy();
       viewRef.current = null;
     };
@@ -812,6 +1116,32 @@ export default function LiveEditor({ ref, value, embeds, notePath, onChange }: L
         });
         view.focus();
       },
+      format(kind) {
+        const view = viewRef.current;
+        if (!view) return;
+        applyFormat(view, kind);
+        view.focus();
+      },
+      getText: () => viewRef.current?.state.doc.toString() ?? "",
+      getSelection() {
+        const state = viewRef.current?.state;
+        return state ? state.sliceDoc(state.selection.main.from, state.selection.main.to) : "";
+      },
+      replaceSelection(text) {
+        const view = viewRef.current;
+        if (!view) return;
+        view.dispatch(view.state.replaceSelection(text), { scrollIntoView: true, userEvent: "input.plugin" });
+        view.focus();
+      },
+      setText(text) {
+        const view = viewRef.current;
+        if (!view) return;
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: text },
+          selection: { anchor: text.length },
+          userEvent: "input.plugin",
+        });
+      },
       showDropIndicator(at) {
         const view = viewRef.current;
         if (!view) return;
@@ -828,9 +1158,20 @@ export default function LiveEditor({ ref, value, embeds, notePath, onChange }: L
     if (!view) return;
     const current = view.state.doc.toString();
     if (current !== value) {
+      // Replace only what differs, so the caret and scroll of a note that is also being edited in another pane stay put.
+      let from = 0;
+      const shared = Math.min(current.length, value.length);
+      while (from < shared && current.charCodeAt(from) === value.charCodeAt(from)) from++;
+      let endCurrent = current.length;
+      let endValue = value.length;
+      while (endCurrent > from && endValue > from && current.charCodeAt(endCurrent - 1) === value.charCodeAt(endValue - 1)) {
+        endCurrent--;
+        endValue--;
+      }
       view.dispatch({
-        changes: { from: 0, to: current.length, insert: value },
-        selection: { anchor: 0 },
+        changes: { from, to: endCurrent, insert: value.slice(from, endValue) },
+        // A different note starts at the top; the same note keeps the (mapped) cursor.
+        ...(prevPath.current !== notePath ? { selection: { anchor: 0 } } : {}),
         annotations: [External.of(true), Transaction.addToHistory.of(false)],
       });
     } else if (prevPath.current !== notePath) {
@@ -839,12 +1180,27 @@ export default function LiveEditor({ ref, value, embeds, notePath, onChange }: L
     prevPath.current = notePath;
   }, [value, notePath]);
 
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: [readingRef.current.reconfigure(readingMode(readOnly)), refresh.of(null)] });
+  }, [readOnly]);
+
   // Vault images were (re)indexed: re-resolve any `![[name.png]]` embeds.
   useEffect(() => {
     viewRef.current?.dispatch({ effects: refresh.of(null) });
   }, [embeds]);
 
-  return <div className="live-editor" ref={host} />;
+  // A plugin started or stopped drawing a kind of block.
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: refresh.of(null) });
+    return blocks?.subscribe(() => viewRef.current?.dispatch({ effects: refresh.of(null) }));
+  }, [blocks]);
+
+  return (
+    <div className="live-editor">
+      {title && <NoteTitle key={notePath} name={title.name} onRename={title.onRename} readOnly={readOnly} />}
+      <div className="live-editor-host" ref={host} />
+    </div>
+  );
 }
 
 // The EditorView is built once per mount, so a hot-swapped module would leave the old

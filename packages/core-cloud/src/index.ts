@@ -4,6 +4,8 @@ export {
   exchangeCode,
   fetchUserInfo,
   refreshTokens,
+  requestDeviceCode,
+  pollDeviceToken,
   revokeToken,
   DEFAULT_SCOPES,
   DRIVE_SCOPE,
@@ -17,7 +19,7 @@ export { emptyIndex } from "./types.ts";
 export { ensureOk } from "./http.ts";
 
 export type { Pkce } from "./pkce.ts";
-export type { GoogleAuthConfig, TokenSet, UserInfo } from "./googleAuth.ts";
+export type { DeviceCode, GoogleAuthConfig, TokenSet, UserInfo } from "./googleAuth.ts";
 export type { SessionStore, StoredSession } from "./session.ts";
 export type { CloudProvider, UploadArgs } from "./provider.ts";
 export type { IndexStore, VaultSyncOptions } from "./syncEngine.ts";

@@ -25,10 +25,19 @@ function relative(fromDir: string, target: string): string {
  * them to keep pointing at the same files. URLs, anchors and absolute paths are
  * left alone.
  */
-export function relocateLinks(text: string, oldDir: string, newDir: string): string {
+export function relocateLinks(
+  text: string,
+  oldDir: string,
+  newDir: string,
+  /** When a whole folder moved, links into that folder travel with it and are left as they are. */
+  movedFolder?: { from: string },
+): string {
   if (oldDir === newDir) return text;
+  const inside = movedFolder ? segments(movedFolder.from) : null;
   return text.replace(RELATIVE_LINK, (match, head: string, url: string) => {
     if (HAS_SCHEME.test(url)) return match;
-    return head + relative(newDir, `${oldDir}/${url}`);
+    const target = `${oldDir}/${url}`;
+    if (inside && inside.every((seg, i) => segments(target)[i] === seg)) return match;
+    return head + relative(newDir, target);
   });
 }

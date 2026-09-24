@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { conflictCopyName, planSync } from "../src/syncPlan.ts";
+import { conflictCopyName, countDeletionUnits, planSync } from "../src/syncPlan.ts";
 import { emptyIndex, type LocalFile, type RemoteFile, type SyncIndex } from "../src/types.ts";
 
 const local = (path: string, modifiedMs: number): LocalFile => ({ path, modifiedMs, size: 1 });
@@ -56,13 +56,29 @@ test("an edit a fraction of a second after a sync is still caught", () => {
   assert.equal(actionFor(plan, "a.md")?.action, "upload");
 });
 
-test("deletes are not propagated in v0.1 — the file comes back instead", () => {
-  const gone = planSync([local("a.md", 10_000)], [], indexWith("a.md", 10_000, "t1"));
-  assert.equal(actionFor(gone, "a.md")?.action, "upload");
-  assert.equal(actionFor(gone, "a.md")?.reason, "missing-on-remote");
+test("a synced file missing on the remote was deleted there -> delete it locally", () => {
+  const item = actionFor(planSync([local("a.md", 10_000)], [], indexWith("a.md", 10_000, "t1")), "a.md");
+  assert.equal(item?.action, "delete-local");
+  assert.equal(item?.reason, "deleted-on-remote");
+});
 
-  const goneLocally = planSync([], [remote("a.md", "t1")], indexWith("a.md", 10_000, "t1"));
-  assert.equal(actionFor(goneLocally, "a.md")?.action, "download");
+test("a synced file missing locally was deleted here -> trash it on the remote", () => {
+  const item = actionFor(planSync([], [remote("a.md", "t1")], indexWith("a.md", 10_000, "t1")), "a.md");
+  assert.equal(item?.action, "delete-remote");
+  assert.equal(item?.reason, "deleted-locally");
+});
+
+test("an edit beats a deletion on the other side, in both directions", () => {
+  const editedHere = planSync([local("a.md", 20_000)], [], indexWith("a.md", 10_000, "t1"));
+  assert.equal(actionFor(editedHere, "a.md")?.action, "upload");
+
+  const editedThere = planSync([], [remote("a.md", "t2")], indexWith("a.md", 10_000, "t1"));
+  assert.equal(actionFor(editedThere, "a.md")?.action, "download");
+});
+
+test("a file that was never synced and exists on one side is new, not deleted", () => {
+  assert.equal(actionFor(planSync([local("a.md", 1)], [], emptyIndex()), "a.md")?.action, "upload");
+  assert.equal(actionFor(planSync([], [remote("a.md", "t1")], emptyIndex()), "a.md")?.action, "download");
 });
 
 test("conflict copies sit next to the original and keep the extension", () => {
@@ -72,4 +88,19 @@ test("conflict copies sit next to the original and keep the extension", () => {
     conflictCopyName("assets/photo.png", at),
     "assets/photo (Drive copy 2026-09-03 14-05-09).png",
   );
+});
+
+test("a folder that is deleted whole counts as one deletion; scattered deletions count one each", () => {
+  const files = ["Old/a.md", "Old/deep/b.md", "Old/c.md", "Keep/d.md", "Keep/e.md", "top.md"];
+  const local = files.filter((p) => p.startsWith("Keep") || p === "top.md").map((p) => ({ path: p, modifiedMs: 1, size: 1 }));
+  const remote = files.map((p) => ({ id: p, path: p, modifiedTime: "t" }));
+  const index: SyncIndex = {
+    folderId: "f",
+    files: Object.fromEntries(files.map((p) => [p, { remoteId: p, localModifiedMs: 1, remoteModified: "t" }])),
+  };
+  assert.equal(countDeletionUnits(planSync(local, remote, index)), 1);
+
+  // One note gone from a folder that keeps others is a deletion of its own.
+  const partial = local.filter((f) => f.path !== "Keep/d.md");
+  assert.equal(countDeletionUnits(planSync(partial, remote, index)), 2);
 });

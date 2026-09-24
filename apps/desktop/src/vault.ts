@@ -1,5 +1,6 @@
 import { documentDir } from "@tauri-apps/api/path";
-import { join, type FileSystem } from "@granite/core-notes";
+import { join } from "@granite/core-notes";
+import type { VaultFileSystem } from "@granite/core-cloud";
 import { vaultStore } from "./stores";
 
 /** Default fallback vault folder: ~/Documents/GraniteVault */
@@ -62,14 +63,26 @@ This note was read from a local \`.md\` file and parsed by
 See [the Tauri docs](https://tauri.app) for the bigger picture.
 `;
 
-/** Create the sample note on launch if no notes are there. Idempotent. */
-export async function ensureSampleVault(fs: FileSystem, customVaultDir?: string): Promise<string> {
+async function hasNotes(fs: VaultFileSystem, dir: string): Promise<boolean> {
+  for (const e of await fs.listDir(dir)) {
+    if (e.name.startsWith(".")) continue;
+    if (e.isDirectory ? await hasNotes(fs, join(dir, e.name)) : /\.(md|markdown)$/i.test(e.name)) return true;
+  }
+  return false;
+}
+
+/**
+ * Create the sample note only in a vault that has no notes at all. Checking for `welcome.md` itself would
+ * bring it back every time the app starts after the user deleted it (and sync would spread it to the phone).
+ * Returns the sample note's path if it is there, so it can be opened.
+ */
+export async function ensureSampleVault(fs: VaultFileSystem, customVaultDir?: string): Promise<string | null> {
   const dir = customVaultDir || (await vaultDir());
   const path = join(dir, "welcome.md");
-  if (!(await fs.exists(path))) {
+  if (!(await fs.exists(dir)) || !(await hasNotes(fs, dir))) {
     await fs.mkdirp(dir);
     await fs.writeTextFile(path, SAMPLE_NOTE);
   }
-  return path;
+  return (await fs.exists(path)) ? path : null;
 }
 

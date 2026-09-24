@@ -111,6 +111,14 @@
 - **Editor deps (v0.4):** `@codemirror/state`, `view`, `commands`, `language`,
   `lang-markdown` (Markdown incl. GFM). Chosen over hand-rolling a contenteditable /
   over ProseMirror because CodeMirror keeps the document plain text.
+- **Canvas deps (2026-09-24):** `@xyflow/react` (React Flow, MIT; pan/zoom/drag/resize/edges) in `packages/canvas` only. Approved by the user
+  (CLAUDE.md requires asking). It brings d3-drag/zoom/selection etc. transitively. `packages/canvas` declares `react` **and `react-dom`** as peers,
+  otherwise `npm install` fails to resolve (root `overrides` pin react 19.2.3). The phone loads it only inside the editor WebView page
+  (`apps/mobile/editor-web`, ~200 KB more inlined into `editorHtml.ts`); the RN side imports only the pure `@granite/canvas/format`.
+- **Tests:** `npm test` inside `packages/{core-notes,core-cloud,plugins,canvas}` (`node --test` runs the TS directly; no enums / private params).
+  Plugin example code is loaded with `node:vm` in `packages/plugins/test/*.test.ts` (cards, excel, simple-table).
+- **Headless screenshots for plugin Store pages:** a Node script drives `/Applications/Google Chrome.app` over CDP against the desktop dev server
+  (port 1420), then `cwebp -q 82` (in `/usr/local/bin`) makes the `.webp`; a fresh profile shows the first-run vault page ("Skip setup").
 - **fs capabilities** now also include `fs:allow-rename` (`$HOME`, `$DOCUMENT`) for moving
   notes; `fs:allow-remove` is still `$APPCONFIG` only (nothing in the app deletes vault files).
 - **Typecheck:** `apps/desktop/tsconfig.json` includes `src`, so `npx tsc --noEmit` really

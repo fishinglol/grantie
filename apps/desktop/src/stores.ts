@@ -83,3 +83,16 @@ export const vaultStore = {
   save: (config: VaultConfig) => writeJson(VAULT_CONFIG_FILE, config),
 };
 
+
+/**
+ * Which plugins the user switched on, on this device. Kept outside the vault on purpose: a plugin that
+ * syncs in from another device must never start running without this device's owner saying so.
+ */
+export interface PluginSettings {
+  enabled: string[];
+}
+
+export const pluginStore = {
+  load: () => readJson<PluginSettings>("plugins.json"),
+  save: (settings: PluginSettings) => writeJson("plugins.json", settings),
+};
