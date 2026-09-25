@@ -109,6 +109,15 @@ function emptyResult(): SyncResult {
   return { uploaded: 0, downloaded: 0, conflicted: 0, deleted: 0, skipped: 0, failed: 0, folders: 0, items: [] };
 }
 
+/** A file a sync is about to delete: `here` = on this device (it is gone from Drive), `drive` = in Drive (it is gone from this device). */
+export interface PendingDeletion {
+  path: string;
+  where: "here" | "drive";
+}
+
+/** After a "no" the same batch is not asked about again for this long (the poll would otherwise ask every few seconds). */
+const ASK_AGAIN_MS = 10 * 60_000;
+
 export interface VaultSyncOptions {
   fs: VaultFileSystem;
   provider: CloudProvider;
@@ -118,6 +127,11 @@ export interface VaultSyncOptions {
   remoteFolderName: string;
   indexStore: IndexStore;
   now?: () => Date;
+  /**
+   * Asked when a sync would delete a lot at once (see `MAX_UNATTENDED_DELETES`). Resolves true to go ahead with the whole plan;
+   * false (or no callback) stops the sync with an error, changing nothing.
+   */
+  confirmDeletes?: (files: PendingDeletion[]) => Promise<boolean>;
 }
 
 /**
@@ -136,6 +150,9 @@ export class VaultSync {
   readonly #indexStore: IndexStore;
   readonly #now: () => Date;
   #running: Promise<SyncResult> | null = null;
+  readonly #confirmDeletes?: (files: PendingDeletion[]) => Promise<boolean>;
+  /** The batch the user said no to, and when. */
+  #declined: { key: string; at: number } | null = null;
 
   constructor(opts: VaultSyncOptions) {
     this.#fs = opts.fs;
@@ -144,6 +161,7 @@ export class VaultSync {
     this.#folderName = opts.remoteFolderName;
     this.#indexStore = opts.indexStore;
     this.#now = opts.now ?? (() => new Date());
+    this.#confirmDeletes = opts.confirmDeletes;
   }
 
   /**
@@ -234,10 +252,20 @@ export class VaultSync {
     const deletions = countDeletionUnits(plan);
     const tracked = Object.keys(index.files).length;
     if (deletions > MAX_UNATTENDED_DELETES && deletions > tracked * 0.3) {
-      // A failed or partial listing looks exactly like "everything was deleted"; never act on it.
-      throw new Error(
-        `Sync stopped: it would delete ${deletions} of ${tracked} files at once, which looks like a mistake. Nothing was changed.`,
-      );
+      // A failed or partial listing looks exactly like "everything was deleted"; never act on it unless the user says so.
+      const files: PendingDeletion[] = plan
+        .filter((p) => p.action === "delete-local" || p.action === "delete-remote")
+        .map((p) => ({ path: p.path, where: p.action === "delete-local" ? "here" : "drive" }));
+      const key = files.map((f) => `${f.where}:${f.path}`).sort().join("\n");
+      const now = Date.now();
+      const recentNo = this.#declined?.key === key && now - this.#declined.at < ASK_AGAIN_MS;
+      if (recentNo || !this.#confirmDeletes || !(await this.#confirmDeletes(files))) {
+        if (!recentNo && this.#confirmDeletes) this.#declined = { key, at: now };
+        throw new Error(
+          `Sync stopped: it would delete ${deletions} of ${tracked} files at once, which looks like a mistake. Nothing was changed.`,
+        );
+      }
+      this.#declined = null;
     }
     const actionable = plan.filter((p) => p.action !== "skip");
     const items: SyncOutcome[] = [];

@@ -3,10 +3,11 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { readFile } from "@tauri-apps/plugin-fs";
 import { basename, dirname, embedImage, join, moveFolder, noteTitle, NoteRepository, relocateLinks, renamedNoteFile } from "@granite/core-notes";
-import { GoogleDriveProvider, VaultSync, merge3, type GoogleSession, type SyncResult } from "@granite/core-cloud";
+import { GoogleDriveProvider, VaultSync, merge3, type GoogleSession, type PendingDeletion, type SyncResult } from "@granite/core-cloud";
 
 import { REMOTE_FOLDER_NAME, SYNC_INTERVAL_MS } from "./config";
 import DeleteDialog from "./DeleteDialog";
+import DeletionsDialog from "./DeletionsDialog";
 import PageMenu from "./PageMenu";
 import PanePicker from "./PanePicker";
 import PluginsDialog from "./PluginsDialog";
@@ -240,6 +241,22 @@ export default function NoteApp({
     initVault().catch((e) => setStatus(`Error: ${String(e)}`));
   }, [vaultDirProp, load, refreshVaultFiles]);
 
+  /** Set while a sync waits for the user to say whether a big batch of deletions may go ahead. */
+  const [deletePrompt, setDeletePrompt] = useState<{ files: PendingDeletion[]; answer: (ok: boolean) => void } | null>(null);
+  const confirmDeletes = useCallback(
+    (files: PendingDeletion[]) =>
+      new Promise<boolean>((resolve) =>
+        setDeletePrompt({
+          files,
+          answer: (ok) => {
+            setDeletePrompt(null);
+            resolve(ok);
+          },
+        }),
+      ),
+    [],
+  );
+
   const engine = useMemo(() => {
     if (!session || !dir) return null;
     return new VaultSync({
@@ -248,8 +265,9 @@ export default function NoteApp({
       vaultDir: dir,
       remoteFolderName: REMOTE_FOLDER_NAME,
       indexStore,
+      confirmDeletes,
     });
-  }, [session, dir]);
+  }, [session, dir, confirmDeletes]);
 
   /** Always the current plugin rescan (the hook that owns it is declared after `doSync`). */
   const rescanPlugins = useRef<() => Promise<void>>(async () => undefined);
@@ -1226,6 +1244,7 @@ export default function NoteApp({
           }}
         />
       )}
+      {deletePrompt && <DeletionsDialog files={deletePrompt.files} onAnswer={deletePrompt.answer} />}
       {deletingMany && (
         <DeleteDialog
           name=""

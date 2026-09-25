@@ -1,3 +1,4 @@
+import { SLASH_SCRIPT } from "./slash.ts";
 import { METHOD_PERMISSION, checkPluginCss, safeNotePath, type CommandInfo, type SyncCursor, type SyncEvent } from "./api.ts";
 import { checkLinkProvider, findLinkProvider, svgDataUri, type LinkChip, type LinkProvider } from "./links.ts";
 import type { PluginManifest } from "./manifest.ts";
@@ -197,7 +198,7 @@ function bootstrapHtml(network: boolean, block: boolean, connect: string[] = [])
   });
   send({ k: "boot" });
 })();
-</script>`;
+</script>${block ? "<script>" + SLASH_SCRIPT + "</script>" : ""}`;
 }
 
 /** One drawn block: a visible frame inside the note, running the same plugin code in "block" mode. */

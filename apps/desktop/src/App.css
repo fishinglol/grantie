@@ -868,6 +868,10 @@ button.skip:disabled { opacity: 0.4; cursor: default; }
   animation: spin 0.9s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+.modal-list-title { margin: 10px 0 4px; font-weight: 600; text-align: left; }
+.modal-list { max-height: 160px; overflow-y: auto; margin: 0 0 6px; padding: 6px 10px 6px 26px; border-radius: 8px; background: var(--bg-body, rgba(0,0,0,.2)); text-align: left; font-size: 13px; }
+.modal-list li { overflow-wrap: anywhere; }
+.modal-list .more { list-style: none; margin-left: -16px; opacity: .7; }
 .modal-actions { display: flex; justify-content: center; gap: 10px; }
 .modal-actions button {
   padding: 8px 18px;

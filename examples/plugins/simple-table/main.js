@@ -35,6 +35,15 @@ const parseLinkCell = (text) => {
   return m ? { title: m[1].replace(/\\(.)/g, "$1"), url: m[2] } : null;
 };
 const linkCell = (title, url) => `[${oneLine(title).replace(/[[\]\\]/g, "\\$&")}](${url.replace(/ /g, "%20").replace(/\(/g, "%28").replace(/\)/g, "%29")})`;
+// A popup cell holds a Markdown link to a note, `[Title](Folder/Note.md)`; clicking it opens that note as a popup (as the Popup plugin's card does).
+const NOTE_CELL = /^\[((?:[^\]\\]|\\.)*)\]\(((?!https?:)[^\s)]+\.(?:md|markdown))\)$/i;
+const parseNoteCell = (text) => {
+  const m = NOTE_CELL.exec(text.trim());
+  return m ? { title: m[1].replace(/\\(.)/g, "$1"), path: m[2].replace(/%20/g, " ").replace(/%28/g, "(").replace(/%29/g, ")") } : null;
+};
+const noteTitle = (path) => path.slice(path.lastIndexOf("/") + 1).replace(/\.(md|markdown)$/i, "");
+const noteCell = (path) => `[${oneLine(noteTitle(path)).replace(/[[\]\\]/g, "\\$&")}](${path.replace(/ /g, "%20").replace(/\(/g, "%28").replace(/\)/g, "%29")})`;
+const hasVault = () => typeof granite !== "undefined" && !!granite.vault && typeof granite.vault.open === "function" && typeof granite.vault.list === "function";
 const isUrl = (t) => /^https?:\/\/[^\s<>"]+$/i.test(t.trim());
 const hasLinks = () => typeof granite !== "undefined" && !!granite.links && !!granite.links.chip;
 
@@ -42,7 +51,16 @@ const hasLinks = () => typeof granite !== "undefined" && !!granite.links && !!gr
 const CELL_MENU = [
   { id: "dropdown", name: "Dropdown", description: "A coloured choice list for this column" },
   { id: "link", name: "Link", description: "Paste an address to get a chip" },
+  { id: "popup", name: "Popup", description: "A note that opens as a popup" },
+  { id: "date", name: "Date", description: "Today's date" },
+  { id: "time", name: "Time", description: "The time now" },
+  { id: "checkbox", name: "Checkbox", description: "Tick it on and off" },
 ];
+const CHECKED = "\u2611";
+const UNCHECKED = "\u2610";
+const pad2 = (n) => String(n).padStart(2, "0");
+/** What the Date and Time entries put in a cell: plain text, so the table stays an ordinary Markdown table. */
+const stamp = (id, d = new Date()) => (id === "date" ? `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}` : `${pad2(d.getHours())}:${pad2(d.getMinutes())}`);
 
 // ── model: { rows: string[][] (row 0 is the header), aligns: ("" | "left" | "center" | "right")[] } ──
 const blankRow = (cols) => Array.from({ length: cols }, () => "");
@@ -225,8 +243,12 @@ textarea.chipped { color: transparent; }
 .chip { display: inline-block; max-width: calc(100% - 16px); padding: 0 9px; border-radius: 8px; line-height: 22px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dd .chip { position: absolute; left: 8px; top: 6px; pointer-events: none; }
 textarea.linked:not(:focus) { color: transparent; height: calc(1.5em + 12px) !important; } /* one line, whatever the address is */
-textarea:focus ~ .lchip { display: none; }
+textarea:focus ~ .lchip, textarea:focus ~ .cbox { display: none; }
+.cbox { position: absolute; left: 8px; top: 4px; font-size: 20px; line-height: 26px; cursor: pointer; user-select: none; }
 .lchip { position: absolute; left: 8px; top: 6px; display: inline-flex; align-items: center; gap: 6px; max-width: calc(100% - 16px); padding: 0 8px 0 5px; border-radius: 7px; line-height: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; background: var(--panel-hover, rgba(127,127,127,.18)); }
+.pop .notes { max-height: 220px; overflow-y: auto; margin-top: 4px; }
+.pop .none { padding: 10px 8px; opacity: .7; }
+.lchip .ico { flex: none; opacity: .8; }
 .lchip img { width: 16px; height: 16px; flex: none; }
 .lchip span { overflow: hidden; text-overflow: ellipsis; }
 .lchip.plain { background: none; padding: 0; color: var(--accent, #e8935f); text-decoration: underline; text-underline-offset: 2px; }
@@ -238,7 +260,7 @@ td.dd:hover .caret, td.dd:focus-within .caret { opacity: .8; }
 .caret:hover { background: var(--panel-hover, #3a4055); }
 .opt small { display: block; opacity: .6; font-size: 12px; font-weight: 400; }
 .opt.pick { justify-content: flex-start; flex-direction: column; align-items: flex-start; gap: 0; }
-@media (pointer: coarse) { .x { opacity: 0.7; } .foot .tools { opacity: 1; } textarea { padding: 9px 10px; } textarea.linked:not(:focus) { height: calc(1.5em + 18px) !important; } .caret { opacity: .8; } .dd .chip, .lchip { top: 9px; } }
+@media (pointer: coarse) { .x { opacity: 0.7; } .foot .tools { opacity: 1; } textarea { padding: 9px 10px; } textarea.linked:not(:focus) { height: calc(1.5em + 18px) !important; } .caret { opacity: .8; } .dd .chip, .lchip { top: 9px; } .cbox { top: 7px; } }
 .pop { position: absolute; z-index: 5; width: min(300px, calc(100% - 8px)); padding: 6px; border: 1px solid var(--border, rgba(127,127,127,.35)); border-radius: 12px; background: var(--panel, var(--bg, #fff)); box-shadow: 0 6px 20px rgba(0,0,0,.28); font-size: 14px; }
 .pop button { color: inherit; }
 .opt { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 7px 8px; border: 0; border-radius: 8px; background: none; text-align: left; }
@@ -271,6 +293,7 @@ const ICONS = {
   pencil: '<path d="M3 17.25V21h3.75L17.8 9.94l-3.75-3.75L3 17.25zM20.7 7.05a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>',
   trash: '<path d="M6 19a2 2 0 002 2h8a2 2 0 002-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>',
   check: '<path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/>',
+  note: '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zm-1 7V3.5L18.5 9H13zM8 13h8v2H8v-2zm0 4h8v2H8v-2z"/>',
   grip: '<path d="M9 4h2v2H9zM13 4h2v2h-2zM9 9h2v2H9zM13 9h2v2h-2zM9 14h2v2H9zM13 14h2v2h-2zM9 19h2v2H9zM13 19h2v2h-2z"/>',
 };
 const svg = (d, size = 16) => {
@@ -456,6 +479,30 @@ function startTable(root, model, source, block) {
   const chooseMenu = (id) => {
     const { r, c } = pop;
     if (id === "dropdown") return startDropdown(r, c);
+    if (id === "popup") {
+      model.rows[r][c] = "";
+      pop = null;
+      render();
+      setPop({ r, c, mode: "notes", query: "", notes: null });
+      hasVault()
+        ? granite.vault.list().then(
+            (all) => {
+              if (!pop || pop.mode !== "notes") return;
+              pop.notes = all.filter((p) => /\.(md|markdown)$/i.test(p) && !p.startsWith(".")).sort((a, b) => a.localeCompare(b));
+              showPop();
+            },
+            (e) => granite.notice(String(e.message || e)),
+          )
+        : granite.notice("Update the Granite app to link notes");
+      return save();
+    }
+    if (id === "date" || id === "time" || id === "checkbox") {
+      model.rows[r][c] = id === "checkbox" ? UNCHECKED : stamp(id);
+      pop = null;
+      render();
+      focusCell(r, c);
+      return save();
+    }
     model.rows[r][c] = "";
     pop = null;
     render();
@@ -490,6 +537,15 @@ function startTable(root, model, source, block) {
       },
       () => {},
     );
+  };
+
+  const chooseNote = (path) => {
+    const { r, c } = pop;
+    model.rows[r][c] = noteCell(path);
+    pop = null;
+    render();
+    focusCell(r, c);
+    save();
   };
 
   const choose = (o) => {
@@ -575,7 +631,7 @@ function startTable(root, model, source, block) {
     wrap.querySelector(".pop")?.remove();
     wrap.style.minHeight = "";
     const ta = pop && cell(pop.r, pop.c);
-    if (!pop || !ta || (pop.mode !== "menu" && !ddOf(pop.r, pop.c))) {
+    if (!pop || !ta || (pop.mode !== "menu" && pop.mode !== "notes" && !ddOf(pop.r, pop.c))) {
       pop = null;
       tell();
       return;
@@ -589,6 +645,34 @@ function startTable(root, model, source, block) {
         row.addEventListener("click", () => chooseMenu(item.id));
         el.append(row);
       });
+    } else if (pop.mode === "notes") {
+      const search = h("input", { class: "name", type: "text", placeholder: "Search notes…", "aria-label": "Search notes", value: pop.query });
+      const list = h("div", { class: "notes" });
+      const fill = () => {
+        list.replaceChildren();
+        if (!pop.notes) return list.append(h("div", { class: "none" }, "Looking for notes…"));
+        const q = pop.query.toLowerCase();
+        const hits = pop.notes.filter((p) => p.toLowerCase().includes(q));
+        if (hits.length === 0) list.append(h("div", { class: "none" }, "No note matches"));
+        for (const path of hits.slice(0, 60)) {
+          const dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+          const row = h("button", { class: "opt pick", type: "button", tabindex: "-1" }, noteTitle(path), dir ? h("small", {}, dir) : null);
+          row.addEventListener("click", () => chooseNote(path));
+          list.append(row);
+        }
+      };
+      search.addEventListener("input", () => {
+        pop.query = search.value;
+        fill();
+      });
+      search.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          list.querySelector(".opt")?.click();
+        }
+      });
+      fill();
+      el.append(search, list);
     } else if (pop.mode === "list") {
       if (options.length === 0) el.append(h("div", { style: "padding:10px 8px;opacity:.7" }, "No options yet"));
       for (const o of options) {
@@ -665,6 +749,7 @@ function startTable(root, model, source, block) {
     const base = wrap.getBoundingClientRect();
     const at = ta.parentElement.getBoundingClientRect();
     wrap.append(el);
+    if (pop.mode === "notes") el.querySelector("input")?.focus();
     el.style.left = `${Math.max(0, Math.min(at.left - base.left, base.width - el.offsetWidth))}px`;
     el.style.top = `${at.bottom - base.top}px`;
     wrap.style.minHeight = `${Math.ceil(at.bottom - base.top + el.offsetHeight + 8)}px`;
@@ -691,13 +776,15 @@ function startTable(root, model, source, block) {
     model.rows.forEach((row, r) => {
       const tr = h("tr");
       row.forEach((value, c) => {
-        const ta = h("textarea", { rows: "1", spellcheck: "false", autocomplete: "off", class: r === 0 ? "hd" : "" });
+        const ta = h("textarea", { rows: "1", spellcheck: "false", autocomplete: "off", "data-slash": "off", class: r === 0 ? "hd" : "" });
         if (r === 0) ta.setAttribute("placeholder", "Header");
         ta.value = value;
         const opts = ddOf(r, c);
         const chosen = opts && opts.find((o) => o.name === value);
         const link = !opts && r > 0 ? parseLinkCell(value) : null;
-        if (link) ta.classList.add("linked");
+        const box = !opts && r > 0 && (value === CHECKED || value === UNCHECKED);
+        const note = !opts && !link && r > 0 && hasVault() ? parseNoteCell(value) : null;
+        if (link || box || note) ta.classList.add("linked");
         if (opts) ta.readOnly = true; // a dropdown cell holds one of its options: pick it from the list
         if (chosen) ta.classList.add("chipped");
         ta.style.textAlign = r === 0 ? "center" : model.aligns[c] || "left";
@@ -777,6 +864,20 @@ function startTable(root, model, source, block) {
             : h("span", { class: "lchip plain", title: link.url }, h("span", {}, link.title));
           el.addEventListener("click", () => hasLinks() && granite.links.open(link.url).catch(() => {}));
           td.append(el);
+        }
+        if (note) {
+          const el = h("span", { class: "lchip", title: note.path }, svg(ICONS.note, 16), h("span", {}, note.title));
+          el.addEventListener("click", () => granite.vault.open(note.path, { beside: true }).catch((e) => granite.notice(String(e.message || e))));
+          td.append(el);
+        }
+        if (box) {
+          const tick = h("span", { class: "cbox", role: "checkbox", "aria-checked": String(value === CHECKED), title: "Tick or untick" }, value);
+          tick.addEventListener("click", () => {
+            model.rows[r][c] = value === CHECKED ? UNCHECKED : CHECKED;
+            render();
+            save();
+          });
+          td.append(tick);
         }
         if (r === 0 && n > 1) {
           const x = h("button", { class: "x col", tabindex: "-1", title: "Delete this column", "aria-label": "Delete this column" }, "×");
@@ -865,4 +966,4 @@ if (typeof granite !== "undefined") {
   });
 }
 
-if (typeof __tableTest !== "undefined") Object.assign(__tableTest, { parseTable, serializeTable, parseTsv, tableFromTsv, blankTable, fence, parseLinkCell, linkCell });
+if (typeof __tableTest !== "undefined") Object.assign(__tableTest, { parseTable, serializeTable, parseTsv, tableFromTsv, blankTable, fence, parseLinkCell, linkCell, stamp, parseNoteCell, noteCell });

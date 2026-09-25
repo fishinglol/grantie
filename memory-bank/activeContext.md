@@ -82,6 +82,24 @@ read-only. Confirmed: desktop only; split via ⋯ → "Split right" (no tabs); r
 - Also this session: a new note is created **empty** (no `# name` line; the title above the text is the name).
 - Checked in the browser previews only (desktop preview + Expo web at phone size); not on the Samsung phone or in the Tauri window.
 
+## Session 2026-09-26 — `//` list is built in (no plugin needed)
+User (Thai): `//` on a normal page showed nothing in the real app (WKWebView; not reproduced in the Chrome preview with every plugin installed, and the real window can't be screenshotted on macOS 13),
+then asked for `//` to be a **native default of the app**. Done in `packages/live-editor/src/LiveEditor.tsx`: `CORE_ITEMS` (Heading 1-3, Bulleted / Numbered list, Quote, Code block, Divider, Markdown table) are always in the list,
+plugin entries follow them; choosing a built-in inserts text directly (`insertPluginText(..., caret)`), no plugin frame. The list now also opens when several characters arrive as one input (`//quo`) — it opens when the line first becomes `//…`,
+and Escape still keeps it closed. The inputHandler no longer depends on `menuItems().length`. The Simple Table cell menu is the plugin's own: user asked for cell types that suit a table, so Simple Table 1.5.0 adds **Date** (`YYYY-MM-DD`), **Time** (`HH:MM`) and **Checkbox** (`☐`/`☑` text, click toggles) next to Dropdown / Link, and **Popup** (1.6.0, permission `vault.read`: a note picker; the cell holds `[Title](Folder/Note.md)`, drawn as a chip; clicking opens the note beside / as the phone's bottom sheet, like the Popup plugin's card)
+(plain text in the cell, so the table stays Markdown; needs UPDATE in the Store; phone: regenerate `pluginCatalog.ts`, `npm run build:editor` in `apps/mobile`). Offering *other plugins'* entries inside a cell is **not built**: it needs a new plugin API (a plugin exposing "cell" entries to another plugin's frame); most entries (Cards, Calendar, headings) are whole blocks that can't live in a cell. Ask the user if they still want it.
+Checked in the desktop preview (no plugins: list, filter, Enter, code block caret inside, H2, quote; Dropdown plugin entry still works). **Not checked in the real Tauri window or on the phone**: needs `tauri build` (desktop) and `node scripts/build-editor.mjs` in `apps/mobile` (phone).
+
+- **`//` in every plugin's text fields** (user: "it need to be able to use // for all plugin", after a screenshot of `//` typed in a Cards note): `packages/plugins/src/slash.ts` (`SLASH_SCRIPT`) is injected by `bootstrapHtml` into every *block* frame:
+  `//` alone on a line of a `<textarea>` / text `<input>` opens Date / Time / Checkbox under the caret, Enter/Tab/arrows/Escape, the field gets a normal `input` event. Opt out with `data-slash="off"` (Simple Table 1.6.1 does: it has its
+  own cell menu; older installed copies show both menus until UPDATE); search boxes are skipped. Text-only entries: whole-block plugins (Cards, Calendar...) can't live inside a field. Checked in the preview (Cards title + body).
+  Needs desktop rebuild + phone `npm run ship` (host code is in `editorHtml.ts`).
+
+## Session 2026-09-26 (later) — "Sync stopped: it would delete 45 of 95 files" -> a confirm dialog
+User imported too many folders, deleted them in Drive by hand; both devices stuck on the mass-delete breaker (`MAX_UNATTENDED_DELETES`, >5 and >30% of tracked files). Desktop index: 35 tracked, 11 missing locally (would trash 11 on Drive) — same breaker.
+Fix: `VaultSyncOptions.confirmDeletes(files: PendingDeletion[])` (`{path, where: "here" | "drive"}`) in `core-cloud`; true = the whole plan runs, false / no callback = the old error. A "no" for the same batch is not asked again for 10 min (`ASK_AGAIN_MS`).
+Desktop: `DeletionsDialog.tsx` (list + "Not now" / "Delete N files"), state in `NoteApp`. Phone: `askAboutDeletions` in `App.tsx` (Alert). 2 new engine tests (core-cloud 79). The dialog was not looked at on screen (no Drive in the preview); phone shipped by `npm run ship`, desktop needs `tauri build`.
+
 ## Session 2026-09-25 (latest) — the Live Collab plugin itself (stage 2 of live collaboration)
 The user asked where the "share with a friend" plugin was: **it did not exist yet** (only plugin API 6 had been built; my earlier wording hid that). Built now, with no more questions (defaults chosen, all changeable):
 `examples/plugins/live-collab/` (id `live-collab`, v1.0.0, needs API 6). Yjs + `y-websocket` client + `@codemirror/state`, bundled by esbuild into `main.js` (`npm run build` in that folder; it has its own `package.json`/`node_modules`).

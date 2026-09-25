@@ -6,7 +6,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as Updates from 'expo-updates';
 import { IMAGE_FILE, basename, dirname, embedImage, join, moveFolder, noteTitle, relocateLinks, renamedNoteFile } from '@granite/core-notes';
 import { PLUGINS_DIR, discoverPlugins, readPluginCode, type CommandInfo, type InstalledPlugin } from '@granite/plugins';
-import { GoogleDriveProvider, VaultSync, merge3, type DeviceCode, type GoogleSession } from '@granite/core-cloud';
+import { GoogleDriveProvider, VaultSync, merge3, type DeviceCode, type GoogleSession, type PendingDeletion } from '@granite/core-cloud';
 import { emptyCanvas, serializeCanvas } from '@granite/canvas/format';
 
 import { expoFs } from './src/expoFs';
@@ -56,6 +56,30 @@ function extFromMime(mime?: string): string {
     'image/gif': '.gif',
   };
   return (mime && map[mime]) || '.jpg';
+}
+
+/** Drive sync stopped because it would delete a lot at once: lists some of the files and asks before going ahead. */
+function askAboutDeletions(files: PendingDeletion[]): Promise<boolean> {
+  const here = files.filter((f) => f.where === 'here');
+  const drive = files.filter((f) => f.where === 'drive');
+  const list = (group: PendingDeletion[]) => group.slice(0, 6).map((f) => `• ${f.path}`).join('\n') + (group.length > 6 ? `\n…and ${group.length - 6} more` : '');
+  const body =
+    'Sync paused: this would delete a lot at once. Nothing has been changed yet.' +
+    (here.length ? `\n\nDeleted in Google Drive, so deleted from this phone (${here.length}):\n${list(here)}` : '') +
+    (drive.length ? `\n\nDeleted from this phone, so moved to the Drive trash (${drive.length}):\n${list(drive)}` : '');
+  const title = `Delete ${files.length} files to match?`;
+  if (Platform.OS === 'web') return Promise.resolve(window.confirm(`${title}\n\n${body}`));
+  return new Promise((resolve) =>
+    Alert.alert(
+      title,
+      body,
+      [
+        { text: 'Not now', style: 'cancel', onPress: () => resolve(false) },
+        { text: `Delete ${files.length} files`, style: 'destructive', onPress: () => resolve(true) },
+      ],
+      { cancelable: true, onDismiss: () => resolve(false) },
+    ),
+  );
 }
 
 export default function App() {
@@ -211,6 +235,7 @@ export default function App() {
             vaultDir: VAULT_DIR,
             remoteFolderName: REMOTE_FOLDER_NAME,
             indexStore,
+            confirmDeletes: askAboutDeletions,
           })
         : null,
     [session],

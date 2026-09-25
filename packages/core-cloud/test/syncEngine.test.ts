@@ -723,3 +723,42 @@ test("a disk that refuses the base folder (a Tauri scope) does not stop the sync
   assert.equal(second.failed, 0);
   assert.equal(text(provider.remote.get("a.md")!.data), "one\ntwo!");
 });
+
+function bigVault() {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < 10; i++) files[`n${i}.md`] = `note ${i}`;
+  return files;
+}
+
+test("a big deletion goes ahead when the user confirms, and the question lists the files", async () => {
+  const { fs, provider, indexStore } = await synced(bigVault());
+  let asked: { path: string; where: string }[] = [];
+  const sync = new VaultSync({
+    fs, provider, vaultDir, remoteFolderName: "Granite Vault", indexStore,
+    confirmDeletes: async (files) => ((asked = files), true),
+  });
+  provider.remote.clear(); // the user emptied the Drive folder
+
+  const res = await sync.sync();
+
+  assert.equal(asked.length, 10);
+  assert.ok(asked.every((f) => f.where === "here"));
+  assert.equal(res.deleted, 10);
+  assert.equal((await listLocalFiles(fs, vaultDir)).length, 0);
+});
+
+test("a declined big deletion changes nothing and is not asked about again right away", async () => {
+  const { fs, provider, indexStore } = await synced(bigVault());
+  let asks = 0;
+  const sync = new VaultSync({
+    fs, provider, vaultDir, remoteFolderName: "Granite Vault", indexStore,
+    confirmDeletes: async () => (asks++, false),
+  });
+  provider.remote.clear();
+
+  await assert.rejects(sync.sync(), /Nothing was changed/);
+  await assert.rejects(sync.sync(), /Nothing was changed/);
+
+  assert.equal(asks, 1);
+  assert.equal((await listLocalFiles(fs, vaultDir)).length, 10);
+});

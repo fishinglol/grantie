@@ -109,3 +109,17 @@ test("a link cell survives the table text", () => {
   const m = { rows: [["Topic"], [hooks.linkCell("A | B", "https://youtu.be/x")]], aligns: [""] };
   assert.deepEqual(plain(parseTable(serializeTable(m))), m);
 });
+
+test("the cell menu's Date and Time entries write plain text", () => {
+  const d = new Date(2026, 8, 5, 7, 3);
+  assert.equal(hooks.stamp("date", d), "2026-09-05");
+  assert.equal(hooks.stamp("time", d), "07:03");
+});
+
+test("a popup cell is a Markdown link to a note and reads back", () => {
+  const cell = hooks.noteCell("Projects/My plan (v2).md");
+  assert.equal(cell, "[My plan (v2)](Projects/My%20plan%20%28v2%29.md)");
+  assert.deepEqual(plain(hooks.parseNoteCell(cell)), { title: "My plan (v2)", path: "Projects/My plan (v2).md" });
+  assert.equal(hooks.parseNoteCell("[Docs](https://example.com/a.md)"), null);
+  assert.equal(hooks.parseNoteCell("plain text"), null);
+});

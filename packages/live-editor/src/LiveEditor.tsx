@@ -418,17 +418,20 @@ const blockMounts = new WeakMap<HTMLElement, ReturnType<BlockRenderer["mount"]>>
  * Put what a plugin returned at `from`–`to`. Text with line breaks (a table, say) gets its own paragraph, with
  * blank lines around it as needed; a single line goes in as typed.
  */
-function insertPluginText(view: EditorView, from: number, to: number, text: string) {
+function insertPluginText(view: EditorView, from: number, to: number, text: string, caret?: number) {
   const { doc } = view.state;
   from = Math.min(from, doc.length);
   to = Math.min(Math.max(to, from), doc.length);
   let insert = text;
+  let lead = "";
   if (text.includes("\n")) {
     const before = doc.sliceString(Math.max(0, from - 2), from);
     const after = doc.sliceString(to, to + 1);
-    insert = (from === 0 || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n") + text + (after === "" || after === "\n" ? "\n" : "\n\n");
+    lead = from === 0 || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
+    insert = lead + text + (after === "" || after === "\n" ? "\n" : "\n\n");
   }
-  view.dispatch({ changes: { from, to, insert }, selection: { anchor: from + insert.length }, scrollIntoView: true, userEvent: "input.plugin" });
+  const anchor = from + (caret === undefined ? insert.length : lead.length + caret);
+  view.dispatch({ changes: { from, to, insert }, selection: { anchor }, scrollIntoView: true, userEvent: "input.plugin" });
 }
 
 /**
@@ -446,8 +449,8 @@ function pluginInput(getBlocks: () => BlockRenderer | null) {
       // What the line would read after this input. Judged as a whole (not by where the character lands) because
       // typing `/` next to an existing `/` may be reported as inserted before or after it.
       const typed = state.sliceDoc(line.from, from) + text + state.sliceDoc(from, line.to);
-      // `//` opens the list (`slashMenu`) when any plugin offers an entry; the text is typed as usual.
-      if (typed === "//" && blocks.menuItems?.().length) return false;
+      // `//` opens the list (`slashMenu`, which always has the built-in entries); the text is typed as usual.
+      if (typed === "//") return false;
       if (!blocks.triggers().includes(typed) || inCodeBlock(state, from)) return false;
       view.dispatch({ changes: { from: line.from, to: line.to }, userEvent: "delete" });
       void blocks.runInput("trigger", { text: typed }).then((out) => insertPluginText(view, line.from, line.from, out ?? typed));
@@ -481,6 +484,18 @@ interface SlashMenu {
   shown: MenuItemInfo[];
   index: number;
 }
+/** Built-in entries of the `//` list: they work with no plugin running. `caret` = where the cursor goes inside `text`. */
+const CORE_ITEMS: { item: MenuItemInfo; text: string; caret?: number }[] = [
+  { item: { key: "core:h1", name: "Heading 1", description: "Big section heading", plugin: "" }, text: "# " },
+  { item: { key: "core:h2", name: "Heading 2", description: "Medium section heading", plugin: "" }, text: "## " },
+  { item: { key: "core:h3", name: "Heading 3", description: "Small section heading", plugin: "" }, text: "### " },
+  { item: { key: "core:bullet", name: "Bulleted list", description: "A simple list of points", plugin: "" }, text: "- " },
+  { item: { key: "core:number", name: "Numbered list", description: "A list with numbers", plugin: "" }, text: "1. " },
+  { item: { key: "core:quote", name: "Quote", description: "Set a passage apart", plugin: "" }, text: "> " },
+  { item: { key: "core:code", name: "Code block", description: "Monospaced code", plugin: "" }, text: "```\n\n```", caret: 4 },
+  { item: { key: "core:divider", name: "Divider", description: "A horizontal line", plugin: "" }, text: "---" },
+  { item: { key: "core:table", name: "Markdown table", description: "Rows and columns as plain text", plugin: "" }, text: "| Column 1 | Column 2 | Column 3 |\n| --- | --- | --- |\n|  |  |  |", caret: 2 },
+];
 const menuClose = StateEffect.define<null>();
 const menuMove = StateEffect.define<number>();
 /** `//` alone on a line, then anything but spaces and slashes (what the list is filtered by). */
@@ -496,10 +511,17 @@ const filterMenu = (items: MenuItemInfo[], query: string) => {
  * Choosing removes the typed text and asks the plugin what to put there.
  */
 function slashMenu(getBlocks: () => BlockRenderer | null) {
+  const allItems = () => [...CORE_ITEMS.map((c) => c.item), ...(getBlocks()?.menuItems?.() ?? [])];
   const pick = (view: EditorView, item: MenuItemInfo) => {
+    const line = view.state.doc.lineAt(view.state.selection.main.head);
+    const core = CORE_ITEMS.find((c) => c.item.key === item.key);
+    if (core) {
+      view.dispatch({ changes: { from: line.from, to: line.to }, effects: menuClose.of(null), userEvent: "delete" });
+      insertPluginText(view, line.from, line.from, core.text, core.caret);
+      return;
+    }
     const blocks = getBlocks();
     if (!blocks?.runInput) return;
-    const line = view.state.doc.lineAt(view.state.selection.main.head);
     const typed = line.text;
     view.dispatch({ changes: { from: line.from, to: line.to }, effects: menuClose.of(null), userEvent: "delete" });
     void blocks.runInput("item", { text: item.key }).then((out) => insertPluginText(view, line.from, line.from, out ?? typed));
@@ -522,9 +544,13 @@ function slashMenu(getBlocks: () => BlockRenderer | null) {
         for (const e of tr.effects) if (e.is(menuMove)) index = (index + e.value + shown.length) % shown.length;
         return { ...menu, query, shown, index };
       }
-      if (query === "" && tr.docChanged && tr.isUserEvent("input.type") && !inCodeBlock(state, sel.head)) {
-        const items = getBlocks()?.menuItems?.() ?? [];
-        if (items.length > 0) return { line: line.from, items, query, shown: items, index: 0 };
+      // Opens as the line first becomes `//…` by typing (also when several characters arrive as one input, e.g. from an input method);
+      // once the line has been `//…` (the user pressed Escape), more typing does not reopen it.
+      const before = tr.startState;
+      if (tr.docChanged && tr.isUserEvent("input.type") && !SLASH_LINE.test(before.doc.lineAt(before.selection.main.head).text) && !inCodeBlock(state, sel.head)) {
+        const items = allItems();
+        const shown = filterMenu(items, query);
+        if (shown.length > 0) return { line: line.from, items, query, shown, index: 0 };
       }
       return null;
     },
