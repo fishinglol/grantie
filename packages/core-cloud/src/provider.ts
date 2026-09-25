@@ -9,6 +9,19 @@ export interface UploadArgs {
   mimeType?: string;
   /** When set, overwrite that file's contents instead of creating a new one. */
   existingId?: string;
+  /**
+   * With `existingId`: overwrite only if the file still has this `modifiedTime`, else throw {@link RemoteChangedError}.
+   * Stops a device from overwriting a newer version it hasn't seen yet with an older one.
+   */
+  ifModifiedTime?: string;
+}
+
+/** The remote file changed after this device last looked at it, so it was not overwritten. */
+export class RemoteChangedError extends Error {
+  constructor(path: string) {
+    super(`${path} changed on Drive in the meantime`);
+    this.name = "RemoteChangedError";
+  }
 }
 
 /**

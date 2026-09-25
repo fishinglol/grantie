@@ -14,6 +14,7 @@ export { GoogleSession } from "./session.ts";
 export { GoogleDriveProvider } from "./googleDrive.ts";
 export { planSync, conflictCopyName } from "./syncPlan.ts";
 export { VaultSync, listLocalFiles } from "./syncEngine.ts";
+export { merge3 } from "./merge3.ts";
 export { mimeTypeFor } from "./mime.ts";
 export { emptyIndex } from "./types.ts";
 export { ensureOk } from "./http.ts";

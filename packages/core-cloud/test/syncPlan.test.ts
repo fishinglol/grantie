@@ -104,3 +104,11 @@ test("a folder that is deleted whole counts as one deletion; scattered deletions
   const partial = local.filter((f) => f.path !== "Keep/d.md");
   assert.equal(countDeletionUnits(planSync(partial, remote, index)), 2);
 });
+
+test("pictures and other files are planned before notes, so a note never arrives ahead of the picture it shows", () => {
+  const plan = planSync([local("Zoo/note.md", 10), local("assets/pic.png", 10), local("A.md", 10), local("map.canvas", 10)], [], emptyIndex());
+  assert.deepEqual(
+    plan.map((p) => p.path),
+    ["assets/pic.png", "A.md", "Zoo/note.md", "map.canvas"],
+  );
+});

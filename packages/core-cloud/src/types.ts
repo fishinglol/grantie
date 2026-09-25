@@ -32,6 +32,11 @@ export interface SyncRecord {
    * saving a note it didn't change) is then not taken for an edit. Absent in records written before it existed.
    */
   hash?: string;
+  /**
+   * Hashes of earlier versions this device synced, newest first. The remote coming back to one of them is another
+   * device uploading something stale, not a new edit.
+   */
+  older?: string[];
 }
 
 export interface SyncIndex {
@@ -51,7 +56,8 @@ export function emptyIndex(): SyncIndex {
   return { files: {} };
 }
 
-export type SyncAction = "upload" | "download" | "conflict" | "skip" | "delete-local" | "delete-remote";
+/** "merge": both devices edited the note, on different lines; the merged text is now on both sides. */
+export type SyncAction = "upload" | "download" | "conflict" | "merge" | "skip" | "delete-local" | "delete-remote";
 
 export interface SyncPlanItem {
   path: string;

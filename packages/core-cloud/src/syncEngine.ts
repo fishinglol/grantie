@@ -1,14 +1,17 @@
 import { dirname, join } from "@granite/core-notes";
 import type { VaultFileSystem } from "./fs.ts";
-import type { CloudProvider } from "./provider.ts";
+import { RemoteChangedError, type CloudProvider } from "./provider.ts";
+import { merge3 } from "./merge3.ts";
 import { conflictCopyName, countDeletionUnits, planSync } from "./syncPlan.ts";
 import {
   emptyIndex,
   type LocalFile,
+  type RemoteFile,
   type SyncAction,
   type SyncOutcome,
   type SyncIndex,
   type SyncPlanItem,
+  type SyncRecord,
   type SyncResult,
 } from "./types.ts";
 
@@ -37,6 +40,7 @@ export async function listLocalFiles(
   for (const entry of await fs.listDir(dir)) {
     if (isIgnored(entry.name)) continue;
     const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (rel === BASE_DIR) continue; // local bookkeeping, never synced
     const abs = join(dir, entry.name);
     if (entry.isDirectory) {
       try {
@@ -70,6 +74,12 @@ const under = (paths: Iterable<string>, dir: string) => [...paths].some((p) => p
 /** What `conflictCopyName` puts in a copy's name. */
 const COPY_MARK = " (Drive copy ";
 
+/** Where the text a note had at its last sync is kept (in `.granite/sync-base`, which sync skips; the app may only touch `.granite` among the dot folders), so two edits can be merged later. */
+const BASE_DIR = ".granite/sync-base";
+/** Only plain-text notes are merged, and not huge ones. */
+const MERGEABLE = /\.(md|markdown)$/i;
+const MAX_MERGE_BYTES = 1_000_000;
+
 /** 53-bit content hash (cyrb53): tells "same bytes as last sync" apart from a real edit. Not for security. */
 function contentHash(data: Uint8Array): string {
   let h1 = 0xdeadbeef;
@@ -81,6 +91,15 @@ function contentHash(data: Uint8Array): string {
   h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
   h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
   return `${data.length}:${(4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36)}`;
+}
+
+/** How many earlier versions of a file are remembered (`SyncRecord.older`). */
+const OLDER_KEPT = 20;
+
+/** The record after a push or pull: `next`, remembering the versions before it. */
+function nextRecord(prev: SyncRecord | undefined, next: SyncRecord): SyncRecord {
+  const older = [...new Set([prev?.hash, ...(prev?.older ?? [])])].filter((h): h is string => !!h && h !== next.hash);
+  return older.length > 0 ? { ...next, older: older.slice(0, OLDER_KEPT) } : next;
 }
 
 /** A batch of deletions this small is applied without question; larger ones must also be a minority of the vault. */
@@ -160,10 +179,37 @@ export class VaultSync {
 
   /** Concurrent callers (timer + button + post-edit) share one run. */
   sync(onProgress?: (done: number, total: number, item: SyncPlanItem) => void): Promise<SyncResult> {
-    this.#running ??= this.#sync(onProgress).finally(() => {
+    if (this.#running) {
+      this.#again = true;
+      return this.#running;
+    }
+    this.#running = this.#syncAndCatchUp(onProgress).finally(() => {
       this.#running = null;
     });
     return this.#running;
+  }
+
+  /** Someone asked for a sync while one was running (a save): if the vault changed meanwhile, go once more now instead of at the next poll. */
+  #again = false;
+
+  async #syncAndCatchUp(onProgress?: (done: number, total: number, item: SyncPlanItem) => void): Promise<SyncResult> {
+    let result = await this.#sync(onProgress);
+    while (this.#again) {
+      this.#again = false;
+      if (!(await this.#localChanged((await this.#indexStore.load()) ?? emptyIndex()))) break;
+      const next = await this.#sync(onProgress);
+      result = {
+        uploaded: result.uploaded + next.uploaded,
+        downloaded: result.downloaded + next.downloaded,
+        conflicted: result.conflicted + next.conflicted,
+        deleted: result.deleted + next.deleted,
+        skipped: next.skipped,
+        failed: next.failed,
+        folders: result.folders + next.folders,
+        items: [...result.items, ...next.items],
+      };
+    }
+    return result;
   }
 
   async #sync(onProgress?: (done: number, total: number, item: SyncPlanItem) => void): Promise<SyncResult> {
@@ -208,6 +254,17 @@ export class VaultSync {
             // Unreadable right now; the next sync tries again.
           }
         }
+        // Notes synced before merging existed have no saved base: an unchanged one is exactly what both sides hold, so keep it now.
+        if (rec?.hash && item.reason === "unchanged" && MERGEABLE.test(item.path)) {
+          try {
+            if (!(await this.#fs.exists(join(this.#vaultDir, BASE_DIR, item.path)))) {
+              const bytes = await this.#fs.readBinaryFile(join(this.#vaultDir, item.path));
+              if (contentHash(bytes) === rec.hash) await this.#keepBase(item.path, bytes);
+            }
+          } catch {
+            // Bookkeeping only: never let it stop the sync.
+          }
+        }
         items.push({ path: item.path, action: "skip" });
         continue;
       }
@@ -215,7 +272,9 @@ export class VaultSync {
       try {
         items.push({ path: item.path, ...(await this.#apply(item, folderId, remoteByPath, index)) });
       } catch (e) {
-        items.push({ path: item.path, action: item.action, error: String(e) });
+        // Changed on Drive after the listing: left alone; the next sync sees that change and sorts it out.
+        if (e instanceof RemoteChangedError) items.push({ path: item.path, action: "skip" });
+        else items.push({ path: item.path, action: item.action, error: String(e) });
       }
       done += 1;
       // Persist as we go: a crash or a dropped connection halfway through must
@@ -239,7 +298,7 @@ export class VaultSync {
 
     return {
       uploaded: items.filter((i) => i.action === "upload" && !i.error).length,
-      downloaded: items.filter((i) => i.action === "download" && !i.error).length,
+      downloaded: items.filter((i) => (i.action === "download" || i.action === "merge") && !i.error).length,
       conflicted: items.filter((i) => i.action === "conflict" && !i.error).length,
       deleted: items.filter((i) => (i.action === "delete-local" || i.action === "delete-remote") && !i.error).length,
       skipped: items.filter((i) => i.action === "skip").length,
@@ -312,7 +371,7 @@ export class VaultSync {
   async #apply(
     item: SyncPlanItem,
     folderId: string,
-    remoteByPath: Map<string, { id: string; path: string; modifiedTime: string }>,
+    remoteByPath: Map<string, RemoteFile>,
     index: SyncIndex,
   ): Promise<{ action: SyncAction; conflictCopy?: string }> {
     const remote = remoteByPath.get(item.path);
@@ -326,7 +385,7 @@ export class VaultSync {
         rec.localModifiedMs = (await this.#fs.stat(abs)).modifiedMs;
         return { action: "skip" };
       }
-      await this.#push(item.path, folderId, remote?.id, index);
+      await this.#push(item.path, folderId, remote, index);
       return { action };
     }
 
@@ -346,7 +405,11 @@ export class VaultSync {
 
     if (action === "download") {
       if (!remote) throw new Error(`no remote file for ${item.path}`);
-      await this.#pull(remote.id, item.path, item.path, remote.modifiedTime, index);
+      const data = await this.#provider.download(remote.id);
+      // Saved here while the download ran (auto-save): overwriting it would lose that. The next sync sees a conflict and keeps both.
+      const abs = join(this.#vaultDir, item.path);
+      if (rec && (await this.#fs.exists(abs)) && (await this.#fs.stat(abs)).modifiedMs !== rec.localModifiedMs) return { action: "skip" };
+      await this.#write(data, remote.id, item.path, item.path, remote.modifiedTime, index);
       return { action };
     }
 
@@ -355,6 +418,7 @@ export class VaultSync {
     if (!remote) throw new Error(`no remote file for ${item.path}`);
     const remoteData = await this.#provider.download(remote.id);
     const localData = await this.#fs.readBinaryFile(join(this.#vaultDir, item.path));
+    const localStamp = (await this.#fs.stat(join(this.#vaultDir, item.path))).modifiedMs;
     // A side that still holds the bytes of the last sync only got a new timestamp (another device saved the
     // note unchanged), so it isn't a conflict: the side that really changed wins, with no copy.
     if (rec?.hash && contentHash(localData) === rec.hash) {
@@ -362,16 +426,61 @@ export class VaultSync {
       return { action: "download" };
     }
     // Also never worth a copy: both sides already hold the same bytes, the remote is unchanged since the last
-    // sync, or the file is a conflict copy itself (copies of copies just pile up; the local file wins).
+    // sync or went back to a version this device already had (another device uploading something stale), or
+    // the file is a conflict copy itself (copies of copies just pile up). The local file wins.
     const same = remoteData.length === localData.length && remoteData.every((b, i) => b === localData[i]);
-    if (same || (rec?.hash && contentHash(remoteData) === rec.hash) || item.path.includes(COPY_MARK)) {
-      await this.#push(item.path, folderId, remote.id, index);
+    const remoteHash = contentHash(remoteData);
+    if (same || remoteHash === rec?.hash || rec?.older?.includes(remoteHash) || item.path.includes(COPY_MARK)) {
+      await this.#push(item.path, folderId, remote, index);
       return { action };
+    }
+    const merged = await this.#tryMerge(item.path, rec, localData, remoteData);
+    if (merged) {
+      // Both devices edited different lines: keep both edits in one file, here and on Drive.
+      const abs = join(this.#vaultDir, item.path);
+      // Saved again while merging: leave it, the next sync merges again from the newer text.
+      if ((await this.#fs.stat(abs)).modifiedMs !== localStamp) return { action: "skip" };
+      await this.#fs.writeBinaryFile(abs, merged);
+      await this.#push(item.path, folderId, remote, index);
+      return { action: "merge" };
     }
     const copyPath = conflictCopyName(item.path, this.#now());
     await this.#fs.writeBinaryFile(join(this.#vaultDir, copyPath), remoteData);
-    await this.#push(item.path, folderId, remote.id, index);
+    await this.#push(item.path, folderId, remote, index);
     return { action, conflictCopy: copyPath };
+  }
+
+  /** The merged bytes of a note both devices edited, or null (not a plain note, no usable base, or the same lines were changed on both sides). */
+  async #tryMerge(path: string, rec: SyncRecord | undefined, local: Uint8Array, remote: Uint8Array): Promise<Uint8Array | null> {
+    if (!MERGEABLE.test(path) || !rec?.hash || path.includes(COPY_MARK)) return null;
+    try {
+      const base = await this.#fs.readBinaryFile(join(this.#vaultDir, BASE_DIR, path));
+      if (contentHash(base) !== rec.hash) return null; // not the version both sides last agreed on
+      const encoder = new TextEncoder();
+      const decoder = new TextDecoder();
+      // Bytes that are not valid UTF-8 would not survive the round trip: leave such a file to the copy.
+      const [b, l, r] = [base, local, remote].map((bytes): string | null => {
+        const text = decoder.decode(bytes);
+        const back = encoder.encode(text);
+        return back.length === bytes.length && back.every((x, i) => x === bytes[i]) ? text : null;
+      });
+      const text = b == null || l == null || r == null ? null : merge3(b, l, r);
+      return text === null ? null : encoder.encode(text);
+    } catch {
+      return null; // no base yet (a note synced before merging existed), or not valid text
+    }
+  }
+
+  /** Remember what a note held at this sync. Best effort: without it a clash just keeps two files, as before. */
+  async #keepBase(path: string, data: Uint8Array): Promise<void> {
+    if (!MERGEABLE.test(path) || data.length > MAX_MERGE_BYTES) return;
+    try {
+      const abs = join(this.#vaultDir, BASE_DIR, path);
+      await this.#fs.mkdirp(abs.slice(0, abs.lastIndexOf("/")));
+      await this.#fs.writeBinaryFile(abs, data);
+    } catch {
+      // ignore
+    }
   }
 
   /** After a note is deleted here because it was deleted elsewhere, drop the folders it leaves empty. */
@@ -388,17 +497,19 @@ export class VaultSync {
     }
   }
 
-  async #push(relPath: string, folderId: string, existingId: string | undefined, index: SyncIndex): Promise<void> {
+  /** Upload the local file, over `remote` (as listed at the start of this sync) only if Drive still has that version. */
+  async #push(relPath: string, folderId: string, remote: RemoteFile | undefined, index: SyncIndex): Promise<void> {
     const abs = join(this.#vaultDir, relPath);
     const data = await this.#fs.readBinaryFile(abs);
     const stat = await this.#fs.stat(abs);
-    const uploaded = await this.#provider.upload({ folderId, path: relPath, data, existingId });
-    index.files[relPath] = {
+    const uploaded = await this.#provider.upload({ folderId, path: relPath, data, existingId: remote?.id, ifModifiedTime: remote?.modifiedTime });
+    await this.#keepBase(relPath, data);
+    index.files[relPath] = nextRecord(index.files[relPath], {
       remoteId: uploaded.id,
       remoteModified: uploaded.modifiedTime,
       localModifiedMs: stat.modifiedMs,
       hash: contentHash(data),
-    };
+    });
   }
 
   async #pull(
@@ -409,15 +520,26 @@ export class VaultSync {
     remoteModified: string,
     index: SyncIndex,
   ): Promise<void> {
-    const data = await this.#provider.download(fileId);
+    await this.#write(await this.#provider.download(fileId), fileId, writeRelPath, indexKey, remoteModified, index);
+  }
+
+  async #write(
+    data: Uint8Array,
+    fileId: string,
+    writeRelPath: string,
+    indexKey: string | undefined,
+    remoteModified: string,
+    index: SyncIndex,
+  ): Promise<void> {
     const abs = join(this.#vaultDir, writeRelPath);
     if (writeRelPath.includes("/")) {
       await this.#fs.mkdirp(join(this.#vaultDir, writeRelPath.slice(0, writeRelPath.lastIndexOf("/"))));
     }
     await this.#fs.writeBinaryFile(abs, data);
     if (indexKey) {
+      await this.#keepBase(indexKey, data);
       const stat = await this.#fs.stat(abs);
-      index.files[indexKey] = { remoteId: fileId, remoteModified, localModifiedMs: stat.modifiedMs, hash: contentHash(data) };
+      index.files[indexKey] = nextRecord(index.files[indexKey], { remoteId: fileId, remoteModified, localModifiedMs: stat.modifiedMs, hash: contentHash(data) });
     }
   }
 }

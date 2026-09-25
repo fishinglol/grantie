@@ -1,6 +1,6 @@
 import { dirname, join } from "@granite/core-notes";
 import type { DirEntry, FileStat, VaultFileSystem } from "../src/fs.ts";
-import type { CloudProvider, UploadArgs } from "../src/provider.ts";
+import { RemoteChangedError, type CloudProvider, type UploadArgs } from "../src/provider.ts";
 import type { RemoteFile } from "../src/types.ts";
 
 /** In-memory {@link VaultFileSystem} for tests. Paths are absolute, "/"-separated. */
@@ -101,14 +101,20 @@ export class FakeProvider implements CloudProvider {
   async ensureVaultFolder(): Promise<string> {
     return this.folderId;
   }
+  /** Runs once, right after the next listing is taken: another device acting in the middle of a sync. */
+  afterList?: () => Promise<unknown>;
   async listVault(): Promise<RemoteFile[]> {
     this.listCalls++;
-    return [...this.remote.entries()].map(([path, f]) => ({
+    const listing = [...this.remote.entries()].map(([path, f]) => ({
       id: f.id,
       path,
       modifiedTime: f.modifiedTime,
       size: f.data.length,
     }));
+    const hook = this.afterList;
+    this.afterList = undefined;
+    await hook?.();
+    return listing;
   }
   /** Folders that exist on the fake remote; like Drive, uploading a file creates its folders. */
   readonly folders = new Map<string, string>();
@@ -159,6 +165,7 @@ export class FakeProvider implements CloudProvider {
     this.uploads.push(args.path);
     this.#addFolders(args.path);
     const existing = this.remote.get(args.path);
+    if (args.existingId && args.ifModifiedTime && existing?.modifiedTime !== args.ifModifiedTime) throw new RemoteChangedError(args.path);
     const id = args.existingId ?? existing?.id ?? `id-${this.#nextId++}`;
     const modifiedTime = this.#stamp();
     this.remote.set(args.path, { id, data: args.data, modifiedTime });
