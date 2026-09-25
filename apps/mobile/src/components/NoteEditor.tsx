@@ -17,24 +17,35 @@ const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function NoteEd
   const latest = useRef(props);
   latest.current = props;
 
+  // The page is loaded once and keeps its base address: a new source would reload it.
+  const source = useMemo(() => ({ html: EDITOR_HTML, baseUrl: `${dirname(props.path)}/` }), []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const bridge = useMemo(
     () => createEditorBridge((message) => web.current?.postMessage(JSON.stringify(message)), () => latest.current),
     [],
   );
 
-  useImperativeHandle(ref, () => ({ insert: bridge.insert, runPluginCommand: bridge.runPluginCommand, addFile: bridge.addFile }), [bridge]);
+  useImperativeHandle(ref, () => ({ insert: bridge.insert, setText: bridge.setText, runPluginCommand: bridge.runPluginCommand, addFile: bridge.addFile }), [bridge]);
 
   // Vault images were (re)indexed, or the set of enabled plugins changed, after the page loaded.
+  // Another note opened in the same page (the first one is sent when the page says it is ready).
+  const shown = useRef(props.docId);
+  useEffect(() => {
+    if (shown.current === props.docId) return;
+    shown.current = props.docId;
+    bridge.sendOpen();
+  }, [props.docId, bridge]);
   useEffect(() => void bridge.sendEmbeds(), [props.embeds, bridge]);
   useEffect(() => bridge.sendPlugins(), [props.plugins, bridge]);
   useEffect(() => void bridge.sendTitle(), [props.title, bridge]);
+  useEffect(() => void bridge.sendReading(), [props.reading, bridge]);
   useEffect(() => void bridge.sendFiles(), [props.canvas, bridge]);
 
   return (
     <WebView
       ref={web}
       style={{ flex: 1, backgroundColor: colors.editor }}
-      source={{ html: EDITOR_HTML, baseUrl: `${dirname(props.path)}/` }}
+      source={source}
       originWhitelist={['*']}
       onMessage={(event: WebViewMessageEvent) => bridge.handle(event.nativeEvent.data)}
       allowFileAccess

@@ -18,10 +18,18 @@ const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function NoteEd
     [],
   );
 
-  useImperativeHandle(ref, () => ({ insert: bridge.insert, runPluginCommand: bridge.runPluginCommand, addFile: bridge.addFile }), [bridge]);
+  useImperativeHandle(ref, () => ({ insert: bridge.insert, setText: bridge.setText, runPluginCommand: bridge.runPluginCommand, addFile: bridge.addFile }), [bridge]);
+  // Another note opened in the same page (the first one is sent when the page says it is ready).
+  const shown = useRef(props.docId);
+  useEffect(() => {
+    if (shown.current === props.docId) return;
+    shown.current = props.docId;
+    bridge.sendOpen();
+  }, [props.docId, bridge]);
   useEffect(() => void bridge.sendEmbeds(), [props.embeds, bridge]);
   useEffect(() => bridge.sendPlugins(), [props.plugins, bridge]);
   useEffect(() => void bridge.sendTitle(), [props.title, bridge]);
+  useEffect(() => void bridge.sendReading(), [props.reading, bridge]);
   useEffect(() => void bridge.sendFiles(), [props.canvas, bridge]);
 
   useEffect(() => {

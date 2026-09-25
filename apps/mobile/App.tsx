@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, AppState, BackHandler, Platform, Share, StyleSheet, View } from 'react-native';
+import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, AppState, BackHandler, Linking, Platform, Share, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import * as Updates from 'expo-updates';
 import { IMAGE_FILE, basename, dirname, embedImage, join, moveFolder, noteTitle, relocateLinks, renamedNoteFile } from '@granite/core-notes';
 import { PLUGINS_DIR, discoverPlugins, readPluginCode, type CommandInfo, type InstalledPlugin } from '@granite/plugins';
-import { GoogleDriveProvider, VaultSync, type DeviceCode, type GoogleSession } from '@granite/core-cloud';
+import { GoogleDriveProvider, VaultSync, merge3, type DeviceCode, type GoogleSession } from '@granite/core-cloud';
 import { emptyCanvas, serializeCanvas } from '@granite/canvas/format';
 
 import { expoFs } from './src/expoFs';
@@ -26,11 +26,20 @@ import PluginsSheet from './src/components/PluginsSheet';
 import { nameOf, parentOf } from './src/tree';
 import { CATALOG, type CatalogPlugin } from './src/catalog';
 import Toast from './src/components/Toast';
+import Icon from './src/components/Icon';
 import type { NoteEditorHandle, PluginVaultRequest } from './src/components/NoteEditor.types';
 
 const isWeb = Platform.OS === 'web';
 const fs = isWeb ? memFs : expoFs;
 const SAVE_DELAY_MS = 700;
+/** Photos are re-compressed to this JPEG quality: a full-quality phone photo is several MB and is what makes a picture slow to reach the other device. */
+const IMAGE_QUALITY = 0.7;
+/** Icon of a plugin's "Turn this page into …" action in the ⋯ menu (a plugin not listed gets a puzzle piece). */
+const PAGE_ICONS: Record<string, ComponentProps<typeof Icon>['name']> = {
+  calendar: 'calendar-month-outline',
+  cards: 'card-text-outline',
+  excel: 'table-large',
+};
 const isCanvas = (rel: string) => rel.toLowerCase().endsWith('.canvas');
 
 async function readBytes(uri: string): Promise<Uint8Array> {
@@ -58,6 +67,8 @@ export default function App() {
   const [dirty, setDirty] = useState(false);
   const [sidebar, setSidebar] = useState(true);
   const [menu, setMenu] = useState(false);
+  /** Reading mode: notes open as read-only until it is switched off (the book button stays lit meanwhile). */
+  const [reading, setReading] = useState(false);
   const [settings, setSettings] = useState(false);
   const [picking, setPicking] = useState(false);
   /** Folder whose menu (long-press) is open, and the one waiting for a destination in the picker. */
@@ -82,6 +93,8 @@ export default function App() {
   const editor = useRef<NoteEditorHandle>(null);
   const openRel = useRef<string | null>(null);
   const pending = useRef<string | null>(null);
+  /** What the open note last held on disk (opened, reloaded or saved by us): the common starting point for merging typed-but-unsaved text with a newer copy from sync. */
+  const savedText = useRef('');
   /** The note's current text, for sharing. */
   const latest = useRef('');
   /** Always the current full-sync function, for callers declared before it. */
@@ -115,6 +128,7 @@ export default function App() {
     pending.current = null;
     try {
       await fs.writeTextFile(join(VAULT_DIR, rel), text);
+      savedText.current = text;
       setDirty(pending.current !== null);
     } catch (err) {
       pending.current = text;
@@ -123,7 +137,12 @@ export default function App() {
   }, [say]);
 
   const onChange = useCallback(
-    (text: string) => {
+    (text: string, path?: string) => {
+      // A late save from a note that is no longer open (a plugin block in the page): write it to its own file, not into the open one.
+      if (path && openRel.current !== null && path !== join(VAULT_DIR, openRel.current)) {
+        void fs.writeTextFile(path, text).then(() => syncNow.current());
+        return;
+      }
       pending.current = text;
       latest.current = text;
       setDirty(true);
@@ -142,6 +161,7 @@ export default function App() {
         openRel.current = rel;
         pending.current = null;
         latest.current = text;
+        savedText.current = text;
         setDirty(false);
         setOpen({ rel, text });
         setDocId((d) => d + 1);
@@ -213,14 +233,30 @@ export default function App() {
           // Reload the open note only if the sync rewrote or removed it, and never over unsaved edits.
           const rel = openRel.current;
           const touched = result.items.some(
-            (i) => i.path === rel && !i.error && (i.action === 'download' || i.action === 'delete-local'),
+            (i) => i.path === rel && !i.error && (i.action === 'download' || i.action === 'merge' || i.action === 'delete-local'),
           );
-          if (rel && touched && pending.current === null) {
+          if (rel && touched && pending.current !== null && !isCanvas(rel)) {
+            // Typed while syncing: merge that with the new copy instead of dropping either (the merged text is saved and synced next).
+            const disk = await fs.readTextFile(join(VAULT_DIR, rel)).catch(() => null);
+            const typed = pending.current;
+            const merged = disk !== null && typed !== null ? merge3(savedText.current, typed, disk) : null;
+            if (disk !== null && merged !== null) {
+              savedText.current = disk;
+              editor.current?.setText(merged);
+              onChange(merged);
+            }
+          } else if (rel && touched && pending.current === null) {
             const text = await fs.readTextFile(join(VAULT_DIR, rel)).catch(() => null);
-            if (text !== null) {
+            // Typed while the file was being read: those edits win, and reloading would wipe them.
+            if (text !== null && pending.current !== null) {
+              // keep what is on screen
+            } else if (text !== null) {
               latest.current = text;
+              savedText.current = text;
               setOpen({ rel, text });
-              setRevision((r) => r + 1);
+              // A note is updated in place (caret, scroll and drawn plugin blocks stay); a canvas is rebuilt.
+              if (isCanvas(rel)) setRevision((r) => r + 1);
+              else editor.current?.setText(text);
             } else {
               openRel.current = null;
               setOpen(null);
@@ -234,7 +270,7 @@ export default function App() {
         setSyncing(false);
       }
     },
-    [engine, flush, refresh, say],
+    [engine, flush, refresh, say, onChange],
   );
   const runSync = useCallback(() => doSync(false), [doSync]);
   syncNow.current = runSync;
@@ -604,7 +640,7 @@ export default function App() {
     if (!rel) return;
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) return say('Photo permission denied');
-    const picked = await ImagePicker.launchImageLibraryAsync({ quality: 1 });
+    const picked = await ImagePicker.launchImageLibraryAsync({ quality: IMAGE_QUALITY });
     if (picked.canceled || !picked.assets[0]) return;
     const asset = picked.assets[0];
     const fileName = asset.fileName ?? `image${extFromMime(asset.mimeType)}`;
@@ -657,17 +693,22 @@ export default function App() {
       {open ? (
         <NoteScreen
           ref={editor}
-          key={`${docId}:${revision}`}
+          // A note is shown by the page that is already loaded; a canvas (or moving between a note and a canvas) rebuilds it.
+          key={isCanvas(open.rel) ? `canvas:${docId}:${revision}` : 'note'}
+          docId={docId}
           path={join(VAULT_DIR, open.rel)}
           initialText={open.text}
           embeds={scan.images}
           title={noteTitle(basename(open.rel))}
           onRename={renameNote}
           dirty={dirty}
+          reading={reading}
+          onToggleReading={() => setReading((r) => !r)}
           onChange={onChange}
           onSwipeRight={() => setSidebar(true)}
           plugins={runningPlugins}
           onNotice={say}
+          onOpenUrl={(url) => void Linking.openURL(url)}
           onVault={pluginVault}
           onPluginCommands={setPluginCommands}
           onPluginStatus={(id, error) =>
@@ -716,7 +757,7 @@ export default function App() {
                   .filter((c) => c.page)
                   .map((c) => ({
                     label: c.name,
-                    icon: 'table-large' as const,
+                    icon: PAGE_ICONS[c.pluginId] ?? ('puzzle-outline' as const),
                     onPress: () => void editor.current?.runPluginCommand(c.pluginId, c.id).catch((e: unknown) => say(e instanceof Error ? e.message : String(e))),
                   })),
               ]

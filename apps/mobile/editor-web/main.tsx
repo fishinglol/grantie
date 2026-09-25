@@ -25,6 +25,7 @@ import "./editor.css";
  *              plugin-run { n, pluginId, commandId } run a plugin command
  *              vault-result { id, ok, value|error } answer to a plugin's vault request
  *              title { title }                     the note's name changed (a rename went through)
+              reading { on }                      reading mode was switched on / off (also sent as `reading` in init): no typing while on
  *              rename-result { n, ok }             answer to a rename
  *              swipe-right                          a quick swipe to the right: the app opens the sidebar
  * page → app   rename { n, title }                  the heading was edited: rename the file
@@ -42,10 +43,11 @@ import "./editor.css";
  * little extra memory), and reads / writes it with the same `vault` requests. The plugin's call finishes when the sheet closes.
  */
 type Inbound =
-  | { type: "init"; value: string; notePath: string; embeds: [string, string][]; title: string; canvas?: CanvasInfo }
+  | { type: "init"; value: string; notePath: string; embeds: [string, string][]; title: string; reading: boolean; canvas?: CanvasInfo }
   | { type: "files"; notes: string[]; images: string[] }
   | { type: "add-file"; file: string }
   | { type: "title"; title: string }
+  | { type: "reading"; on: boolean }
   | { type: "rename-result"; n: number; ok: boolean }
   | { type: "value"; value: string }
   | { type: "embeds"; embeds: [string, string][] }
@@ -63,6 +65,9 @@ declare global {
 }
 
 const send = (message: object) => window.ReactNativeWebView?.postMessage(JSON.stringify(message));
+
+/** A tap on a link chip: the app opens the address in the phone's browser. */
+const openLink = (url: string) => send({ type: "open-link", url });
 
 /** Note links hold plain paths; the browser needs them percent-encoded (spaces, #, …). */
 function toUrl(path: string): string {
@@ -198,13 +203,14 @@ const SHEET_CLOSE_PULL = 110;
  * A note in a sheet that slides up over the bottom of the page (the calendar stays visible above it): a heading, a handle to
  * pull it down, and a second editor. It is the same page and the same JS as the main editor, so it costs no second WebView.
  */
-function Sheet({ name, text, notePath, embeds, blocks, editor, onChange, onClose }: {
+function Sheet({ name, text, notePath, embeds, blocks, editor, reading, onChange, onClose }: {
   name: string;
   text: string;
   notePath: string;
   embeds: ReadonlyMap<string, string>;
   blocks: BlockBridge;
   editor: RefObject<LiveEditorHandle | null>;
+  reading: boolean;
   onChange: (text: string) => void;
   onClose: () => void;
 }) {
@@ -238,7 +244,7 @@ function Sheet({ name, text, notePath, embeds, blocks, editor, onChange, onClose
           </div>
         </div>
         <div className="sheet-body">
-          <LiveEditor ref={editor} value={text} embeds={embeds} blocks={blocks} notePath={notePath} toUrl={toUrl} onChange={onChange} />
+          <LiveEditor ref={editor} readOnly={reading} value={text} embeds={embeds} blocks={blocks} notePath={notePath} toUrl={toUrl} onOpenLink={openLink} onChange={onChange} />
         </div>
       </div>
     </div>
@@ -253,6 +259,7 @@ function Page() {
   const [notePath, setNotePath] = useState<string | null>(null);
   const [embeds, setEmbeds] = useState<ReadonlyMap<string, string>>(new Map());
   const [title, setTitle] = useState("");
+  const [reading, setReading] = useState(false);
   const renames = useRef(new Map<number, (ok: boolean) => void>());
   const renameSeq = useRef(0);
   const editor = useRef<LiveEditorHandle>(null);
@@ -320,6 +327,7 @@ function Page() {
       embeds={embeds}
       blocks={blocks}
       editor={sheetEditor}
+      reading={reading}
       onChange={onSheetChange}
       onClose={() => void closeSheet()}
     />
@@ -328,6 +336,10 @@ function Page() {
   const started = useRef(new Map<string, string>());
 
   useEffect(() => {
+    const liveSession = () => {
+      if (!editor.current) throw new Error("Open a note first");
+      return editor.current.sync;
+    };
     const h = new PluginHost(
       {
         getText: () => editor.current?.getText() ?? "",
@@ -342,6 +354,14 @@ function Page() {
           await vault({ op: "open", path });
         },
         notice: (message) => send({ type: "notice", message }),
+        openUrl: openLink,
+        sync: {
+          start: (listener) => liveSession().start(listener),
+          stop: () => editor.current?.sync.stop(),
+          remote: (changes) => liveSession().remote(changes),
+          ack: () => liveSession().ack(),
+          setCursors: (cursors) => liveSession().setCursors(cursors),
+        },
       },
       () => send({ type: "plugin-commands", commands: h.commands() }),
       blocks.changed,
@@ -366,11 +386,13 @@ function Page() {
         setEmbeds(new Map(msg.embeds));
         setNotePath(msg.notePath);
         setTitle(msg.title);
+        setReading(msg.reading);
         setCanvas(msg.canvas ?? null);
         setValue(msg.value);
       } else if (msg.type === "files") setCanvas((c) => c && { ...c, notes: msg.notes, images: msg.images });
       else if (msg.type === "add-file") board.current?.addFile(msg.file);
       else if (msg.type === "title") setTitle(msg.title);
+      else if (msg.type === "reading") setReading(msg.on);
       else if (msg.type === "rename-result") {
         renames.current.get(msg.n)?.(msg.ok);
         renames.current.delete(msg.n);
@@ -430,9 +452,10 @@ function Page() {
     }
   }
 
-  const onChange = (text: string) => {
-    setValue(text);
-    send({ type: "change", value: text });
+  const onChange = (text: string, path?: string) => {
+    // A note that is no longer showing (a plugin block saving late) is saved, but must not replace the text on screen.
+    if (!path || path === notePath) setValue(text);
+    send({ type: "change", value: text, path });
   };
 
   if (canvas && notePath) {
@@ -441,6 +464,7 @@ function Page() {
         <CanvasView
           ref={board}
           value={value}
+          readOnly={reading}
           onChange={onChange}
           canvasPath={notePath}
           vaultDir={canvas.vaultDir}
@@ -461,6 +485,7 @@ function Page() {
     <div className="page">
       <LiveEditor
         ref={editor}
+        readOnly={reading}
         value={value}
         embeds={embeds}
         blocks={blocks}
@@ -471,6 +496,7 @@ function Page() {
           send({ type: "rename", n, title: t });
         }) } : undefined}
         toUrl={toUrl}
+        onOpenLink={openLink}
         onChange={onChange}
       />
       <FormatBar onFormat={(kind) => (document.activeElement?.closest(".sheet") ? sheetEditor : editor).current?.format(kind)} />
