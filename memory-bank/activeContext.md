@@ -82,6 +82,13 @@ read-only. Confirmed: desktop only; split via ⋯ → "Split right" (no tabs); r
 - Also this session: a new note is created **empty** (no `# name` line; the title above the text is the name).
 - Checked in the browser previews only (desktop preview + Expo web at phone size); not on the Samsung phone or in the Tauri window.
 
+## Session 2026-09-25 (after the restructure) — "the plugin Store is empty"
+User (Thai) saw nothing in the plugin Store. Checked: the Store is **not** empty (desktop preview lists Calendar, Cards, Dropdown, Excel, …; all 8 examples pass `parseManifest`, have 3+ pictures and
+are in the phone's generated `pluginCatalog.ts`). The trap was the screen: **Plugins** (desktop: gear bottom-left → Plugins; phone: sidebar → gear → Plugins) opened on the **Installed** tab, which says
+"No plugins installed yet" until something is installed; the Store is the second tab. Fix: both `PluginsDialog` and `PluginsSheet` now open on the Store when nothing is installed (desktop: once, when the list first loads).
+Also re-ran everything after the user's restructure: plugins 88, live-editor 4, core-cloud 77 pass; both apps `tsc -b` clean (still the old `vite.config.ts` note). If the **phone** Store is still empty, the phone is on an old
+bundle (`src/pluginCatalog.ts` and `editorHtml.ts` are generated: `npm run build:editor`, then Reload in Expo Go or `npm run ship`; plain `npx expo start` does not run the `prestart` hook).
+
 ## Session 2026-09-25 (night) — phone + laptop at once: faster, steadier Drive sync (user chose to stay on Drive, no relay server)
 User (Thai): phone and laptop open together, edits/pictures reach the other side slowly and the page "flickers"; some typed text in tables/cards was lost. Chose **stay on Drive** (not the Yjs relay).
 Done (tests: `core-cloud` 60 pass; `tsc` clean except the old `vite.config.ts` note):
