@@ -710,3 +710,11 @@ Cause found on the user's Mac: `/Applications/Granite.app` and `tauri dev` were 
 the installed app); and `VaultSync` no longer makes a conflict copy when both sides hold identical bytes or when the conflicting file is itself a
 "(Drive copy …)" file (local wins). Not verified against real Drive; a running phone app syncing the same vault could still cause real conflicts.
 The 6 leftover copies in `~/Documents/GraniteVault-new` (and Drive) were left for the user to delete.
+
+### Popup plugin (2026-09-25, no API change; desktop + phone)
+User (Thai, with a screenshot of the phone's open-beside bottom sheet) asked for a plugin named "Popup" that appears in the `//` list and goes in the Store, and said it must work with the other plugins too.
+Asked which meaning; chosen: **a note-link block**. `examples/plugins/popup` (id `popup`, 1.0.0, `minApiVersion` 4, permissions `editor.blocks`, `editor.input`, `vault.read`): `//` -> Popup inserts a ```` ```popup ```` fence
+(`note: <vault path>`), the block shows a searchable note picker, then a card (name + first two body lines, front matter skipped); a tap calls `granite.vault.open(path, { beside: true })` (phone: bottom sheet, desktop: split), pencil re-picks,
+bin removes, a missing note says so. No new API or dependency; it reuses what Calendar uses. Tests: `packages/plugins/test/popup.test.ts` (+ entry in `menu-items.test.ts`; 97 pass).
+Store pictures are real captures (headless Chrome over CDP against the desktop dev server, 4 x 1440x900) with Calendar, Cards, Dropdown and Popup installed together, so the `//` list shows them side by side.
+**Not verified**: the phone (bottom sheet from a Popup card, touch, keyboard) and the real Tauri window. The picker also lists the note it is in (opening it does nothing). Moving/renaming the target note breaks the card (path, not `[[link]]`).

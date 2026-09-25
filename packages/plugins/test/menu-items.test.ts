@@ -11,6 +11,7 @@ const entries = [
   { id: "excel", lang: "sheet", name: "Spreadsheet" },
   { id: "cards", lang: "cards", name: "Cards" },
   { id: "dropdown", lang: "dropdown", name: "Dropdown" },
+  { id: "popup", lang: "popup", name: "Popup" },
 ];
 
 function load(id: string) {

@@ -1,0 +1,14 @@
+{
+  "id": "popup",
+  "name": "Popup",
+  "version": "1.0.0",
+  "description": "A card in your note that opens another note as a popup. Type // on an empty line and choose Popup, pick a note, then tap the card: on the phone the note slides up over the page you are on, on the desktop it opens in the other half of a split view. Stored as plain text.",
+  "tagline": "Type // to link a note that opens as a popup",
+  "author": "Granite",
+  "minApiVersion": 4,
+  "permissions": [
+    "editor.blocks",
+    "editor.input",
+    "vault.read"
+  ]
+}

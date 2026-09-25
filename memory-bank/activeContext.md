@@ -1,6 +1,6 @@
 # Active Context
 
-_Last updated: 2026-09-25_
+_Last updated: 2026-09-25 (Popup plugin added; see `progress.md` "Popup plugin")_
 
 ## Current focus
 **Phone app + sync** (branch `feat/mobile-live-editor`, pushed; PR into `main` not opened yet) — see
