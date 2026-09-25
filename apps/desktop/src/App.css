@@ -701,6 +701,8 @@ button.skip:disabled { opacity: 0.4; cursor: default; }
 .file-list button { user-select: none; }
 .app.is-dragging, .app.is-dragging * { cursor: grabbing !important; user-select: none; }
 .file-list li.dragging { opacity: 0.4; }
+/* Rows picked with Shift / Ctrl / Cmd + click. */
+.file-list li.picked > button { background: rgba(232, 147, 95, 0.16); outline: 1px dotted var(--accent); outline-offset: -1px; }
 .file-list li.drop-target > button { background: rgba(232, 147, 95, 0.18); outline: 1px dashed var(--accent); outline-offset: -1px; }
 .file-list.drop-target { background: rgba(232, 147, 95, 0.06); }
 .drag-ghost {

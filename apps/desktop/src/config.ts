@@ -19,4 +19,4 @@ export const REMOTE_FOLDER_NAME = "Granite Vault";
  * How often the app checks for changes while it is open. The check is one cheap request; a full
  * sync only runs when something actually changed (see `VaultSync.syncIfChanged`).
  */
-export const SYNC_INTERVAL_MS = 5_000;
+export const SYNC_INTERVAL_MS = 3_000;

@@ -1,4 +1,5 @@
 import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { join } from "@granite/core-notes";
 import type { LiveEditorHandle } from "@granite/live-editor";
 import { API_VERSION, PLUGINS_DIR, discoverPlugins, readPluginCode, type CommandInfo, type InstalledPlugin } from "@granite/plugins";
@@ -40,6 +41,11 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
 
   useEffect(() => {
     if (!vaultDir) return;
+    /** The open note's live-session port (it follows the note showing in the active pane). */
+    const liveSession = () => {
+      if (!latest.current.hasNote || !editor.current) throw new Error("Open a note first");
+      return editor.current.sync;
+    };
     const h = new PluginHost(
       {
         getText: () => editor.current?.getText() ?? "",
@@ -60,6 +66,14 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
         },
         openNote: (rel, options) => latest.current.openNote(rel, options),
         notice: (m) => latest.current.notify(m),
+        openUrl: (url) => void openUrl(url),
+        sync: {
+          start: (listener) => liveSession().start(listener),
+          stop: () => editor.current?.sync.stop(),
+          remote: (changes) => liveSession().remote(changes),
+          ack: () => liveSession().ack(),
+          setCursors: (cursors) => liveSession().setCursors(cursors),
+        },
       },
       () => setCommands(h.commands()),
       blocks.changed,

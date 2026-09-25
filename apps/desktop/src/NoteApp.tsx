@@ -1,8 +1,9 @@
 import { Fragment, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { readFile } from "@tauri-apps/plugin-fs";
 import { basename, dirname, embedImage, join, moveFolder, noteTitle, NoteRepository, relocateLinks, renamedNoteFile } from "@granite/core-notes";
-import { GoogleDriveProvider, VaultSync, type GoogleSession, type SyncResult } from "@granite/core-cloud";
+import { GoogleDriveProvider, VaultSync, merge3, type GoogleSession, type SyncResult } from "@granite/core-cloud";
 
 import { REMOTE_FOLDER_NAME, SYNC_INTERVAL_MS } from "./config";
 import DeleteDialog from "./DeleteDialog";
@@ -45,6 +46,8 @@ type SyncState =
 interface OpenDoc {
   text: string;
   dirty: boolean;
+  /** What was last read from / written to disk, the common starting point when a sync brings another version while there are unsaved edits. */
+  saved?: string;
 }
 
 export interface NoteAppProps {
@@ -98,7 +101,7 @@ export default function NoteApp({
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState<"note" | "folder" | "canvas" | null>(null);
   /** Note or folder being dragged in the sidebar, and the folder ("" = root) it is hovering over. */
-  const [drag, setDrag] = useState<{ file: string; folder: boolean; x: number; y: number; over: string | null } | null>(null);
+  const [drag, setDrag] = useState<{ file: string; folder: boolean; x: number; y: number; over: string | null; count?: number } | null>(null);
   const justDragged = useRef(false);
   const editorRefs = [useRef<LiveEditorHandle>(null), useRef<LiveEditorHandle>(null)];
   /** Per pane, when it shows a canvas. */
@@ -115,8 +118,12 @@ export default function NoteApp({
   const nativeDrop = useRef(false);
   const [toast, setToast] = useState<string | null>(null);
   /** Right-click menu on a note or folder, and the one waiting on a "Delete?" answer. */
-  const [menu, setMenu] = useState<{ file: string; folder: boolean; x: number; y: number } | null>(null);
+  const [menu, setMenu] = useState<{ file: string; folder: boolean; x: number; y: number; many?: boolean } | null>(null);
   const [deleting, setDeleting] = useState<{ file: string; folder: boolean } | null>(null);
+  /** Sidebar rows picked with Shift / Ctrl / Cmd + click (`d:folder`, `f:file`), and the row a Shift range starts from. */
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const pickAnchor = useRef<string | null>(null);
+  const [deletingMany, setDeletingMany] = useState<string[] | null>(null);
   const [showPlugins, setShowPlugins] = useState(false);
 
   // Status messages surface as a short-lived toast; routine load/auto-save chatter is skipped.
@@ -150,9 +157,11 @@ export default function NoteApp({
         }
       }
       await walk(vaultDirectory, "", false);
-      setVaultFiles(files.sort());
-      setVaultFolders(folders.sort());
-      setVaultImages(images);
+      // Only when something differs: a new Map every sync would make the editor redraw the whole note (a flicker) for nothing.
+      const same = <T,>(a: T[], b: T[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+      setVaultFiles((prev) => (same(prev, files.sort()) ? prev : files));
+      setVaultFolders((prev) => (same(prev, folders.sort()) ? prev : folders));
+      setVaultImages((prev) => (prev.size === images.size && [...images].every(([k, v]) => prev.get(k) === v) ? prev : images));
     } catch {
       // ignore
     }
@@ -176,7 +185,9 @@ export default function NoteApp({
   /** Read a note from disk into `docs`. */
   const reloadDoc = useCallback(
     async (p: string) => {
-      putDoc(p, { text: (await repo.load(p)).raw, dirty: false });
+      const { raw } = await repo.load(p);
+      // Typed in while the file was being read: those edits win over what was on disk.
+      if (!docsRef.current[p]?.dirty) putDoc(p, { text: raw, dirty: false, saved: raw });
     },
     [putDoc],
   );
@@ -265,9 +276,17 @@ export default function NoteApp({
             if (!open) continue;
             const rel = open.startsWith(dir) ? open.slice(dir.length).replace(/^[\\/]/, "") : null;
             const touched = result.items.some(
-              (i) => i.path === rel && !i.error && (i.action === "download" || i.action === "delete-local"),
+              (i) => i.path === rel && !i.error && (i.action === "download" || i.action === "merge" || i.action === "delete-local"),
             );
-            if (!touched || docsRef.current[open]?.dirty) continue;
+            if (!touched) continue;
+            if (docsRef.current[open]?.dirty) {
+              // Unsaved edits: merge them with the new version instead of dropping either.
+              const disk = (await tauriFs.exists(open)) ? (await repo.load(open)).raw : null;
+              const cur = docsRef.current[open];
+              const merged = disk !== null && cur?.dirty && cur.saved !== undefined ? merge3(cur.saved, cur.text, disk) : null;
+              if (disk !== null && merged !== null) putDoc(open, { text: merged, dirty: true, saved: disk });
+              continue;
+            }
             if (await tauriFs.exists(open)) await reloadDoc(open);
             else retarget((p) => (p === open ? null : undefined));
           }
@@ -298,7 +317,8 @@ export default function NoteApp({
         await repo.save(p, doc.text);
         // Typing during the save keeps the note dirty.
         const now = docsRef.current[p];
-        if (now?.text === doc.text) putDoc(p, { text: now.text, dirty: false });
+        if (now?.text === doc.text) putDoc(p, { text: now.text, dirty: false, saved: doc.text });
+        else if (now) putDoc(p, { ...now, saved: doc.text });
         setStatus(`Saved ${basename(p)}`);
         if (dir) await refreshVaultFiles(dir);
         void runSync();
@@ -328,7 +348,7 @@ export default function NoteApp({
   useEffect(() => {
     const unsaved = Object.keys(docs).filter((p) => docs[p]!.dirty);
     if (unsaved.length === 0) return;
-    const timer = setTimeout(() => unsaved.forEach((p) => void saveDoc(p)), 1500);
+    const timer = setTimeout(() => unsaved.forEach((p) => void saveDoc(p)), 800);
     return () => clearTimeout(timer);
   }, [docs, saveDoc]);
 
@@ -538,6 +558,36 @@ export default function NoteApp({
     [dir, retarget, refreshVaultFiles, runSync],
   );
 
+  /** Delete the picked rows in one go (one rescan, one sync). A file inside a picked folder goes with the folder. */
+  const deleteMany = useCallback(
+    async (keys: string[]) => {
+      if (!dir) return;
+      const folders = keys.filter((k) => k.startsWith("d:")).map((k) => k.slice(2));
+      const top = folders.filter((d) => !folders.some((o) => o !== d && d.startsWith(`${o}/`)));
+      const files = keys.filter((k) => k.startsWith("f:")).map((k) => k.slice(2)).filter((f) => !top.some((d) => f.startsWith(`${d}/`)));
+      try {
+        for (const f of files) {
+          const full = join(dir, f);
+          retarget((p) => (p === full ? null : undefined)); // so auto-save can't bring it back
+          await tauriFs.removeFile(full);
+        }
+        for (const d of top) {
+          const full = join(dir, d);
+          retarget((p) => (p.startsWith(`${full}/`) ? null : undefined));
+          await tauriFs.removeDir(full);
+        }
+        setActiveFolder((cur) => (top.some((d) => cur === d || cur.startsWith(`${d}/`)) ? "" : cur));
+        setStatus(`Deleted ${files.length + top.length} items`);
+        void runSync();
+      } catch (e) {
+        setStatus(`Error deleting: ${String(e)}`);
+      } finally {
+        await refreshVaultFiles(dir);
+      }
+    },
+    [dir, retarget, refreshVaultFiles, runSync],
+  );
+
   /** Move a folder (with everything in it) into `targetFolder` ("" = vault root), keeping links out of it working. */
   const moveFolderTo = useCallback(
     async (folder: string, targetFolder: string) => {
@@ -580,6 +630,8 @@ export default function NoteApp({
   /** Mouse-based drag (not HTML5 DnD, which Tauri's window-level file-drop handling can swallow). */
   const beginDrag = (e: React.MouseEvent, file: string, folder = false) => {
     if (e.button !== 0) return;
+    // Dragging one of several picked rows takes all of them (a folder that is picked along with something inside it takes that with it).
+    const group = picked.has(`${folder ? "d" : "f"}:${file}`) && picked.size > 1 ? [...picked] : null;
     const startX = e.clientX;
     const startY = e.clientY;
     let started = false;
@@ -592,7 +644,7 @@ export default function NoteApp({
     const onMove = (ev: MouseEvent) => {
       if (!started && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 5) return;
       started = true;
-      setDrag({ file, folder, x: ev.clientX, y: ev.clientY, over: dropTarget(ev) });
+      setDrag({ file, folder, x: ev.clientX, y: ev.clientY, over: dropTarget(ev), count: group?.length });
     };
     const onUp = (ev: MouseEvent) => {
       window.removeEventListener("mousemove", onMove);
@@ -603,12 +655,27 @@ export default function NoteApp({
       setDrag(null);
       // A note dropped on a canvas becomes a card there.
       const pane = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>(".editor-pane .granite-canvas")?.closest<HTMLElement>(".editor-pane");
-      if (pane && !folder) {
-        canvasRefs[Number(pane.dataset.pane)]?.current?.addFile(file, { x: ev.clientX, y: ev.clientY });
+      if (pane && (group || !folder)) {
+        const cards = group ? group.filter((k) => k.startsWith("f:")).map((k) => k.slice(2)) : [file];
+        cards.forEach((f, n) => canvasRefs[Number(pane.dataset.pane)]?.current?.addFile(f, { x: ev.clientX + n * 30, y: ev.clientY + n * 30 }));
         return;
       }
       const target = dropTarget(ev);
-      if (target !== null) void (folder ? moveFolderTo : moveNote)(file, target);
+      if (target === null) return;
+      if (!group) return void (folder ? moveFolderTo : moveNote)(file, target);
+      // One after the other (each move rescans and syncs); a folder can't go into itself, and a file inside a picked folder moves with it.
+      const folders = group.filter((k) => k.startsWith("d:")).map((k) => k.slice(2));
+      const inside = (f: string, d: string) => f.startsWith(`${d}/`);
+      void (async () => {
+        for (const d of folders) {
+          if (folders.some((o) => o !== d && inside(d, o)) || target === d || inside(target, d)) continue;
+          await moveFolderTo(d, target);
+        }
+        for (const f of group.filter((k) => k.startsWith("f:")).map((k) => k.slice(2))) {
+          if (!folders.some((d) => inside(f, d))) await moveNote(f, target);
+        }
+        setPicked(new Set());
+      })();
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
@@ -748,7 +815,7 @@ export default function NoteApp({
     void readBrowserFiles([...clip.files]).then((files) => attachFiles(files, undefined, pane));
   };
 
-  const editDoc = (p: string, text: string) => putDoc(p, { text, dirty: true });
+  const editDoc = (p: string, text: string) => putDoc(p, { text, dirty: true, saved: docsRef.current[p]?.saved });
 
   /** Split right: a second pane, empty until a note is chosen from the list it shows; it becomes the active one. */
   const splitRight = () => {
@@ -809,6 +876,70 @@ export default function NoteApp({
     return { dirs, parentOf };
   }, [vaultFiles, vaultFolders]);
 
+  /** Sidebar rows in the order they are drawn (collapsed folders hide theirs). */
+  const visibleKeys = (rel = ""): string[] => {
+    const out: string[] = [];
+    const children = tree.dirs.get(rel);
+    for (const f of children?.folders ?? []) {
+      out.push(`d:${f}`);
+      if (!collapsed.has(f)) out.push(...visibleKeys(f));
+    }
+    for (const f of children?.files ?? []) out.push(`f:${f}`);
+    return out;
+  };
+  /** Shift+click picks the rows from the last clicked one to this one; Ctrl/Cmd+click adds or removes this one. Returns true when it did. */
+  const pickClick = (e: React.MouseEvent, key: string): boolean => {
+    if (e.shiftKey) {
+      const order = visibleKeys();
+      const start = order.indexOf(pickAnchor.current ?? (dir && path?.startsWith(`${dir}/`) ? `f:${path.slice(dir.length + 1)}` : key));
+      const end = order.indexOf(key);
+      const [a, b] = start < 0 ? [end, end] : [Math.min(start, end), Math.max(start, end)];
+      setPicked(new Set(order.slice(a, b + 1)));
+      return true;
+    }
+    if (e.metaKey || e.ctrlKey) {
+      pickAnchor.current = key;
+      setPicked((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      });
+      return true;
+    }
+    pickAnchor.current = key;
+    setPicked((prev) => (prev.size ? new Set() : prev));
+    return false;
+  };
+  /** Right-click: on a picked row the menu acts on all picked rows; on any other row the picks are dropped. */
+  const openMenu = (e: React.MouseEvent, key: string, file: string, folder: boolean) => {
+    e.preventDefault();
+    const many = picked.has(key) && picked.size > 1;
+    if (!many) setPicked((prev) => (prev.size ? new Set() : prev));
+    setMenu({ file, folder, x: e.clientX, y: e.clientY, many });
+  };
+
+  // Rows that no longer exist (deleted, moved) drop out of the pick; Escape clears it; Delete / Backspace removes the picked rows.
+  useEffect(() => {
+    setPicked((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Set([...prev].filter((k) => (k.startsWith("d:") ? vaultFolders.includes(k.slice(2)) : vaultFiles.includes(k.slice(2)))));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [vaultFiles, vaultFolders]);
+  useEffect(() => {
+    if (picked.size === 0) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPicked(new Set());
+      else if ((e.key === "Delete" || e.key === "Backspace") && !(e.target as HTMLElement | null)?.closest("input, textarea, [contenteditable], .cm-editor")) {
+        e.preventDefault();
+        setDeletingMany([...picked]);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [picked]);
+
   const allCollapsed = vaultFolders.length > 0 && vaultFolders.every((f) => collapsed.has(f));
 
   const renderDir = (rel: string, depth: number): ReactNode[] => {
@@ -838,19 +969,16 @@ export default function NoteApp({
         <li
           key={`d:${folder}`}
           data-drop={folder}
-          className={[drag?.over === folder ? "drop-target" : "", drag?.file === folder ? "dragging" : ""].join(" ").trim()}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            setMenu({ file: folder, folder: true, x: e.clientX, y: e.clientY });
-          }}
+          className={[drag?.over === folder ? "drop-target" : "", drag?.file === folder || (drag?.count && picked.has(`d:${folder}`)) ? "dragging" : "", picked.has(`d:${folder}`) ? "picked" : ""].join(" ").trim()}
+          onContextMenu={(e) => openMenu(e, `d:${folder}`, folder, true)}
         >
           <button
             style={indent}
             title={folder}
             className={folder === activeFolder ? "active" : ""}
             onMouseDown={(e) => beginDrag(e, folder, true)}
-            onClick={() => {
-              if (justDragged.current) return;
+            onClick={(e) => {
+              if (justDragged.current || pickClick(e, `d:${folder}`)) return;
               setActiveFolder(folder);
               setCollapsed((prev) => {
                 const next = new Set(prev);
@@ -875,17 +1003,14 @@ export default function NoteApp({
         <li
           key={`f:${file}`}
           data-drop={tree.parentOf(file)}
-          className={[isActive ? "active" : "", drag?.file === file ? "dragging" : ""].join(" ").trim()}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            setMenu({ file, folder: false, x: e.clientX, y: e.clientY });
-          }}
+          className={[isActive ? "active" : "", drag?.file === file || (drag?.count && picked.has(`f:${file}`)) ? "dragging" : "", picked.has(`f:${file}`) ? "picked" : ""].join(" ").trim()}
+          onContextMenu={(e) => openMenu(e, `f:${file}`, file, false)}
         >
           <button
             style={indent}
             onMouseDown={(e) => beginDrag(e, file)}
-            onClick={() => {
-              if (justDragged.current) return;
+            onClick={(e) => {
+              if (justDragged.current || pickClick(e, `f:${file}`)) return;
               setActiveFolder(tree.parentOf(file));
               void load(fullPath);
             }}
@@ -908,7 +1033,9 @@ export default function NoteApp({
       {drag && (
         <div className="drag-ghost" style={{ left: drag.x + 12, top: drag.y + 12 }}>
           {drag.folder ? <FolderIcon /> : isCanvas(drag.file) ? <CanvasIcon /> : <FileIcon />}
-          <span>{drag.folder ? drag.file.slice(drag.file.lastIndexOf("/") + 1) : noteTitle(drag.file.slice(drag.file.lastIndexOf("/") + 1))}</span>
+          <span>
+            {drag.count ? `${drag.count} items` : drag.folder ? drag.file.slice(drag.file.lastIndexOf("/") + 1) : noteTitle(drag.file.slice(drag.file.lastIndexOf("/") + 1))}
+          </span>
         </div>
       )}
 
@@ -1046,7 +1173,8 @@ export default function NoteApp({
                         value={p ? (docs[p]?.text ?? "") : ""}
                         notePath={p}
                         toUrl={convertFileSrc}
-                        onChange={(text) => p && editDoc(p, text)}
+                        onOpenLink={(url) => void openUrl(url)}
+                        onChange={(text, changedPath) => (changedPath ?? p) && editDoc((changedPath ?? p)!, text)}
                       />
                     )}
                   </>
@@ -1075,11 +1203,12 @@ export default function NoteApp({
               role="menuitem"
               className="danger"
               onClick={() => {
-                setDeleting({ file: menu.file, folder: menu.folder });
+                if (menu.many) setDeletingMany([...picked]);
+                else setDeleting({ file: menu.file, folder: menu.folder });
                 setMenu(null);
               }}
             >
-              Delete
+              {menu.many ? `Delete ${picked.size} items` : "Delete"}
             </button>
           </div>
         </div>
@@ -1094,6 +1223,20 @@ export default function NoteApp({
             const { file, folder } = deleting;
             setDeleting(null);
             void (folder ? deleteFolder(file) : deleteNote(file));
+          }}
+        />
+      )}
+      {deletingMany && (
+        <DeleteDialog
+          name=""
+          count={deletingMany.length}
+          synced={Boolean(session)}
+          onCancel={() => setDeletingMany(null)}
+          onConfirm={() => {
+            const keys = deletingMany;
+            setDeletingMany(null);
+            setPicked(new Set());
+            void deleteMany(keys);
           }}
         />
       )}
