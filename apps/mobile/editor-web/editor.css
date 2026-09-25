@@ -80,7 +80,9 @@ body {
 .sheet-grab { touch-action: none; padding: 8px 18px 0; cursor: grab; }
 .sheet-handle { width: 40px; height: 5px; margin: 0 auto; border-radius: 3px; background: var(--text-faint); }
 .sheet-head { display: flex; align-items: center; gap: 8px; padding: 10px 0 2px; }
-.sheet-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 22px; font-weight: 700; color: var(--h); }
+.sheet-name { flex: 1; min-width: 0; }
+.sheet-name .note-title { display: block; width: 100%; padding: 0; border: 0; outline: none; background: transparent; color: var(--h); font: 700 22px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; text-overflow: ellipsis; }
+.sheet-name .note-title:focus { box-shadow: inset 0 -2px 0 var(--accent); }
 .sheet-close { width: 34px; height: 34px; border: 0; border-radius: 17px; background: var(--panel); color: var(--text-dim); font-size: 20px; line-height: 1; }
 .sheet-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .sheet-body .live-editor { flex: 1; height: auto; min-height: 0; }

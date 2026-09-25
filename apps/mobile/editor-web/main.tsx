@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { createRoot } from "react-dom/client";
-import { LiveEditor, type LiveEditorHandle } from "@granite/live-editor";
+import { LiveEditor, NoteTitle, type LiveEditorHandle } from "@granite/live-editor";
 import { CanvasView, type CanvasHandle } from "@granite/canvas";
 import type { InlineFormat } from "@granite/core-notes";
 import { BlockBridge, PluginHost } from "@granite/plugins/host";
@@ -203,7 +203,7 @@ const SHEET_CLOSE_PULL = 110;
  * A note in a sheet that slides up over the bottom of the page (the calendar stays visible above it): a heading, a handle to
  * pull it down, and a second editor. It is the same page and the same JS as the main editor, so it costs no second WebView.
  */
-function Sheet({ name, text, notePath, embeds, blocks, editor, reading, onChange, onClose }: {
+function Sheet({ name, text, notePath, embeds, blocks, editor, reading, onChange, onRename, onClose }: {
   name: string;
   text: string;
   notePath: string;
@@ -212,6 +212,7 @@ function Sheet({ name, text, notePath, embeds, blocks, editor, reading, onChange
   editor: RefObject<LiveEditorHandle | null>;
   reading: boolean;
   onChange: (text: string) => void;
+  onRename: (title: string) => Promise<boolean>;
   onClose: () => void;
 }) {
   const [pull, setPull] = useState<number | null>(null);
@@ -237,7 +238,9 @@ function Sheet({ name, text, notePath, embeds, blocks, editor, reading, onChange
         >
           <div className="sheet-handle" />
           <div className="sheet-head">
-            <span className="sheet-name">{name}</span>
+            <div className="sheet-name" onPointerDown={(e) => e.stopPropagation()}>
+              <NoteTitle name={name} onRename={onRename} readOnly={reading} />
+            </div>
             <button type="button" className="sheet-close" aria-label="Close" onPointerDown={(e) => e.stopPropagation()} onClick={onClose}>
               ×
             </button>
@@ -267,7 +270,8 @@ function Page() {
   const host = useRef<PluginHost | null>(null);
   const [blocks] = useState(() => new BlockBridge());
   const openBeside = useRef<(path: string) => Promise<void>>(() => Promise.resolve());
-  const [sheet, setSheet] = useState<{ path: string; text: string } | null>(null);
+  const [sheet, setSheet] = useState<{ path: string; text: string; key: number } | null>(null);
+  const sheetSeq = useRef(0);
   const sheetEditor = useRef<LiveEditorHandle>(null);
   /** The sheet note's edit that is not written yet (written shortly after typing stops, and when the sheet closes). */
   const sheetSave = useRef<{ path: string; text: string; timer: number } | null>(null);
@@ -304,14 +308,14 @@ function Page() {
     sheetDone.current?.();
     return new Promise<void>((resolve) => {
       sheetDone.current = resolve;
-      setSheet({ path, text });
+      setSheet({ path, text, key: ++sheetSeq.current });
     });
   };
   const onSheetChange = (text: string) => {
     if (!sheet) return;
     clearTimeout(sheetSave.current?.timer);
     sheetSave.current = { path: sheet.path, text, timer: window.setTimeout(() => void saveSheet(false), 700) };
-    setSheet({ path: sheet.path, text });
+    setSheet({ ...sheet, text });
   };
   useEffect(() => {
     const onHide = () => document.visibilityState === "hidden" && void saveSheet(true);
@@ -320,7 +324,7 @@ function Page() {
   }, []);
   const sheetUi = sheet && (
     <Sheet
-      key={sheet.path}
+      key={sheet.key}
       name={sheet.path.replace(/^.*\//, "").replace(/\.md$/i, "")}
       text={sheet.text}
       notePath={`${(notePath ?? "").replace(/[^/]*$/, "")}${sheet.path.replace(/^.*\//, "")}`}
@@ -329,6 +333,12 @@ function Page() {
       editor={sheetEditor}
       reading={reading}
       onChange={onSheetChange}
+      onRename={async (title) => {
+        await saveSheet(true); // the edit is written to the old name before it moves
+        const to = (await vault({ op: "rename", path: sheet.path, title })) as string | null;
+        if (to) setSheet((s) => s && { ...s, path: to });
+        return to !== null;
+      }}
       onClose={() => void closeSheet()}
     />
   );

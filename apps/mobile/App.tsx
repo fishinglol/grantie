@@ -375,13 +375,11 @@ export default function App() {
     ]);
   };
 
-  /** Rename the open note's file from its title (it stays in its folder). Returns whether it happened. */
-  const renameNote = useCallback(
-    async (title: string): Promise<boolean> => {
-      const rel = openRel.current;
-      if (!rel) return false;
+  /** Rename a note's file from a title (it stays in its folder). Returns the new path, or null if it didn't happen. */
+  const renameFile = useCallback(
+    async (rel: string, title: string): Promise<string | null> => {
       const next = renamedNoteFile(basename(rel), title);
-      if (!next) return false;
+      if (!next) return null;
       const to = parentOf(rel) ? `${parentOf(rel)}/${next}` : next;
       const from = join(VAULT_DIR, rel);
       const dest = join(VAULT_DIR, to);
@@ -389,22 +387,33 @@ export default function App() {
         // A change of letter case alone is the same file on some systems, not a clash.
         if (from.toLowerCase() !== dest.toLowerCase() && (await fs.exists(dest))) {
           say(`"${next}" already exists`);
-          return false;
+          return null;
         }
         await flush(); // the pending edit is written to the old name before it moves
         await fs.moveFile(from, dest);
-        openRel.current = to;
-        setOpen((o) => o && { ...o, rel: to });
+        if (openRel.current === rel) {
+          openRel.current = to;
+          setOpen((o) => o && { ...o, rel: to });
+        }
         await refresh();
         say(`Renamed to ${noteTitle(next)}`);
         void runSync();
-        return true;
+        return to;
       } catch (err) {
         say(`Error: ${String(err)}`);
-        return false;
+        return null;
       }
     },
     [flush, refresh, runSync, say],
+  );
+
+  /** Rename the open note's file from its title. Returns whether it happened. */
+  const renameNote = useCallback(
+    async (title: string): Promise<boolean> => {
+      const rel = openRel.current;
+      return rel ? (await renameFile(rel, title)) !== null : false;
+    },
+    [renameFile],
   );
 
   /** Remove a folder and everything in it (after the user confirmed). Sync then removes its files from Drive and other devices. */
@@ -539,6 +548,7 @@ export default function App() {
         await openNote(request.path);
         return;
       }
+      if (request.op === 'rename') return renameFile(request.path, request.title); // the sheet's heading: the new path, or null
       const abs = join(VAULT_DIR, request.path);
       if (request.op === 'read') return fs.readTextFile(abs);
       await fs.mkdirp(dirname(abs));
@@ -547,7 +557,7 @@ export default function App() {
       void syncNow.current();
       return null;
     },
-    [refresh, openNote],
+    [refresh, openNote, renameFile],
   );
 
   /** Move a note into `folder` ("" = vault root), keeping its relative image links pointing at the same files. */

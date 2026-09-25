@@ -16,7 +16,8 @@ export type PluginVaultRequest =
   | { op: 'list' }
   | { op: 'read'; path: string }
   | { op: 'write'; path: string; text: string; quiet?: boolean }
-  | { op: 'open'; path: string };
+  | { op: 'open'; path: string }
+  | { op: 'rename'; path: string; title: string };
 
 export interface NoteEditorProps {
   /** URI of the open note; relative image links resolve against its folder. */
