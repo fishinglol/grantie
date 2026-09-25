@@ -82,6 +82,12 @@ declared permissions, explicit per-device enable**.
   vaults) in `progress.md` "Calendar plugin + plugin API 3".
 - **API 4 (2026-09-24)**: `granite.input.addItem(...)` (an entry in the `//` list; the editor draws the list) and `granite.vault.open(path, { beside })`. `//` is now owned by the list, not by one
   plugin's trigger (`input.trigger` still works for other texts, and a legacy `//` trigger appears as one entry). Simple Table 1.1.0, Calendar 1.1.0, Cards 1.2.0, Excel 1.4.0 use it.
+- **API 5 + Smart Chips + Dropdown (2026-09-24)**: `granite.links.register` (permission `editor.links`), `API_VERSION` 5: a plugin describes sites (name, colour, svg icon, `title(url)`), the editor draws `[Title](url)` links to them as chips
+  and offers "Tab to replace with" on a pasted address; a chip click opens the page (`onOpenLink`). Two plugins use it / the `//` list: Smart Chips (~66 sites) and Dropdown (coloured choice block). Details, limits and what is unverified:
+  `progress.md` "Smart Chips + Dropdown plugins, plugin API 5".
+  Block frames also get `granite.links.chip / title / open` (Simple Table draws link chips and dropdowns in table cells).
+- **API 6 (2026-09-25)**: permission `editor.sync`, `granite.editor.sync.start / stop / remote / ack / setCursors`, `API_VERSION` 6: a plugin can follow the open note's edits and caret and apply other people's edits and draw their carets
+  (the base of live collaboration). The plugin is the authority (ordered log; edits as CodeMirror `ChangeSet` JSON, so a plugin bundles `@codemirror/state`); one session at a time. Details and status: `activeContext.md` "Session 2026-09-25 (later)".
 - **Next**: command palette (Cmd+P) so commands aren't only reachable from the Plugins screen; CodeMirror
   extension / event / settings APIs; plugin registry + install-from-URL; docs site; a Worker layer for hangs;
   `desktopOnly` plugins are hidden on the phone but never exercised.

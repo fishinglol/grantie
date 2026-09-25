@@ -1,6 +1,6 @@
 # Active Context
 
-_Last updated: 2026-09-24_
+_Last updated: 2026-09-25_
 
 ## Current focus
 **Phone app + sync** (branch `feat/mobile-live-editor`, pushed; PR into `main` not opened yet) — see
@@ -81,6 +81,74 @@ read-only. Confirmed: desktop only; split via ⋯ → "Split right" (no tabs); r
   a mock was built and removed). Real ones need a plugin server, or a local-only "my review" feature if the user wants one.
 - Also this session: a new note is created **empty** (no `# name` line; the title above the text is the name).
 - Checked in the browser previews only (desktop preview + Expo web at phone size); not on the Samsung phone or in the Tauri window.
+
+## Session 2026-09-25 (night) — phone + laptop at once: faster, steadier Drive sync (user chose to stay on Drive, no relay server)
+User (Thai): phone and laptop open together, edits/pictures reach the other side slowly and the page "flickers"; some typed text in tables/cards was lost. Chose **stay on Drive** (not the Yjs relay).
+Done (tests: `core-cloud` 60 pass; `tsc` clean except the old `vite.config.ts` note):
+- `core-cloud`: a download never overwrites a note saved locally while it downloaded; pictures/other files are planned **before** notes; a `sync()` asked for while one runs
+  is re-run right after (if the vault changed) instead of waiting for the next poll.
+- Desktop: `reloadDoc` and `refreshVaultFiles` no longer clobber typed text / redraw the whole note when nothing changed; autosave 1.5s -> 0.8s; poll 5s -> 3s (both apps).
+  `LiveEditor` keeps the editors of the last 4 notes alive (hidden) so switching back doesn't reload plugin frames (`MAX_KEPT_EDITORS`).
+- Phone: a sync that rewrites the open note updates it in place (`NoteEditorHandle.setText` -> the page's existing `value` message) instead of remounting the WebView (a canvas still remounts);
+  the same typed-while-reading guard as the desktop; photos picked at JPEG quality 0.7 (`IMAGE_QUALITY`).
+- **Not verified on real devices / real Drive.** Phone: `npm run ship` (the page's LiveEditor changed -> `node scripts/build-editor.mjs` first). Not built: shrinking photo pixels (needs `expo-image-manipulator`, unapproved).
+
+## Session 2026-09-25 (night, last) — "make opening a page feel like nothing happens"
+User still saw the plugin blocks (cards) re-render slowly when going back to a page. Findings + changes:
+- **Phone was the big cost**: every note switch rebuilt the whole WebView (`key={docId:revision}`), reloading the 1MB editor page and every plugin. Now a plain note is shown by the page already loaded
+  (`NoteEditor` `docId` prop -> `bridge.sendOpen()` re-sends `init`; WebView `source` fixed at mount); canvases (and note<->canvas) still rebuild. Checked in the phone web preview (page marker survives a note switch).
+- **Bug found in my own keep-alive**: a hidden editor's plugin block can still save late (Table blur / 250 ms debounce) and `onChange` would have written that text into the note now showing. `LiveEditor`'s
+  `onChange(text, notePath)` now says which note the editor belongs to; desktop `editDoc(changedPath ?? p)`, phone page sends `path` and `App.onChange` writes a late save of another note to its own file.
+- Card editor popup: pictures shrink/scroll (Cards 1.2.1, needs UPDATE in the Store).
+- Not measured on a real device; the real Bug list note is only 232 KB (4 pictures of 35-98 KB), so data size is not the cost. New builds needed: desktop `tauri build` + `npm run ship`.
+
+## Session 2026-09-25 (late night) — three-way merge instead of "(Drive copy …)" files
+User's case: same note edited on the laptop (text, deleted cards) and on the phone (picture in a card + text) before either reached the other -> "changed on both sides" -> a `(Drive copy …)` file.
+Chose: merge by lines like git, hand-written (no library). Built: `packages/core-cloud/src/merge3.ts` (`merge3(base, ours, theirs)`; null = same lines changed differently or too big), `VaultSync` keeps each `.md`'s text
+at its last sync in `<vault>/.granite/sync-base/` (skipped by `listLocalFiles`, so never synced; backfilled for unchanged notes; **must** stay under `.granite`: the Tauri fs scope forbids every other dot folder, and the first version used `.granite-sync` and made every desktop sync fail with "forbidden path", fixed the same night) and, in a conflict, merges when the base's hash matches the record; new `SyncAction` `"merge"` (counted in `downloaded`, so
+apps reload the note). Same-line conflicts, canvases, notes without a base or with non-UTF-8 bytes still keep both files. Apps: a note with **unsaved typing** is merged with the incoming copy (`OpenDoc.saved` on desktop, `savedText` on the phone), so neither side's edit is dropped.
+Tests: core-cloud 73 pass (merge3 unit tests + engine cases). **Not tried on real Drive / two real devices.** Cards/tables are one JSON/row per line, so different cards/rows merge; one line changed on both sides (or two adjacent... adjacent lines DO merge) still copies.
+
+## Session 2026-09-25 (later) — live collaboration as a plugin: plugin API 6 built, the plugin itself not yet
+User asked (Thai) for Google-Docs-style live editing with other people's cursors, "as a plugin, like FigJam". Answered: possible, but the plugin API
+could not do it (no change events, no caret info, no way to apply remote edits or draw carets). User chose **B: a real plugin** and **sharing with other
+people** (not only their own devices), a **self-run `y-websocket` server**, and approved the libraries `yjs`, `y-protocols`, `y-websocket` and `esbuild`
+(devDependency, to bundle the plugin into one `main.js`). Invites for other people are assumed to be a room link + secret (no accounts yet): **unconfirmed**.
+- **Built: plugin API 6** (`API_VERSION` 6, permission `editor.sync`, `granite.editor.sync.{start,stop,remote,ack,setCursors}`). The *plugin is the authority*
+  (holds the shared text, keeps an ordered log); the editor follows it. `packages/live-editor/src/syncClient.ts` (pure, one edit in flight + a buffer,
+  CodeMirror `ChangeSet` JSON on the wire; a fuzz test in `packages/live-editor/test/`), `sync.ts` (`SyncSession`, `Remote` annotation, remote-caret
+  decorations, `SyncPort`), `LiveEditorHandle.sync`. Host side in `packages/plugins/src/host.ts` (`HostAdapter.sync`, `checkCursors`, one session at a time, ends when
+  another note opens or the plugin is unloaded); desktop `usePlugins.ts` and phone `editor-web/main.tsx` forward it to the active editor.
+- Remote edits are `addToHistory: false` (undo only undoes the user's own typing, checked), still reach `onChange` (so they save and sync to Drive), and are allowed in reading mode.
+- Checked: unit tests (plugins 88, live-editor 4) and a throwaway browser harness against the real editor (converges with a slow authority, no echo, undo, carets follow
+  the text, reading mode, clamp/stop). **Not checked**: through a real plugin frame, on the phone, with two real people.
+- **Not built yet (stage 2)**: `examples/plugins/live-collab/` (Yjs + y-websocket bundled with esbuild; the room/invite; names and colours; the relay server script);
+  keeping Drive sync from writing a second copy during a live session (test in `packages/core-cloud` first); canvas pointers.
+- **Open design points for stage 2**: (1) the plugin has no UI or settings API, so the server address / name / room have to come from somewhere (idea: a ```` ```collab ````
+  invite block in the note + a settings note); (2) the plugin sandbox's `connect-src https:` allows `wss://` but not plain `ws://` (LAN / localhost dev needs a manifest
+  field naming the servers, or a `wss` tunnel); (3) an editor that joins must not have its own text merged with the room's (Yjs would duplicate it).
+- `apps/desktop` `tsc -b` shows `vite.config.ts: Unused '@ts-expect-error'`; that file is untouched by this work.
+
+## Session 2026-09-25 — reading mode on the phone
+User asked for the desktop's reading mode (book button, see 2026-09-23) on the **phone**. Built: a book button in `NoteScreen`'s top bar
+(lit with the accent colour while on); `reading` state in `App.tsx` → `NoteEditorProps.reading` → bridge (`reading` in `init` + a `reading { on }`
+message) → the editor page passes `readOnly` to `LiveEditor` (title locked too), `CanvasView` and the calendar sheet's editor.
+It stays on across notes until toggled (not per note), and is not saved across app restarts.
+Checked in the web preview only (tapping the button toggles `contenteditable` and the title's `readOnly`); **not on the Samsung phone**.
+`editorHtml.ts` was regenerated (`node scripts/build-editor.mjs`); `npx tsc -b` passes.
+
+## Session 2026-09-24 (night, newest) — Drive copies came back
+User (Thai, screenshots) saw `my own schedule (Drive copy …)` files pile up again while editing on the desktop. Each copy was an older desktop
+version, made on the Mac: another device (the phone, most likely on an old build) uploaded stale versions over newer ones. Fixed in `core-cloud`
+(upload only over the version the sync listed; a remote that went back to a version this device already had is not a conflict). Details:
+`progress.md` "Second follow-up". **Open**: phone needs `npm run ship` + restart; not verified on real Drive; the 5 leftover copies were not deleted.
+
+## Session 2026-09-24 (evening) — Smart Chips + Dropdown plugins, plugin API 5
+User (Thai, screenshots of Google Docs smart chips and the Sheets dropdown) asked for two plugins: paste a link -> "Tab to replace with [icon] Title" for many apps, and `//` -> an editable coloured dropdown.
+Done (details: `progress.md` "Smart Chips + Dropdown plugins, plugin API 5"): plugin API 5 (`granite.links.register`, permission `editor.links`), link chips + the paste offer in `LiveEditor`, a clickable chip
+(`onOpenLink`, desktop + phone), Smart Chips 1.0.0 (~66 sites) and Dropdown 1.0.0 (own block, `//` entry). Decisions the user confirmed: API 5 with the Google-style offer; dropdown as a block, not inline.
+**Open**: not run on the phone or in the real Tauri window; the running `tauri dev` window picks up the editor change by reload, but the two plugins must be installed from the Store (not put into the vault by hand);
+Google Docs titles can't be read (chips say "Google Docs"). Not committed / pushed yet. Phone: `npm run ship` (editor page changed).
 
 ## Session 2026-09-24 (newest) — `//` list, calendar opens beside, phone check
 User asked for: a `//` list of plugin things, calendar notes opening beside the calendar (Obsidian-like screenshot), and fixes for phone bugs in the table/calendar. Done (details: `progress.md`
