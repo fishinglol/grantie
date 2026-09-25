@@ -65,9 +65,9 @@ const INPUT_TIMEOUT_MS = 5_000;
  * cannot touch the app's DOM, storage or native bridge, and a CSP that blocks every network request
  * unless the manifest asked for `network`. Its only way out is `postMessage` to the host.
  */
-function bootstrapHtml(network: boolean, block: boolean): string {
+function bootstrapHtml(network: boolean, block: boolean, connect: string[] = []): string {
   // A block frame is visible (it is drawn inside the note), so it may style itself and show inline images.
-  const csp = `default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'${block ? "; style-src 'unsafe-inline'; img-src data:" : ""}${network ? "; connect-src https:" : ""}`;
+  const csp = `default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'${block ? "; style-src 'unsafe-inline'; img-src data:" : ""}${network || connect.length > 0 ? `; connect-src ${[...(network ? ["https:", "wss:"] : []), ...connect].join(" ")}` : ""}`;
   return `<!doctype html><meta http-equiv="Content-Security-Policy" content="${csp}">${block ? "<style>html,body{margin:0;background:transparent}</style>" : ""}<script>
 (function () {
   var host = window.parent, pending = {}, seq = 0, commands = {}, isBlock = false, blockFns = {}, blockHandle = null, triggers = {}, pasteFn = null, items = {}, linkTitles = {}, syncHandler = null;
@@ -296,7 +296,7 @@ export class PluginHost {
     frame.setAttribute("sandbox", "allow-scripts");
     frame.setAttribute("aria-hidden", "true");
     frame.style.cssText = "display:none;width:0;height:0;border:0";
-    frame.srcdoc = bootstrapHtml(manifest.permissions.includes("network"), false);
+    frame.srcdoc = bootstrapHtml(manifest.permissions.includes("network"), false, manifest.connect);
     const entry: Loaded = { manifest, frame, blockLangs: new Set(), commands: new Map(), triggers: new Set(), paste: false, items: new Map(), links: new Map(), inputs: new Map(), runs: new Map(), code };
     this.#plugins.set(manifest.id, entry);
     const started = new Promise<void>((resolve, reject) => {
@@ -373,7 +373,7 @@ export class PluginHost {
     frame.setAttribute("sandbox", "allow-scripts");
     frame.title = plugin.manifest.name;
     frame.style.cssText = "display:block;width:100%;height:160px;border:0;background:transparent";
-    frame.srcdoc = bootstrapHtml(plugin.manifest.permissions.includes("network"), true);
+    frame.srcdoc = bootstrapHtml(plugin.manifest.permissions.includes("network"), true, plugin.manifest.connect);
     const block: BlockFrame = { plugin, frame, container, lang, source, actions };
     this.#blocks.add(block);
     container.append(frame);

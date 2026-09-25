@@ -1,0 +1,18 @@
+{
+  "id": "live-collab",
+  "name": "Live Collab",
+  "version": "1.0.0",
+  "tagline": "Edit a note together, live",
+  "description": "Work on the same note with other people at the same time, like Google Docs: you see their cursors and selections with their names, and their typing appears as they type. Type // and choose “Live session” to make an invite, send it to a friend, and both of you choose “Go live with this note” from the note's ⋯ menu. It needs a small relay server that you run yourself (see the README).",
+  "author": "Granite",
+  "permissions": [
+    "editor.sync",
+    "editor.read",
+    "editor.blocks",
+    "editor.input",
+    "vault.read",
+    "vault.write",
+    "network"
+  ],
+  "minApiVersion": 6
+}

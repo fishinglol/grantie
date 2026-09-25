@@ -35,6 +35,18 @@ export interface PluginManifest {
   minApiVersion?: number;
   /** Uses nothing the phone can offer (e.g. a large screen); hidden there. */
   desktopOnly?: boolean;
+  /**
+   * Servers the plugin may open a connection to, as `wss://host[:port]` or `ws://host[:port]` (the latter for a server on your own
+   * network). `network` already allows any `https` / `wss` address; this is how a plugin gets a plain `ws` one, and it is shown to the user.
+   */
+  connect?: string[];
+}
+
+const CONNECT = /^wss?:\/\/[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d{1,5})?$/i;
+
+/** What the user is asked to allow, one line each: the permissions, then the servers. */
+export function permissionLines(manifest: PluginManifest): string[] {
+  return [...manifest.permissions.map((p) => PERMISSION_LABELS[p]), ...(manifest.connect ?? []).map((h) => `Connect to ${h}`)];
 }
 
 const ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
@@ -60,6 +72,11 @@ export function parseManifest(raw: unknown): PluginManifest {
   if (minApiVersion !== undefined && (typeof minApiVersion !== "number" || !Number.isInteger(minApiVersion))) {
     throw new Error('manifest.json: "minApiVersion" must be a whole number');
   }
+  const connect = m.connect ?? [];
+  if (!Array.isArray(connect) || connect.length > 10) throw new Error('manifest.json: "connect" must be a list of up to 10 servers');
+  for (const c of connect) {
+    if (typeof c !== "string" || !CONNECT.test(c)) throw new Error(`manifest.json: "connect" entries look like wss://host or ws://host:1234 (got "${String(c)}")`);
+  }
   return {
     id,
     name: text("name", true)!,
@@ -70,6 +87,7 @@ export function parseManifest(raw: unknown): PluginManifest {
     permissions: [...new Set(permissions as Permission[])],
     minApiVersion: minApiVersion as number | undefined,
     desktopOnly: m.desktopOnly === true,
+    ...(connect.length > 0 && { connect: [...new Set(connect as string[])] }),
   };
 }
 

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
-import { PERMISSION_LABELS, pluginHue, type InstalledPlugin } from '@granite/plugins';
+import { permissionLines, pluginHue, type InstalledPlugin } from '@granite/plugins';
 import { colors } from '../theme';
 import type { CatalogPlugin } from '../catalog';
 
@@ -85,11 +85,11 @@ export default function PluginStoreView({ catalog, installed, onInstall }: Plugi
         </ScrollView>
         {m.description ? <Text style={styles.desc}>{m.description}</Text> : null}
         <Text style={styles.section}>Needs your permission to</Text>
-        {m.permissions.length === 0 ? (
+        {permissionLines(m).length === 0 ? (
           <Text style={styles.perm}>Nothing. It needs no permissions.</Text>
         ) : (
-          m.permissions.map((p) => (
-            <Text key={p} style={styles.perm}>• {PERMISSION_LABELS[p]}</Text>
+          permissionLines(m).map((line) => (
+            <Text key={line} style={styles.perm}>• {line}</Text>
           ))
         )}
         <Modal visible={zoom !== null} transparent animationType="fade" onRequestClose={() => setZoom(null)}>

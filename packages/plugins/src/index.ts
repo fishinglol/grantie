@@ -1,4 +1,4 @@
-export { PERMISSIONS, PERMISSION_LABELS, API_VERSION, parseManifest, pluginHue } from "./manifest.ts";
+export { PERMISSIONS, PERMISSION_LABELS, API_VERSION, parseManifest, permissionLines, pluginHue } from "./manifest.ts";
 export { METHOD_PERMISSION, MAX_PLUGIN_CSS, checkPluginCss, safeNotePath } from "./api.ts";
 export { PLUGINS_DIR, discoverPlugins, readPluginCode } from "./discover.ts";
 export type { Permission, PluginManifest } from "./manifest.ts";

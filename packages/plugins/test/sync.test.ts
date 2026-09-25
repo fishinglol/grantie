@@ -63,7 +63,7 @@ function setup(permissions: string[] = ["editor.sync"], withPort = true) {
     const n = 1 + frame.contentWindow.posted.length;
     dom.from(frame, { k: "call", n, method, args });
     await new Promise((r) => setTimeout(r, 0));
-    return frame.contentWindow.posted.findLast((m) => m.k === "result" && m.n === n) as { ok: boolean; value?: any; error?: string };
+    return [...frame.contentWindow.posted].reverse().find((m: any) => m.k === "result" && m.n === n) as { ok: boolean; value?: any; error?: string };
   };
   return { host, dom, log, emit, notices, start, call };
 }
@@ -154,4 +154,18 @@ test("carets are checked: they end up in the editor's CSS and DOM", () => {
   ]) assert.throws(() => checkCursors([bad]), Error, JSON.stringify(bad));
   assert.throws(() => checkCursors("no"), /list/);
   assert.throws(() => checkCursors(Array.from({ length: 51 }, () => ok)), /up to 50/);
+});
+
+test("the network permission covers secure web sockets too (CSP's https: does not), and connect adds plain ws servers", () => {
+  const dom = fakeDom();
+  const host = new PluginHost({ notice() {} } as unknown as HostAdapter);
+  const csp = (perms: string[], connect?: string[]) => {
+    host.load(parseManifest({ id: "p" + dom.frames.length, name: "P", version: "1", permissions: perms, connect }), "").catch(() => {}); // never boots here: stopped below
+    return (dom.frames[dom.frames.length - 1] as any).srcdoc as string;
+  };
+  assert.match(csp(["network"]), /connect-src https: wss:[";]/);
+  assert.match(csp(["network"], ["ws://192.168.1.5:1234"]), /connect-src https: wss: ws:\/\/192\.168\.1\.5:1234"/);
+  assert.match(csp([], ["wss://a.example.com"]), /connect-src wss:\/\/a\.example\.com"/);
+  assert.doesNotMatch(csp([]), /connect-src/);
+  host.dispose();
 });

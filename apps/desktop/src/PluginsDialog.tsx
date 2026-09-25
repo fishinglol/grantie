@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { PERMISSION_LABELS, PLUGINS_DIR, type InstalledPlugin, type PluginManifest } from "@granite/plugins";
+import { permissionLines, PLUGINS_DIR, type InstalledPlugin, type PluginManifest } from "@granite/plugins";
 import PluginStore from "./PluginStore";
 import { CATALOG } from "./pluginCatalog";
 import type { PluginsState } from "./usePlugins";
@@ -12,12 +12,12 @@ export interface PluginsDialogProps {
 function Permissions({ manifest }: { manifest: PluginManifest }) {
   return (
     <div className="plugin-perms">
-      {manifest.permissions.length === 0 ? (
+      {permissionLines(manifest).length === 0 ? (
         <span>Needs no permissions</span>
       ) : (
-        manifest.permissions.map((p) => (
-          <span key={p} className="plugin-perm">
-            {PERMISSION_LABELS[p]}
+        permissionLines(manifest).map((line) => (
+          <span key={line} className="plugin-perm">
+            {line}
           </span>
         ))
       )}

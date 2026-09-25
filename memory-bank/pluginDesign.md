@@ -88,6 +88,7 @@ declared permissions, explicit per-device enable**.
   Block frames also get `granite.links.chip / title / open` (Simple Table draws link chips and dropdowns in table cells).
 - **API 6 (2026-09-25)**: permission `editor.sync`, `granite.editor.sync.start / stop / remote / ack / setCursors`, `API_VERSION` 6: a plugin can follow the open note's edits and caret and apply other people's edits and draw their carets
   (the base of live collaboration). The plugin is the authority (ordered log; edits as CodeMirror `ChangeSet` JSON, so a plugin bundles `@codemirror/state`); one session at a time. Details and status: `activeContext.md` "Session 2026-09-25 (later)".
+- **Live Collab (2026-09-25)**: `examples/plugins/live-collab` uses API 6 (see `activeContext.md` "the Live Collab plugin itself"). Also added: manifest `connect` (servers a plugin may reach) and `network` now includes `wss:` in the CSP (`https:` alone does not cover it).
 - **Next**: command palette (Cmd+P) so commands aren't only reachable from the Plugins screen; CodeMirror
   extension / event / settings APIs; plugin registry + install-from-URL; docs site; a Worker layer for hangs;
   `desktopOnly` plugins are hidden on the phone but never exercised.

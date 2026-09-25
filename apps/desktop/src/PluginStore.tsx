@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { PERMISSION_LABELS, pluginHue } from "@granite/plugins";
+import { permissionLines, pluginHue } from "@granite/plugins";
 import type { CatalogPlugin } from "./pluginCatalog";
 import type { PluginsState } from "./usePlugins";
 
@@ -97,7 +97,7 @@ export default function PluginStore({ catalog, installed, busy, onInstall }: Plu
           {m.description && <p className="store-desc">{m.description}</p>}
           <h4>Needs your permission to</h4>
           <ul className="store-perms">
-            {m.permissions.length === 0 ? <li>Nothing. It needs no permissions.</li> : m.permissions.map((p) => <li key={p}>{PERMISSION_LABELS[p]}</li>)}
+            {permissionLines(m).length === 0 ? <li>Nothing. It needs no permissions.</li> : permissionLines(m).map((line) => <li key={line}>{line}</li>)}
           </ul>
         </section>
 

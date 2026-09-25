@@ -96,3 +96,16 @@ test("plugins can ask to draw blocks in notes, and only with that permission", (
   assert.deepEqual(parseManifest({ id: "x", name: "X", version: "1", permissions: ["editor.blocks"] }).permissions, ["editor.blocks"]);
   assert.equal(METHOD_PERMISSION["blocks.register"], "editor.blocks");
 });
+
+test("connect lists the servers a plugin may reach, and only ws:// or wss:// hosts are accepted", () => {
+  const base = { id: "x", name: "X", version: "1", permissions: [] };
+  assert.deepEqual(parseManifest({ ...base, connect: ["wss://collab.example.com", "ws://192.168.1.5:1234", "wss://collab.example.com"] }).connect, [
+    "wss://collab.example.com",
+    "ws://192.168.1.5:1234",
+  ]);
+  assert.equal(parseManifest(base).connect, undefined);
+  for (const bad of ["https://x.com", "wss://x.com/path", "wss://", "wss://x.com:99999x", "*", "wss://a b", 5]) {
+    assert.throws(() => parseManifest({ ...base, connect: [bad] }), /connect/, String(bad));
+  }
+  assert.throws(() => parseManifest({ ...base, connect: "wss://x.com" }), /connect/);
+});

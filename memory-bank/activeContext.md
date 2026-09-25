@@ -82,6 +82,19 @@ read-only. Confirmed: desktop only; split via ⋯ → "Split right" (no tabs); r
 - Also this session: a new note is created **empty** (no `# name` line; the title above the text is the name).
 - Checked in the browser previews only (desktop preview + Expo web at phone size); not on the Samsung phone or in the Tauri window.
 
+## Session 2026-09-25 (latest) — the Live Collab plugin itself (stage 2 of live collaboration)
+The user asked where the "share with a friend" plugin was: **it did not exist yet** (only plugin API 6 had been built; my earlier wording hid that). Built now, with no more questions (defaults chosen, all changeable):
+`examples/plugins/live-collab/` (id `live-collab`, v1.0.0, needs API 6). Yjs + `y-websocket` client + `@codemirror/state`, bundled by esbuild into `main.js` (`npm run build` in that folder; it has its own `package.json`/`node_modules`).
+- Flow: settings note `Live Collab.md` (`name:`, `server:`), `//` -> **Live session** inserts a ```` ```collab ```` invite block (server + 32-char random room id), `⋯` -> **Go live with this note** / **Leave the live session**.
+  Whoever connects first (with real text) seeds the room; a note that is only the invite can't start one; a note with other text that joins is saved to `Live Collab backup <date>.md` first, then becomes the room's text.
+- `src/authority.ts` = the plugin's half of API 6 (Yjs text + ordered log, edits mapped with `ChangeSet.map`), `src/invite.ts` (pure text handling), `src/main.ts` (glue: provider, awareness -> carets, notices), `server/server.mjs` (`ws` + `y-websocket/bin/utils`, in-memory, only accepts 32-char `[a-z0-9]` rooms).
+- **Found and fixed: CSP `connect-src https:` does NOT cover `wss:` in Chrome** (I had claimed it did). `network` now gives `https: wss:` (`bootstrapHtml`), with a test. New optional manifest field **`connect`** (`wss://host` / `ws://host:port`, shown in the permission lists via `permissionLines()`).
+- **Chrome blocks plain `ws://` to localhost / LAN from a sandboxed plugin frame** (local-network protection; opaque origin). So the plugin needs a `wss://` server (Cloudflare Tunnel or a TLS host; README says how). For the demo, headless Chrome was started with `--disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessSendPreflights,BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessRespectPreflightResults` (test only).
+- Tests: `npm test` in the plugin folder = authority fuzz (200 seeds, two Yjs peers with slow queues), invite/settings, the built `main.js` in a vm, and an end-to-end test (real `main.js` + real relay + two simulated editors); packages/plugins 90, live-editor 4, core-cloud 77.
+  **Real run (headless Chrome, two isolated contexts, real relay):** Ann makes the invite with `//`, goes live; Bo pastes it into an empty note and joins; each sees the other's name-flagged caret and selection; both typing at once ends identical. The 4 store pictures in `screenshots/` are captures of that run.
+- **Not checked:** the phone (needs `npm run ship`, API 6), the real Tauri window (WKWebView may treat local `ws://` differently), the internet / a real `wss` host, Drive sync on both sides at once, two real people. Not built: canvas pointers, a presence list, per-note (not per-app) sessions, encryption (the relay can read the text).
+- The screenshot driver was a throwaway CDP script (not committed): headless Chrome + `Target.createBrowserContext` per person + `Input.insertText`.
+
 ## Session 2026-09-25 (after the restructure) — "the plugin Store is empty"
 User (Thai) saw nothing in the plugin Store. Checked: the Store is **not** empty (desktop preview lists Calendar, Cards, Dropdown, Excel, …; all 8 examples pass `parseManifest`, have 3+ pictures and
 are in the phone's generated `pluginCatalog.ts`). The trap was the screen: **Plugins** (desktop: gear bottom-left → Plugins; phone: sidebar → gear → Plugins) opened on the **Installed** tab, which says
