@@ -30,6 +30,7 @@ import {
 import { dirname, IMAGE_FILE, join, toggleFormat, type InlineFormat } from "@granite/core-notes";
 import { openImageViewer } from "./imageViewer";
 import NoteTitle from "./NoteTitle";
+import { Remote, remoteCursors, SyncSession, type SyncPort } from "./sync.ts";
 
 export { IMAGE_FILE };
 
@@ -40,11 +41,14 @@ export { IMAGE_FILE };
  */
 
 const External = Annotation.define<boolean>();
+
+/** How many notes' editors a pane keeps alive (hidden) so that coming back to one is instant. */
+const MAX_KEPT_EDITORS = 4;
 const refresh = StateEffect.define<null>();
 
 /**
  * Reading mode: no caret, no typing, and no edits from the image toolbar. Text arriving from outside (`External`: a
- * sync, another pane on the same note) and plugin blocks (`input.plugin`, e.g. a sheet saving itself) still go through.
+ * sync, another pane on the same note, a live session's `Remote` edits) and plugin blocks (`input.plugin`, e.g. a sheet saving itself) still go through.
  */
 const readingFacet = Facet.define<boolean, boolean>({ combine: (values) => values.some(Boolean) });
 const readingMode = (on: boolean) =>
@@ -53,7 +57,7 @@ const readingMode = (on: boolean) =>
         readingFacet.of(true),
         EditorView.editable.of(false),
         EditorState.transactionFilter.of((tr) =>
-          tr.docChanged && !tr.annotation(External) && !tr.isUserEvent("input.plugin") ? [] : tr,
+          tr.docChanged && !tr.annotation(External) && !tr.annotation(Remote) && !tr.isUserEvent("input.plugin") ? [] : tr,
         ),
       ]
     : [];
@@ -376,6 +380,17 @@ export interface MenuItemInfo {
   plugin: string;
 }
 
+/** How a link to a site a plugin knows is drawn: the site's icon and colour, and what to call it until its real title is known. */
+export interface LinkChipInfo {
+  /** What `runInput("link", …)` takes to ask the plugin for the page's title. */
+  key: string;
+  name: string;
+  label: string;
+  color: string;
+  /** An image URL (`data:image/svg+xml,…`). */
+  icon: string;
+}
+
 export interface BlockRenderer {
   /** Languages that currently have a renderer. */
   langs(): string[];
@@ -389,8 +404,10 @@ export interface BlockRenderer {
   hasPasteHook?(): boolean;
   /** The entries of the list that opens when the user types `//` alone on an empty line. */
   menuItems?(): MenuItemInfo[];
-  /** `item`: `payload.text` is a `MenuItemInfo.key`. */
-  runInput?(kind: "trigger" | "paste" | "item", payload: { text: string; html?: string }): Promise<string | null>;
+  /** The chip a link to `url` is drawn as, or null when no plugin knows that site. */
+  linkChip?(url: string): LinkChipInfo | null;
+  /** `item`: `payload.text` is a `MenuItemInfo.key`. `link`: `payload.text` is a `LinkChipInfo.key`, `payload.url` the address; answers with the page's title. */
+  runInput?(kind: "trigger" | "paste" | "item" | "link", payload: { text: string; html?: string; url?: string }): Promise<string | null>;
   /** Draw a block into `el`. */
   mount(lang: string, el: HTMLElement, source: string, actions: BlockActions): { update(source: string): void; destroy(): void };
 }
@@ -584,6 +601,147 @@ function slashMenu(getBlocks: () => BlockRenderer | null) {
     EditorView.domEventHandlers({
       blur(_event, view) {
         if (view.state.field(field)) view.dispatch({ effects: menuClose.of(null) });
+      },
+    }),
+  ];
+}
+
+const chipStyle = (chip: LinkChipInfo) => `--chip-icon:url("${chip.icon}");--chip-color:${chip.color}`;
+
+/** A pasted address the editor offers to turn into a chip: `from`–`to` is the address in the note. `title` is null until the plugin has found one. */
+interface ChipSuggestion {
+  from: number;
+  to: number;
+  url: string;
+  chip: LinkChipInfo;
+  title: string | null;
+}
+const suggestSet = StateEffect.define<ChipSuggestion | null>();
+const suggestTitle = StateEffect.define<{ url: string; title: string }>();
+
+/** The address of the `[text](url)` link at `pos`, if that is what is there. */
+function linkUrlAt(state: EditorState, pos: number): string | null {
+  let node: ReturnType<ReturnType<typeof syntaxTree>["resolveInner"]> | null = syntaxTree(state).resolveInner(pos, 1);
+  while (node && node.name !== "Link") node = node.parent;
+  const url = node?.getChild("URL");
+  return url ? state.sliceDoc(url.from, url.to) : null;
+}
+
+/**
+ * Link chips (plugin API 5). Pasting a lone web address of a site a plugin knows leaves the address as text and shows
+ * "Tab to replace with [chip]" above it (tap on a phone); Tab turns it into `[Title](url)`, which the live preview draws as a chip.
+ * Anything else the user does (typing, moving the cursor, Escape) dismisses the offer. A click on a chip opens its address
+ * (Ctrl/Cmd-click for any other link) through `openLink`, when the app gave one.
+ */
+function linkChips(getBlocks: () => BlockRenderer | null, getOpenLink: () => ((url: string) => void) | undefined) {
+  const field = StateField.define<ChipSuggestion | null>({
+    create: () => null,
+    update(value, tr) {
+      for (const e of tr.effects) if (e.is(suggestSet)) return e.value;
+      if (!value) return null;
+      const sel = tr.state.selection.main;
+      if (tr.docChanged || !sel.empty || sel.head !== value.to) return null;
+      for (const e of tr.effects) if (e.is(suggestTitle) && e.value.url === value.url) return { ...value, title: e.value.title };
+      return value;
+    },
+    provide: (f) =>
+      showTooltip.compute([f], (state) => {
+        const v = state.field(f);
+        return v ? { pos: v.from, above: true, strictSide: false, create } : null;
+      }),
+  });
+
+  const accept = (view: EditorView): boolean => {
+    const v = view.state.field(field);
+    if (!v) return false;
+    const title = (v.title ?? v.chip.label).replace(/\s+/g, " ").trim() || v.chip.label;
+    const text = `[${title.replace(/[[\]\\]/g, "\\$&")}](${v.url.replace(/ /g, "%20").replace(/\(/g, "%28").replace(/\)/g, "%29")})`;
+    view.dispatch({ changes: { from: v.from, to: v.to, insert: text }, selection: { anchor: v.from + text.length }, userEvent: "input.plugin" });
+    return true;
+  };
+
+  function create(view: EditorView): TooltipView {
+    const dom = document.createElement("div");
+    dom.className = "cm-chip-suggest";
+    const key = document.createElement("kbd");
+    key.textContent = window.matchMedia?.("(pointer: coarse)").matches ? "tap" : "tab";
+    const to = document.createElement("span");
+    to.textContent = "to replace with";
+    const chip = document.createElement("span");
+    chip.className = "cm-chip";
+    dom.append(key, to, chip);
+    const render = (state: EditorState) => {
+      const v = state.field(field);
+      if (!v) return;
+      chip.setAttribute("style", chipStyle(v.chip));
+      chip.textContent = v.title ?? v.chip.label;
+    };
+    render(view.state);
+    // pointerdown + preventDefault: the editor keeps focus (and the phone its keyboard) while the offer is taken.
+    dom.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      accept(view);
+    });
+    return { dom, update: (u) => render(u.state) };
+  }
+
+  return [
+    field,
+    Prec.highest(
+      keymap.of([
+        { key: "Tab", run: accept },
+        {
+          // The cursor right after a chip: Backspace removes the whole chip (its hidden `](url)` would otherwise be eaten one character at a time).
+          key: "Backspace",
+          run: (view) => {
+            const { head, empty } = view.state.selection.main;
+            if (!empty) return false;
+            let node: ReturnType<ReturnType<typeof syntaxTree>["resolveInner"]> | null = syntaxTree(view.state).resolveInner(head, -1);
+            while (node && node.name !== "Link") node = node.parent;
+            const url = node?.getChild("URL");
+            if (!node || node.to !== head || !url || !getBlocks()?.linkChip?.(view.state.sliceDoc(url.from, url.to))) return false;
+            view.dispatch({ changes: { from: node.from, to: node.to }, userEvent: "delete.backward" });
+            return true;
+          },
+        },
+        {
+          key: "Escape",
+          run: (view) => {
+            if (!view.state.field(field)) return false;
+            view.dispatch({ effects: suggestSet.of(null) });
+            return true;
+          },
+        },
+      ]),
+    ),
+    EditorView.domEventHandlers({
+      paste(event, view) {
+        const blocks = getBlocks();
+        const text = (event.clipboardData?.getData("text/plain") ?? "").trim();
+        if (!blocks?.linkChip || !blocks.runInput || !/^https?:\/\/[^\s<>"]+$/i.test(text) || view.state.facet(readingFacet)) return false;
+        const { from, to } = view.state.selection.main;
+        const chip = blocks.linkChip(text);
+        if (!chip || inCodeBlock(view.state, from)) return false;
+        event.preventDefault();
+        view.dispatch({
+          changes: { from, to, insert: text },
+          selection: { anchor: from + text.length },
+          effects: suggestSet.of({ from, to: from + text.length, url: text, chip, title: null }),
+          userEvent: "input.paste",
+        });
+        void blocks.runInput("link", { text: chip.key, url: text }).then((title) => {
+          if (title?.trim() && view.dom.isConnected) view.dispatch({ effects: suggestTitle.of({ url: text, title: title.trim().slice(0, 200) }) });
+        });
+        return true;
+      },
+      click(event, view) {
+        const el = event.target instanceof Element ? event.target.closest(".cm-chip, .cm-link") : null;
+        const open = getOpenLink();
+        if (!el || !open || !view.state.selection.main.empty || (!el.classList.contains("cm-chip") && !(event.metaKey || event.ctrlKey))) return false;
+        const url = linkUrlAt(view.state, view.posAtDOM(el));
+        if (!url || !/^https?:\/\//i.test(url)) return false;
+        open(url);
+        return true;
       },
     }),
   ];
@@ -784,6 +942,7 @@ function insertPoint(view: EditorView, at?: { x: number; y: number }): { pos: nu
 const HIDE = Decoration.replace({});
 const lineDeco = (cls: string) => Decoration.line({ class: cls });
 const markDeco = (cls: string) => Decoration.mark({ class: cls });
+const chipDeco = (chip: LinkChipInfo) => Decoration.mark({ class: "cm-link cm-chip", attributes: { style: chipStyle(chip) } });
 
 const HEADING = /^ATXHeading([1-6])$/;
 
@@ -907,6 +1066,8 @@ function buildDecorations(state: EditorState, ctx: PreviewContext): DecorationSe
   }
   const onActiveLine = (pos: number) => activeLines.has(doc.lineAt(pos).number);
   const touches = (from: number, to: number) => ranges.some((r) => r.from <= to && r.to >= from);
+  /** The cursor is strictly inside (or a selection covers it): a cursor at an edge does not open a chip's markup. */
+  const within = (from: number, to: number) => ranges.some((r) => r.from < to && r.to > from);
   const hide = (from: number, to: number) => {
     if (to > from) out.push(HIDE.range(from, to));
   };
@@ -1000,8 +1161,10 @@ function buildDecorations(state: EditorState, ctx: PreviewContext): DecorationSe
         case "Link": {
           const marks = node.node.getChildren("LinkMark");
           if (marks.length >= 2) {
-            out.push(markDeco("cm-link").range(marks[0]!.to, marks[1]!.from));
-            if (!touches(node.from, node.to)) {
+            const url = node.node.getChild("URL");
+            const chip = url && marks[0]!.to < marks[1]!.from ? ctx.getBlocks()?.linkChip?.(doc.sliceString(url.from, url.to)) : null;
+            out.push((chip ? chipDeco(chip) : markDeco("cm-link")).range(marks[0]!.to, marks[1]!.from));
+            if (!(chip ? within : touches)(node.from, node.to)) {
               hide(marks[0]!.from, marks[0]!.to);
               hide(marks[1]!.from, node.to);
             }
@@ -1164,6 +1327,8 @@ export interface LiveEditorHandle {
   replaceSelection(text: string): void;
   /** Replace the whole note (one undo step). The cursor goes to the end, outside any plugin block. */
   setText(text: string): void;
+  /** A plugin's live session with this editor (plugin API 6): see `SyncPort`. It ends when another note is opened here. */
+  sync: SyncPort;
 }
 
 export interface LiveEditorProps {
@@ -1184,13 +1349,17 @@ export interface LiveEditorProps {
   toUrl: (path: string) => string;
   /** Draws the fenced blocks plugins have registered (a spreadsheet, say) in place. */
   blocks?: BlockRenderer;
-  onChange: (value: string) => void;
+  /** Open a web address in the system browser (a click on a link chip). Without it, links stay text. */
+  onOpenLink?: (url: string) => void;
+  /** The text changed by typing or a plugin block. `notePath` is the note that editor belongs to (it can differ from the one showing: a hidden editor's plugin may still save). */
+  onChange: (value: string, notePath?: string) => void;
 }
 
-export default function LiveEditor({ ref, title, readOnly = false, value, embeds, notePath, toUrl, blocks, onChange }: LiveEditorProps) {
+export default function LiveEditor({ ref, title, readOnly = false, value, embeds, notePath, toUrl, blocks, onOpenLink, onChange }: LiveEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const readingRef = useRef(new Compartment());
+  const syncRef = useRef<SyncSession | null>(null);
   const onChangeRef = useRef(onChange);
   const baseDirRef = useRef("");
   const prevPath = useRef(notePath);
@@ -1200,16 +1369,23 @@ export default function LiveEditor({ ref, title, readOnly = false, value, embeds
   toUrlRef.current = toUrl;
   const blocksRef = useRef(blocks);
   blocksRef.current = blocks;
+  const openLinkRef = useRef(onOpenLink);
+  openLinkRef.current = onOpenLink;
   onChangeRef.current = onChange;
   baseDirRef.current = notePath ? dirname(notePath) : "";
 
-  useEffect(() => {
+  /** Editors kept alive, most recently shown last: going back to a note finds its plugin blocks still drawn, not loading again. */
+  const views = useRef(new Map<string, { view: EditorView; stopResize: () => void }>());
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
+
+  const makeView = (path: string, doc: string) => {
     const view = new EditorView({
       parent: host.current!,
       state: EditorState.create({
-        doc: value,
+        doc,
         extensions: [
-          readingRef.current.of(readingMode(readOnly)),
+          readingRef.current.of(readingMode(readOnlyRef.current)),
           history(),
           selectedField,
           keymap.of([
@@ -1254,21 +1430,60 @@ export default function LiveEditor({ ref, title, readOnly = false, value, embeds
           dropField,
           pluginInput(() => blocksRef.current ?? null),
           slashMenu(() => blocksRef.current ?? null),
+          linkChips(() => blocksRef.current ?? null, () => openLinkRef.current),
+          remoteCursors,
           EditorView.updateListener.of((u) => {
+            syncRef.current?.update(u);
             if (u.docChanged && !u.transactions.some((t) => t.annotation(External))) {
-              onChangeRef.current(u.state.doc.toString());
+              // The note this editor belongs to: a hidden editor's plugin block can still save after another note was shown.
+              onChangeRef.current(u.state.doc.toString(), path === "" ? undefined : path);
             }
           }),
         ],
       }),
     });
-    viewRef.current = view;
-    // A plugin block that is the whole page is as tall as the editor: publish that height as a CSS variable.
-    const resize = new ResizeObserver(() => host.current?.style.setProperty("--editor-h", `${view.scrollDOM.clientHeight}px`));
+    // A plugin block that is the whole page is as tall as the editor: publish that height as a CSS variable (a hidden editor has none).
+    const resize = new ResizeObserver(() => {
+      if (view.scrollDOM.clientHeight > 0) host.current?.style.setProperty("--editor-h", `${view.scrollDOM.clientHeight}px`);
+    });
     resize.observe(view.scrollDOM);
+    views.current.set(path, { view, stopResize: () => resize.disconnect() });
+    return view;
+  };
+
+  /** Show the editor of `path` (making it if it is new) and hide the others; the least recently shown ones are dropped. */
+  const showView = (path: string, doc: string) => {
+    const map = views.current;
+    const entry = map.get(path);
+    map.delete(path);
+    const view = entry?.view ?? makeView(path, doc);
+    if (entry) map.set(path, entry);
+    // CodeMirror sets `display: flex !important` on its root, so hiding needs an important of its own.
+    for (const [key, other] of map) {
+      if (key === path) other.view.dom.style.removeProperty("display");
+      else other.view.dom.style.setProperty("display", "none", "important");
+    }
+    for (const [key, old] of map) {
+      if (map.size <= MAX_KEPT_EDITORS) break;
+      if (key === path) continue;
+      old.stopResize();
+      old.view.destroy();
+      map.delete(key);
+    }
+    viewRef.current = view;
+    view.requestMeasure();
+  };
+
+  useEffect(() => {
+    showView(notePath ?? "", value);
     return () => {
-      resize.disconnect();
-      view.destroy();
+      syncRef.current?.end("the editor was closed");
+      syncRef.current = null;
+      for (const { view, stopResize } of views.current.values()) {
+        stopResize();
+        view.destroy();
+      }
+      views.current.clear();
       viewRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1323,6 +1538,44 @@ export default function LiveEditor({ ref, title, readOnly = false, value, embeds
           userEvent: "input.plugin",
         });
       },
+      sync: {
+        start(listener) {
+          const view = viewRef.current;
+          if (!view) throw new Error("the editor is not ready");
+          syncRef.current?.end("another live session started");
+          syncRef.current = new SyncSession(view, listener);
+          return view.state.doc.toString();
+        },
+        stop() {
+          syncRef.current?.clear();
+          syncRef.current = null;
+        },
+        remote(changes) {
+          const session = syncRef.current;
+          if (!session) throw new Error("no live session");
+          try {
+            session.remote(changes);
+          } catch (e) {
+            syncRef.current = null;
+            session.end(e instanceof Error ? e.message : String(e));
+            throw e;
+          }
+        },
+        ack() {
+          const session = syncRef.current;
+          if (!session) throw new Error("no live session");
+          try {
+            session.ack();
+          } catch (e) {
+            syncRef.current = null;
+            session.end(e instanceof Error ? e.message : String(e));
+            throw e;
+          }
+        },
+        setCursors(cursors) {
+          syncRef.current?.setCursors(cursors);
+        },
+      },
       showDropIndicator(at) {
         const view = viewRef.current;
         if (!view) return;
@@ -1335,6 +1588,11 @@ export default function LiveEditor({ ref, title, readOnly = false, value, embeds
 
   // Sync text that changed outside the editor (opening a note, inserting an image, sync).
   useEffect(() => {
+    if (prevPath.current !== notePath) {
+      syncRef.current?.end("another note was opened");
+      syncRef.current = null;
+      showView(notePath ?? "", value);
+    }
     const view = viewRef.current;
     if (!view) return;
     const current = view.state.doc.toString();
@@ -1362,18 +1620,19 @@ export default function LiveEditor({ ref, title, readOnly = false, value, embeds
   }, [value, notePath]);
 
   useEffect(() => {
-    viewRef.current?.dispatch({ effects: [readingRef.current.reconfigure(readingMode(readOnly)), refresh.of(null)] });
+    for (const { view } of views.current.values()) view.dispatch({ effects: [readingRef.current.reconfigure(readingMode(readOnly)), refresh.of(null)] });
   }, [readOnly]);
 
   // Vault images were (re)indexed: re-resolve any `![[name.png]]` embeds.
   useEffect(() => {
-    viewRef.current?.dispatch({ effects: refresh.of(null) });
+    for (const { view } of views.current.values()) view.dispatch({ effects: refresh.of(null) });
   }, [embeds]);
 
   // A plugin started or stopped drawing a kind of block.
   useEffect(() => {
-    viewRef.current?.dispatch({ effects: refresh.of(null) });
-    return blocks?.subscribe(() => viewRef.current?.dispatch({ effects: refresh.of(null) }));
+    const redraw = () => views.current.forEach(({ view }) => view.dispatch({ effects: refresh.of(null) }));
+    redraw();
+    return blocks?.subscribe(redraw);
   }, [blocks]);
 
   return (

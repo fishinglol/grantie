@@ -1,0 +1,13 @@
+{
+  "id": "smart-chips",
+  "name": "Smart Chips",
+  "version": "1.0.0",
+  "description": "Paste a link to YouTube, Google Docs, GitHub, Notion and about 60 other sites and Granite offers to turn it into a chip: the site's icon and the page's title. Press Tab (tap on a phone) to accept. A chip is an ordinary Markdown link, so the note still reads anywhere.",
+  "tagline": "Paste a link, press Tab for a chip",
+  "author": "Granite",
+  "minApiVersion": 5,
+  "permissions": [
+    "editor.links",
+    "network"
+  ]
+}

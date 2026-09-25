@@ -193,6 +193,8 @@ button{font:inherit;color:inherit}
 .editor.inline{box-shadow:0 1px 4px rgba(0,0,0,.35)}
 .editor>*{flex:none}
 .editor .ebody,.editor .eimgs{overflow:auto}
+/* Pictures give way to the title, text and buttons, and scroll on their own: a tall photo must not push Close off a phone screen. */
+.editor>.eimgs{flex:0 1 auto;min-height:0;max-height:50vh}
 .ebody{flex:1 1 auto;min-height:0;padding:0 16px}
 .etitle{border:0;outline:0;background:none;color:inherit;font:inherit;font-size:17px;font-weight:600;padding:14px 44px 8px 16px;width:100%;box-sizing:border-box}
 .ebodyta{border:0;outline:0;background:none;color:inherit;font:inherit;resize:none;width:100%;box-sizing:border-box;padding:4px 0 10px;min-height:56px;display:block}
@@ -215,8 +217,8 @@ button{font:inherit;color:inherit}
 .stamp{font-size:11px;color:var(--text-dim,#5f6368);padding:0 10px;text-align:right}
 .close{border:0;background:none;padding:6px 16px;border-radius:4px;cursor:pointer;font-weight:600}
 .close:hover{background:rgba(128,128,128,.2)}
-.overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;z-index:20}
-.overlay .editor{width:100%;max-width:600px;max-height:100%;box-shadow:0 8px 28px rgba(0,0,0,.5)}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:flex-start;padding:16px;box-sizing:border-box;overflow:auto;z-index:20}
+.overlay .editor{width:100%;max-width:600px;max-height:100%;margin:auto;box-shadow:0 8px 28px rgba(0,0,0,.5)}
 .pop{position:fixed;z-index:30;background:var(--panel,#fff);color:var(--text,#202124);border:1px solid var(--border,#dadce0);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.35);padding:6px}
 .swatches{display:grid;grid-template-columns:repeat(6,28px);gap:6px;padding:4px}
 .sw{width:28px;height:28px;border-radius:50%;border:1px solid var(--border,#9aa0a6);cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center;background:var(--sw)}

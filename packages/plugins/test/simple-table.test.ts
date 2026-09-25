@@ -57,3 +57,55 @@ test("a single value or plain text is not turned into a table", () => {
 test("the inserted fence is the language plus the table", () => {
   assert.match(fence(blankTable(2, 2)), /^```simple-table\n\| {2}\| {2}\|\n\| --- \| --- \|\n\| {2}\| {2}\|\n```$/);
 });
+
+test("dropdown cells are stored on a trailing comment line and read back", () => {
+  const dd = { 0: { options: [{ name: "important", color: "red" }, { name: "normal", color: "yellow" }], rows: [1] } };
+  const m = { rows: [["Priority", "Note"], ["important", "a"], ["", "b"]], aligns: ["", ""], dd };
+  const text = serializeTable(m);
+  assert.equal(text.split("\n").pop(), '<!-- dropdowns {"0":{"o":[["important","red"],["normal","yellow"]],"r":[1]}} -->');
+  assert.deepEqual(plain(parseTable(text)), m);
+});
+
+test("only the listed rows of a column are dropdowns; rows outside the table are dropped", () => {
+  const text = '| a |\n| --- |\n| x |\n| y |\n<!-- dropdowns {"0":{"o":[["ok","red"]],"r":[2,9,0,2]}} -->';
+  assert.deepEqual(plain(parseTable(text).dd), { 0: { options: [{ name: "ok", color: "red" }], rows: [2] } });
+});
+
+test("a 1.2 dropdowns line (options only) means every data row of the column", () => {
+  const text = '| a | b |\n| --- | --- |\n| x | 1 |\n| y | 2 |\n<!-- dropdowns {"1":[["ok","red"]]} -->';
+  assert.deepEqual(plain(parseTable(text).dd), { 1: { options: [{ name: "ok", color: "red" }], rows: [1, 2] } });
+});
+
+test("a table without dropdowns has no dd and no extra line", () => {
+  const m = { rows: [["a", "b"], ["1", "2"]], aligns: ["", ""] };
+  assert.ok(!serializeTable(m).includes("dropdowns"));
+  assert.ok(!("dd" in plain(parseTable(serializeTable(m)))));
+});
+
+test("a dropdowns line is made safe: unknown columns, colours and duplicate names are dropped, names cannot end the comment or fence", () => {
+  const text = '| a | b |\n| --- | --- |\n| x | y |\n<!-- dropdowns {"1":{"o":[["ok","chartreuse"],["ok","red"],["",""]],"r":[1]},"7":{"o":[["z","red"]],"r":[1]},"x":[]} -->';
+  assert.deepEqual(plain(parseTable(text).dd), { 1: { options: [{ name: "ok", color: "gray" }], rows: [1] } });
+  const back = serializeTable({ rows: [["a"], ["--> ```"]], aligns: [""], dd: { 0: { options: [{ name: "--> ```", color: "red" }], rows: [1] } } });
+  const last = back.split("\n").pop()!;
+  assert.ok(!/[<>`]/.test(last.slice("<!-- dropdowns ".length, -" -->".length)));
+  assert.equal(plain(parseTable(back).dd)[0].options[0].name, "--> ```");
+});
+
+test("a broken dropdowns line is ignored, the table still reads", () => {
+  const m = plain(parseTable("| a |\n| --- |\n| 1 |\n<!-- dropdowns {oops -->"));
+  assert.deepEqual(m.rows, [["a"], ["1"]]);
+});
+
+test("a link cell is a Markdown link and reads back, brackets and parentheses included", () => {
+  const { parseLinkCell, linkCell } = hooks;
+  const cell = linkCell("Video [1]", "https://example.com/a(b)?x=1 2");
+  assert.equal(cell, "[Video \\[1\\]](https://example.com/a%28b%29?x=1%202)");
+  assert.deepEqual(plain(parseLinkCell(cell)), { title: "Video [1]", url: "https://example.com/a%28b%29?x=1%202" });
+  assert.equal(parseLinkCell("just text"), null);
+  assert.equal(parseLinkCell("[x](ftp://example.com)"), null);
+});
+
+test("a link cell survives the table text", () => {
+  const m = { rows: [["Topic"], [hooks.linkCell("A | B", "https://youtu.be/x")]], aligns: [""] };
+  assert.deepEqual(plain(parseTable(serializeTable(m))), m);
+});

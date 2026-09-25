@@ -1,2 +1,3 @@
 export { default as LiveEditor, IMAGE_FILE } from "./LiveEditor.tsx";
-export type { BlockActions, BlockRenderer, LiveEditorHandle, LiveEditorProps, MenuItemInfo } from "./LiveEditor.tsx";
+export type { BlockActions, BlockRenderer, LiveEditorHandle, LinkChipInfo, LiveEditorProps, MenuItemInfo } from "./LiveEditor.tsx";
+export type { SyncCursor, SyncEvent, SyncPort } from "./sync.ts";

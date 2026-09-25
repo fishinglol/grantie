@@ -1,5 +1,35 @@
-import { METHOD_PERMISSION, checkPluginCss, safeNotePath, type CommandInfo } from "./api.ts";
+import { METHOD_PERMISSION, checkPluginCss, safeNotePath, type CommandInfo, type SyncCursor, type SyncEvent } from "./api.ts";
+import { checkLinkProvider, findLinkProvider, svgDataUri, type LinkChip, type LinkProvider } from "./links.ts";
 import type { PluginManifest } from "./manifest.ts";
+
+/**
+ * The open note's side of a live session (plugin API 6). Each app forwards it to the editor (`LiveEditorHandle.sync`), whose
+ * `SyncPort` has the same shape; the host only carries the messages and checks them.
+ */
+export interface SyncPort {
+  start(listener: (event: SyncEvent) => void): string;
+  stop(): void;
+  remote(changes: unknown): void;
+  ack(): void;
+  setCursors(cursors: SyncCursor[]): void;
+}
+
+const MAX_CURSORS = 50;
+const MAX_SYNC_JSON = 2_000_000;
+
+/** Carets from a plugin end up in the editor's CSS and DOM, so each field is checked. Throws with a readable message. */
+export function checkCursors(value: unknown): SyncCursor[] {
+  if (!Array.isArray(value) || value.length > MAX_CURSORS) throw new Error(`setCursors takes a list of up to ${MAX_CURSORS} carets`);
+  return value.map((c: unknown) => {
+    const o = (c ?? {}) as Record<string, unknown>;
+    const pos = (v: unknown) => typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 2 ** 31;
+    if (typeof o.id !== "string" || o.id === "" || o.id.length > 64) throw new Error("a caret needs an id (up to 64 characters)");
+    if (typeof o.name !== "string" || o.name.length > 40) throw new Error("a caret's name must be text of up to 40 characters");
+    if (typeof o.color !== "string" || !/^#[0-9a-f]{6}$/i.test(o.color)) throw new Error("a caret's color must look like #rrggbb");
+    if (!pos(o.anchor) || !pos(o.head)) throw new Error("a caret's anchor and head must be whole numbers, 0 or more");
+    return { id: o.id, name: o.name, color: o.color, anchor: o.anchor as number, head: o.head as number };
+  });
+}
 
 /**
  * What the app lends to plugins. Each app (desktop, phone) implements this once; the host below is
@@ -19,6 +49,10 @@ export interface HostAdapter {
    */
   openNote(path: string, options?: { beside?: boolean; origin?: HTMLElement | null }): Promise<void>;
   notice(message: string): void;
+  /** Open a web address (http / https) in the system browser. */
+  openUrl?(url: string): void;
+  /** The open note's live-session port; absent where the app can't do it. */
+  sync?: SyncPort;
 }
 
 /** A command that hasn't finished after this long is assumed stuck; its plugin is shut down. */
@@ -36,7 +70,7 @@ function bootstrapHtml(network: boolean, block: boolean): string {
   const csp = `default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'${block ? "; style-src 'unsafe-inline'; img-src data:" : ""}${network ? "; connect-src https:" : ""}`;
   return `<!doctype html><meta http-equiv="Content-Security-Policy" content="${csp}">${block ? "<style>html,body{margin:0;background:transparent}</style>" : ""}<script>
 (function () {
-  var host = window.parent, pending = {}, seq = 0, commands = {}, isBlock = false, blockFns = {}, blockHandle = null, triggers = {}, pasteFn = null, items = {};
+  var host = window.parent, pending = {}, seq = 0, commands = {}, isBlock = false, blockFns = {}, blockHandle = null, triggers = {}, pasteFn = null, items = {}, linkTitles = {}, syncHandler = null;
   function applyVars(vars) { for (var k in vars) document.documentElement.style.setProperty(k, vars[k]); }
   function send(m) { host.postMessage(m, "*"); }
   function call(method, args) {
@@ -57,7 +91,18 @@ function bootstrapHtml(network: boolean, block: boolean): string {
       getSelection: function () { return call("editor.getSelection", []); },
       replaceSelection: function (t) { return call("editor.replaceSelection", [t]); },
       setText: function (t) { return call("editor.setText", [t]); },
-      setStyle: function (css) { return call("editor.setStyle", [css]); }
+      setStyle: function (css) { return call("editor.setStyle", [css]); },
+      sync: Object.freeze({
+        start: function (onEvent) {
+          if (typeof onEvent !== "function") throw new Error("sync.start needs a handler");
+          syncHandler = onEvent;
+          return call("sync.start", []);
+        },
+        stop: function () { syncHandler = null; return call("sync.stop", []); },
+        remote: function (changes) { return call("sync.remote", [changes]); },
+        ack: function () { return call("sync.ack", []); },
+        setCursors: function (list) { return call("sync.setCursors", [list]); }
+      })
     }),
     blocks: Object.freeze({ register: function (lang, fn) {
       if (typeof lang !== "string" || typeof fn !== "function") throw new Error("blocks.register needs (lang, render)");
@@ -80,6 +125,20 @@ function bootstrapHtml(network: boolean, block: boolean): string {
         items[d.id] = d.insert;
         if (!isBlock) return call("input.register", ["item", d.id, d.name, String(d.description || "")]);
       }
+    }),
+    links: Object.freeze({
+      register: function (list) {
+        var metas = [];
+        (Array.isArray(list) ? list : [list]).forEach(function (p) {
+          if (!p || typeof p.id !== "string") throw new Error("links.register needs { id, name, hosts, color, icon }");
+          if (typeof p.title === "function") linkTitles[p.id] = p.title;
+          metas.push({ id: p.id, name: p.name, label: p.label, hosts: p.hosts, color: p.color, icon: p.icon });
+        });
+        if (!isBlock) return call("links.register", [metas]);
+      },
+      chip: function (url) { return call("links.chip", [url]); },
+      title: function (url) { return call("links.title", [url]); },
+      open: function (url) { return call("links.open", [url]); }
     }),
     vault: Object.freeze({
       list: function () { return call("vault.list", []); },
@@ -115,13 +174,16 @@ function bootstrapHtml(network: boolean, block: boolean): string {
       applyVars(m.vars);
       try { if (blockHandle && blockHandle.update) blockHandle.update(m.source); }
       catch (err) { send({ k: "error", message: String(err && err.message || err) }); }
+    } else if (m.k === "sync") {
+      try { if (syncHandler) syncHandler(m.event); }
+      catch (err) { send({ k: "error", message: String(err && err.message || err) }); }
     } else if (m.k === "result") {
       var p = pending[m.n]; delete pending[m.n];
       if (p) { if (m.ok) p.resolve(m.value); else p.reject(new Error(m.error)); }
     } else if (m.k === "input-run") {
       Promise.resolve().then(function () {
-        var fn = m.kind === "paste" ? pasteFn : m.kind === "item" ? items[m.text] : triggers[m.text];
-        return fn ? (m.kind === "paste" ? fn({ text: String(m.text), html: String(m.html) }) : fn()) : null;
+        var fn = m.kind === "paste" ? pasteFn : m.kind === "item" ? items[m.text] : m.kind === "link" ? linkTitles[m.text] : triggers[m.text];
+        return fn ? (m.kind === "paste" ? fn({ text: String(m.text), html: String(m.html) }) : m.kind === "link" ? fn(String(m.url)) : fn()) : null;
       }).then(
         function (v) { send({ k: "input-done", n: m.n, value: typeof v === "string" ? v : null }); },
         function (err) { send({ k: "input-done", n: m.n, value: null, error: String(err && err.message || err) }); }
@@ -199,6 +261,8 @@ interface Loaded {
   paste: boolean;
   /** Entries this plugin put in the `//` list. */
   items: Map<string, { name: string; description: string }>;
+  /** Sites this plugin draws as chips. */
+  links: Map<string, LinkProvider>;
   inputs: Map<number, { resolve: (value: string | null) => void; timer: ReturnType<typeof setTimeout> }>;
   runs: Map<number, { resolve: () => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>;
   code: string;
@@ -213,6 +277,10 @@ export class PluginHost {
   readonly #plugins = new Map<string, Loaded>();
   readonly #blocks = new Set<BlockFrame>();
   #runSeq = 0;
+  /** The plugin whose live session the open note is in (one at a time). */
+  #syncOwner: string | null = null;
+  /** Identifies that session, so a late "ended" from an earlier one (the plugin restarting its own) can't end this one. */
+  #syncToken: object | null = null;
 
   constructor(adapter: HostAdapter, onCommandsChanged: () => void = () => {}, onBlocksChanged: () => void = () => {}) {
     this.#adapter = adapter;
@@ -229,7 +297,7 @@ export class PluginHost {
     frame.setAttribute("aria-hidden", "true");
     frame.style.cssText = "display:none;width:0;height:0;border:0";
     frame.srcdoc = bootstrapHtml(manifest.permissions.includes("network"), false);
-    const entry: Loaded = { manifest, frame, blockLangs: new Set(), commands: new Map(), triggers: new Set(), paste: false, items: new Map(), inputs: new Map(), runs: new Map(), code };
+    const entry: Loaded = { manifest, frame, blockLangs: new Set(), commands: new Map(), triggers: new Set(), paste: false, items: new Map(), links: new Map(), inputs: new Map(), runs: new Map(), code };
     this.#plugins.set(manifest.id, entry);
     const started = new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -246,6 +314,7 @@ export class PluginHost {
     const entry = this.#plugins.get(id);
     if (!entry) return;
     this.#plugins.delete(id);
+    if (this.#syncOwner === id) this.#endSync();
     entry.frame.remove();
     this.#setStyle(id, ""); // a plugin's look goes away with it
     for (const b of [...this.#blocks]) {
@@ -253,7 +322,7 @@ export class PluginHost {
       b.frame.remove();
       this.#blocks.delete(b);
     }
-    if (entry.blockLangs.size > 0) this.#onBlocks(); // its blocks turn back into plain text
+    if (entry.blockLangs.size > 0 || entry.links.size > 0) this.#onBlocks(); // its blocks and chips turn back into plain text
     for (const run of entry.runs.values()) {
       clearTimeout(run.timer);
       run.reject(new Error("plugin was stopped"));
@@ -267,6 +336,16 @@ export class PluginHost {
       entry.started.reject(new Error("plugin was stopped"));
     }
     this.#onCommands();
+  }
+
+  #endSync(): void {
+    this.#syncOwner = null;
+    this.#syncToken = null;
+    try {
+      this.#adapter.sync?.stop();
+    } catch {
+      // the editor is gone already
+    }
   }
 
   isLoaded(id: string): boolean {
@@ -335,18 +414,27 @@ export class PluginHost {
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  /** The chip a link to `url` is drawn as, or null when no running plugin knows that site. */
+  linkChip(url: string): LinkChip | null {
+    const all = [...this.#plugins.values()].flatMap((p) => [...p.links.values()].map((l) => ({ ...l, plugin: p.manifest.id })));
+    const found = findLinkProvider(all, url);
+    return found && { key: `${found.plugin}:${found.id}`, name: found.name, label: found.label, color: found.color, icon: svgDataUri(found.icon) };
+  }
+
   /**
-   * Ask the plugin that registered `trigger` (or the paste hook, or the `item` with this `MenuItem.key`) what to insert. Resolves
-   * null when it declines, fails or takes longer than 5 seconds (the editor then leaves the typed or pasted text alone).
+   * Ask the plugin that registered `trigger` (or the paste hook, or the `item` with this `MenuItem.key`) what to insert. With `"link"`
+   * (`payload.text` is a `LinkChip.key`, `payload.url` the address) it asks for the page's title. Resolves null when the plugin declines,
+   * fails or takes longer than 5 seconds (the editor then leaves the typed or pasted text alone).
    */
-  runInput(kind: "trigger" | "paste" | "item", payload: { text: string; html?: string }): Promise<string | null> {
-    let sent: "trigger" | "paste" | "item" = kind;
+  runInput(kind: "trigger" | "paste" | "item" | "link", payload: { text: string; html?: string; url?: string }): Promise<string | null> {
+    let sent: "trigger" | "paste" | "item" | "link" = kind;
     let text = payload.text;
     let entry: Loaded | undefined;
-    if (kind === "item") {
+    if (kind === "item" || kind === "link") {
       const [pluginId, type, id] = text.split(":");
       entry = this.#plugins.get(pluginId ?? "");
-      if (type === "trigger") [sent, text] = ["trigger", "//"];
+      if (kind === "link") text = type ?? "";
+      else if (type === "trigger") [sent, text] = ["trigger", "//"];
       else text = id ?? "";
     } else {
       entry = [...this.#plugins.values()].find((p) => (kind === "paste" ? p.paste : p.triggers.has(text)));
@@ -359,7 +447,7 @@ export class PluginHost {
         resolve(null);
       }, INPUT_TIMEOUT_MS);
       entry.inputs.set(n, { resolve, timer });
-      entry.frame.contentWindow?.postMessage({ k: "input-run", n, kind: sent, text, html: payload.html ?? "" }, "*");
+      entry.frame.contentWindow?.postMessage({ k: "input-run", n, kind: sent, text, html: payload.html ?? "", url: payload.url ?? "" }, "*");
     });
   }
 
@@ -532,6 +620,44 @@ export class PluginHost {
         return this.#adapter.setText(text(0));
       case "editor.setStyle":
         return this.#setStyle(manifest.id, checkPluginCss(args[0]));
+      case "sync.start": {
+        const port = this.#adapter.sync;
+        const entry = this.#plugins.get(manifest.id);
+        if (!port || !entry) throw new Error("this app cannot do live sessions");
+        if (origin) throw new Error("a block can't start a live session");
+        if (this.#syncOwner && this.#syncOwner !== manifest.id) throw new Error("another plugin is already in a live session");
+        const token = {};
+        this.#syncOwner = manifest.id;
+        this.#syncToken = token;
+        try {
+          const text = port.start((event) => {
+            if (this.#syncToken !== token) return;
+            if (event.type === "ended") {
+              this.#syncOwner = null;
+              this.#syncToken = null;
+            }
+            entry.frame.contentWindow?.postMessage({ k: "sync", event }, "*");
+          });
+          return { text };
+        } catch (e) {
+          this.#syncOwner = null;
+          this.#syncToken = null;
+          throw e;
+        }
+      }
+      case "sync.stop":
+        if (this.#syncOwner === manifest.id) this.#endSync();
+        return;
+      case "sync.remote":
+      case "sync.ack":
+      case "sync.setCursors": {
+        const port = this.#adapter.sync;
+        if (!port || this.#syncOwner !== manifest.id) throw new Error("no live session");
+        if (method === "sync.ack") return port.ack();
+        if (method === "sync.setCursors") return port.setCursors(checkCursors(args[0]));
+        if (JSON.stringify(args[0] ?? null).length > MAX_SYNC_JSON) throw new Error("that edit is too large");
+        return port.remote(args[0]);
+      }
       case "vault.list":
         return this.#adapter.listNotes();
       case "vault.read":
@@ -562,6 +688,25 @@ export class PluginHost {
         }
         return;
       }
+      case "links.register": {
+        const list = args[0];
+        if (!Array.isArray(list) || list.length > 100) throw new Error("links.register takes 1–100 providers");
+        const providers = list.map(checkLinkProvider);
+        const entry = this.#plugins.get(manifest.id);
+        for (const p of providers) entry?.links.set(p.id, p);
+        this.#onBlocks();
+        return;
+      }
+      case "links.chip":
+        return this.linkChip(text(0));
+      case "links.title": {
+        const chip = this.linkChip(text(0));
+        return chip ? this.runInput("link", { text: chip.key, url: text(0) }) : null;
+      }
+      case "links.open": {
+        if (!/^https?:\/\//i.test(text(0))) throw new Error("only http and https addresses can be opened");
+        return this.#adapter.openUrl?.(text(0));
+      }
       case "notice":
         return this.#adapter.notice(text(0));
     }
@@ -588,7 +733,8 @@ export class BlockBridge {
   triggers = (): string[] => this.host?.inputTriggers() ?? [];
   hasPasteHook = (): boolean => this.host?.hasPasteHook() ?? false;
   menuItems = (): MenuItem[] => this.host?.menuItems() ?? [];
-  runInput = (kind: "trigger" | "paste" | "item", payload: { text: string; html?: string }): Promise<string | null> =>
+  linkChip = (url: string): LinkChip | null => this.host?.linkChip(url) ?? null;
+  runInput = (kind: "trigger" | "paste" | "item" | "link", payload: { text: string; html?: string; url?: string }): Promise<string | null> =>
     this.host?.runInput(kind, payload) ?? Promise.resolve(null);
   /** Call from the host's `onBlocksChanged`. */
   changed = (): void => this.#listeners.forEach((l) => l());

@@ -1,14 +1,15 @@
 {
   "id": "simple-table",
   "name": "Simple Table",
-  "version": "1.1.0",
-  "description": "A plain table you can type straight into: add rows and columns, Tab and Enter to move around. Type // on an empty line and choose Table, or paste cells copied from Excel or Google Sheets and they become a table. Stored as an ordinary Markdown table.",
+  "version": "1.4.0",
+  "description": "A plain table you can type straight into: add rows and columns, Tab and Enter to move around. Type // on an empty line and choose Table, or paste cells copied from Excel or Google Sheets and they become a table. Type // in a cell for a menu: a coloured dropdown like Google Sheets, or a link chip (paste a link into a cell with Smart Chips on). Stored as an ordinary Markdown table.",
   "tagline": "Type // for a table, paste from Excel",
   "author": "Granite",
-  "minApiVersion": 4,
+  "minApiVersion": 5,
   "permissions": [
     "editor.blocks",
     "editor.input",
+    "editor.links",
     "editor.write"
   ]
 }

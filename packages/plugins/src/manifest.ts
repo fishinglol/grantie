@@ -2,7 +2,7 @@
  * What a plugin may ask for. Nothing is granted implicitly: the user enables a plugin on each
  * device after seeing this list, and the host refuses any call outside it.
  */
-export const PERMISSIONS = ["editor.read", "editor.write", "editor.style", "editor.blocks", "editor.input", "vault.read", "vault.write", "network"] as const;
+export const PERMISSIONS = ["editor.read", "editor.write", "editor.style", "editor.blocks", "editor.input", "editor.links", "editor.sync", "vault.read", "vault.write", "network"] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
 export const PERMISSION_LABELS: Record<Permission, string> = {
@@ -11,13 +11,15 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   "editor.style": "Change how the editor looks",
   "editor.blocks": "Draw its own blocks inside your notes",
   "editor.input": "See what you type on an empty line and what you paste",
+  "editor.links": "Show links to known sites as chips",
+  "editor.sync": "Follow what you type and your cursor as you type, and change the note live (for working together)",
   "vault.read": "Read your notes",
   "vault.write": "Create and change notes",
   network: "Use the internet",
 };
 
 /** Version of the plugin API this app implements. A plugin can require a minimum. */
-export const API_VERSION = 4;
+export const API_VERSION = 6;
 
 export interface PluginManifest {
   /** Lower-case letters, digits and dashes; also the plugin's folder name. */

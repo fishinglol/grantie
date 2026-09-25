@@ -1,0 +1,13 @@
+{
+  "id": "dropdown",
+  "name": "Dropdown",
+  "version": "1.0.0",
+  "description": "A coloured choice chip inside a note, like a status or priority. Type // on an empty line and choose Dropdown, click the chip to pick an option, and edit the options (names, colours, order) with the pencil. Stored as plain text.",
+  "tagline": "Type // for a coloured choice chip",
+  "author": "Granite",
+  "minApiVersion": 4,
+  "permissions": [
+    "editor.blocks",
+    "editor.input"
+  ]
+}

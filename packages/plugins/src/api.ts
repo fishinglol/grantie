@@ -33,6 +33,31 @@ export interface PasteClip {
   html: string;
 }
 
+export interface LinkProviderInfo {
+  id: string;
+  name: string;
+  label?: string;
+  hosts: string[];
+  color: string;
+  icon: string;
+  title?: (url: string) => string | null | Promise<string | null>;
+}
+
+/** One edit or caret report the open note sends a live session. `changes` is CodeMirror's `ChangeSet.toJSON()`; `base` is how many log entries the note has taken in (see `editor.sync`). */
+export type SyncEvent =
+  | { type: "change"; base: number; changes: unknown }
+  | { type: "selection"; base: number; anchor: number; head: number }
+  | { type: "ended"; reason?: string };
+
+/** Somebody else's caret / selection, as positions in the shared text. `color` is `#rrggbb`. */
+export interface SyncCursor {
+  id: string;
+  name: string;
+  color: string;
+  anchor: number;
+  head: number;
+}
+
 export interface GraniteApi {
   commands: {
     /**
@@ -56,6 +81,27 @@ export interface GraniteApi {
      * `--panel`, …) on `.live-editor`, so restyling usually means setting those. No `@import` or `url()`.
      */
     setStyle(css: string): Promise<void>;
+    /**
+     * editor.sync (API 6): a live session of the open note with other people (Google-Docs style). The plugin is the *authority*: it keeps the
+     * shared text, puts every edit into one ordered log, and the note follows that log. Edits travel as CodeMirror `ChangeSet` JSON
+     * (`ChangeSet.toJSON()`), so bundle `@codemirror/state` to read and map them. One session at a time; it ends by itself when another note opens.
+     *
+     * The note has taken in `base` entries of the log: your own `remote` edits and the `ack`s of its edits. Protocol:
+     * - `start(onEvent)` gives the note's text (log entry 0). `onEvent` then gets `{ type: "change", base, changes }` for what the user typed, at most
+     *   one at a time until you `ack()` it; later typing is composed into the next one. Map `changes` over your log entries from `base` on, apply it
+     *   to the shared text, add it to the log, and `ack()`. `{ type: "selection", base, anchor, head }` is the caret, sent only when nothing is waiting.
+     * - Something from other people: add it to the log and call `remote(changes)` (based on the text after every entry you sent so far).
+     *   Every log entry goes to the note exactly once, in order: an `ack()` for the user's own, `remote()` for the rest.
+     * - `setCursors` draws other people's carets and selections (positions in the text after every entry you sent so far).
+     */
+    sync: {
+      start(onEvent: (event: SyncEvent) => void): Promise<{ text: string }>;
+      stop(): Promise<void>;
+      remote(changes: unknown): Promise<void>;
+      ack(): Promise<void>;
+      /** At most 50 carets; `name` up to 40 characters. Pass `[]` to remove them all. */
+      setCursors(cursors: SyncCursor[]): Promise<void>;
+    };
   };
   blocks: {
     /**
@@ -83,6 +129,22 @@ export interface GraniteApi {
      */
     addItem(item: { id: string; name: string; description?: string; insert: () => string | Promise<string> }): Promise<void>;
   };
+  links: {
+    /**
+     * editor.links (API 5): tell the editor about sites so a Markdown link `[Title](url)` to one of them is drawn as a chip (the site's icon
+     * and the title), and a pasted address of one offers "Tab to replace with" that chip. `hosts` are `youtube.com` (and subdomains) or
+     * `docs.google.com/document` (that path only); the most specific one wins. `icon` is a small `<svg>` with no scripts or links.
+     * `title(url)` is asked when an address is pasted: return the page's title, or null to use `label`. It has 5 seconds, and can use
+     * `fetch` if the manifest has `network`. Pass one provider or a list.
+     */
+    register(provider: LinkProviderInfo | LinkProviderInfo[]): Promise<void>;
+    /** editor.links: how a link to `url` is drawn (icon, colour, name), if a running plugin (Smart Chips) knows that site, else null. For a block that draws chips itself, e.g. in table cells. `icon` is an image URL. */
+    chip(url: string): Promise<{ name: string; label: string; color: string; icon: string } | null>;
+    /** editor.links: the page's title from the plugin that knows the site (it may fetch it; up to 5 seconds), or null. */
+    title(url: string): Promise<string | null>;
+    /** editor.links: open a web address (http / https) in the system browser. */
+    open(url: string): Promise<void>;
+  };
   vault: {
     /** vault.read: vault-relative paths of every note, e.g. `Projects/plan.md`. */
     list(): Promise<string[]>;
@@ -108,8 +170,17 @@ export const METHOD_PERMISSION: Record<string, Permission | null> = {
   "editor.replaceSelection": "editor.write",
   "editor.setText": "editor.write",
   "editor.setStyle": "editor.style",
+  "sync.start": "editor.sync",
+  "sync.stop": "editor.sync",
+  "sync.remote": "editor.sync",
+  "sync.ack": "editor.sync",
+  "sync.setCursors": "editor.sync",
   "blocks.register": "editor.blocks",
   "input.register": "editor.input",
+  "links.register": "editor.links",
+  "links.chip": "editor.links",
+  "links.title": "editor.links",
+  "links.open": "editor.links",
   "vault.list": "vault.read",
   "vault.read": "vault.read",
   "vault.write": "vault.write",

@@ -9,6 +9,7 @@
     "./live-editor.css": "./src/live-editor.css"
   },
   "scripts": {
+    "test": "node --test 'test/**/*.test.ts'",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
