@@ -94,6 +94,9 @@ Checked in the desktop preview (no plugins: list, filter, Enter, code block care
   `//` alone on a line of a `<textarea>` / text `<input>` opens Date / Time / Checkbox under the caret, Enter/Tab/arrows/Escape, the field gets a normal `input` event. Opt out with `data-slash="off"` (Simple Table 1.6.1 does: it has its
   own cell menu; older installed copies show both menus until UPDATE); search boxes are skipped. Text-only entries: whole-block plugins (Cards, Calendar...) can't live inside a field. Checked in the preview (Cards title + body).
   Needs desktop rebuild + phone `npm run ship` (host code is in `editorHtml.ts`).
+  **Later the same night (user was angry that Cards showed only Date/Time/Checkbox):** the frame menu now shows the *whole* list: Date/Time/Checkbox + Markdown blocks + every running plugin's entries (frame posts `slash-list` /
+  `slash-run` to the host, `#onBlockMessage` answers with `menuItems()` / `runInput("item")`), filters as you type `//cal`. A whole-block entry (Calendar...) lands as its source text inside the field: only the note draws it.
+  Phone scroll bug: the `//` list chose an entry on `pointerdown`, so touching the list to scroll it picked something; now `mousedown` (keeps focus) + `click` (main editor and frame menu). Checked with a harness iframe (full list, filter, plugin round trip, scrollable); the real Cards frame click test failed only because the browser pane's emulated viewport mis-mapped clicks.
 
 ## Session 2026-09-26 (later) — "Sync stopped: it would delete 45 of 95 files" -> a confirm dialog
 User imported too many folders, deleted them in Drive by hand; both devices stuck on the mass-delete breaker (`MAX_UNATTENDED_DELETES`, >5 and >30% of tracked files). Desktop index: 35 tracked, 11 missing locally (would trash 11 on Drive) — same breaker.

@@ -581,11 +581,10 @@ function slashMenu(getBlocks: () => BlockRenderer | null) {
             desc.textContent = item.description;
             row.append(desc);
           }
-          // pointerdown + preventDefault: the editor keeps focus (and the phone keeps its keyboard) while the entry is chosen.
-          row.addEventListener("pointerdown", (e) => {
-            e.preventDefault();
-            pick(view, item);
-          });
+          // mousedown + preventDefault: the editor keeps focus (and the phone keeps its keyboard). The entry is chosen on click, not on
+          // touch start, so a finger dragging the list to scroll it (a long list on a phone) chooses nothing.
+          row.addEventListener("mousedown", (e) => e.preventDefault());
+          row.addEventListener("click", () => pick(view, item));
           return row;
         }),
       );

@@ -506,6 +506,14 @@ export class PluginHost {
         if (Number.isFinite(h)) block.frame.style.height = `${Math.round(Math.min(Math.max(h, 40), MAX_BLOCK_HEIGHT))}px`;
         break;
       }
+      case "slash-list": // a text field in the frame wants the plugins' entries for its `//` menu (slash.ts)
+        post({ k: "slash-items", items: this.menuItems() });
+        break;
+      case "slash-run": {
+        const n = Number(d.n);
+        void this.runInput("item", { text: String(d.key) }).then((text) => post({ k: "slash-text", n, text }));
+        break;
+      }
       case "error":
         this.#adapter.notice(`${manifest.name}: ${String(d.message)}`);
         break;

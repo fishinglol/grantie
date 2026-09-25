@@ -1,18 +1,32 @@
 /**
  * The `//` menu for text fields inside a plugin's block frame (Cards' note editor, a table cell, ...). It runs in every visible plugin
- * frame, so no plugin has to build its own: type `//` alone on a line of a textarea or a text input and pick Date, Time or Checkbox;
- * the text goes in and the field gets a normal `input` event, so the plugin saves it as if it had been typed.
+ * frame, so no plugin has to build its own: type `//` alone on a line of a textarea or a text input and pick from the same list the
+ * note has: Date / Time / Checkbox, the Markdown blocks (headings, lists, quote, code, divider, table) and every running plugin's entries
+ * (the host lists and runs those: `slash-list` / `slash-run`). The text goes in and the field gets a normal `input` event, so the plugin
+ * saves it as if it had been typed. A plugin block that is inserted lands as its source text: it is drawn only where the note draws it.
  * A field opts out with `data-slash="off"` (a plugin with its own `//` menu), and search boxes (placeholder or type "search") are skipped.
  * Plain JS in a string: the frame is a sandboxed page with no access to the app's code.
  */
 export const SLASH_SCRIPT = String.raw`
 (function () {
-  var ITEMS = [
-    ["Date", "Today's date", function () { var d = new Date(), p = function (n) { return (n < 10 ? "0" : "") + n; }; return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()); }],
-    ["Time", "The time now", function () { var d = new Date(), p = function (n) { return (n < 10 ? "0" : "") + n; }; return p(d.getHours()) + ":" + p(d.getMinutes()); }],
-    ["Checkbox", "A tick box", function () { return "☐ "; }]
+  var pad = function (n) { return (n < 10 ? "0" : "") + n; };
+  /** Built-in entries: name, description, text (or a function making it), caret offset inside the text, and whether it needs several lines. */
+  var BUILTIN = [
+    { name: "Date", desc: "Today's date", text: function () { var d = new Date(); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); } },
+    { name: "Time", desc: "The time now", text: function () { var d = new Date(); return pad(d.getHours()) + ":" + pad(d.getMinutes()); } },
+    { name: "Checkbox", desc: "A tick box", text: "☐ " },
+    { name: "Heading 1", desc: "Big section heading", text: "# " },
+    { name: "Heading 2", desc: "Medium section heading", text: "## " },
+    { name: "Heading 3", desc: "Small section heading", text: "### " },
+    { name: "Bulleted list", desc: "A simple list of points", text: "- " },
+    { name: "Numbered list", desc: "A list with numbers", text: "1. " },
+    { name: "Quote", desc: "Set a passage apart", text: "> " },
+    { name: "Code block", desc: "Monospaced code", text: "\x60\x60\x60\n\n\x60\x60\x60", caret: 4, multi: true },
+    { name: "Divider", desc: "A horizontal line", text: "---" },
+    { name: "Markdown table", desc: "Rows and columns as plain text", text: "| Column 1 | Column 2 | Column 3 |\n| --- | --- | --- |\n|  |  |  |", caret: 2, multi: true }
   ];
-  var menu = null, field = null, index = 0, line = 0;
+  var pluginItems = [];
+  var menu = null, field = null, index = 0, shown = [], seq = 0, waiting = {};
   function usable(el) {
     if (!el || el.readOnly || el.disabled || el.getAttribute("data-slash") === "off") return false;
     if (el.tagName === "TEXTAREA") return true;
@@ -20,7 +34,7 @@ export const SLASH_SCRIPT = String.raw`
     var type = (el.getAttribute("type") || "text").toLowerCase();
     return type === "text" && !/search/i.test(el.getAttribute("placeholder") || "");
   }
-  function close() { if (menu) menu.remove(); menu = field = null; }
+  function close() { if (menu) menu.remove(); menu = field = null; shown = []; }
   /** Where the caret is on screen (a hidden copy of the field's text up to the caret, measured). */
   function caretPoint(el) {
     var cs = getComputedStyle(el), mirror = document.createElement("div"), mark = document.createElement("span");
@@ -35,65 +49,111 @@ export const SLASH_SCRIPT = String.raw`
     mirror.remove();
     return { x: Math.max(box.left, Math.min(x, box.right)), y: Math.max(box.top, Math.min(y, box.bottom)), h: mark.offsetHeight };
   }
+  /** The //word at the caret: its start and the word, or null when the caret is not at the end of such a line. */
+  function slashAt(el) {
+    var v = el.value, pos = el.selectionStart, from = v.lastIndexOf("\n", pos - 1) + 1, m = /^\/\/([^\s\/]*)$/.exec(v.slice(from, pos));
+    if (!m || el.selectionStart !== el.selectionEnd || !(pos === v.length || v.charAt(pos) === "\n")) return null;
+    return { from: from, to: pos, query: m[1].toLowerCase() };
+  }
+  function entries(el) {
+    var all = BUILTIN.filter(function (b) { return !(b.multi && el.tagName === "INPUT"); }).concat(pluginItems);
+    return all;
+  }
   function paint() {
     Array.prototype.forEach.call(menu.children, function (row, i) { row.style.background = i === index ? "var(--panel-hover, rgba(127,127,127,.2))" : "none"; });
+    var on = menu.children[index];
+    if (on && on.scrollIntoView) on.scrollIntoView({ block: "nearest" });
   }
-  function open(el) {
-    close();
-    field = el;
-    index = 0;
-    menu = document.createElement("div");
-    menu.setAttribute("role", "listbox");
-    menu.style.cssText = "position:fixed;z-index:2147483647;min-width:200px;max-width:min(300px,calc(100vw - 8px));overflow-y:auto;padding:4px;border:1px solid var(--border, rgba(127,127,127,.4));border-radius:10px;background:var(--panel, #fff);color:var(--text, #202124);font:14px/1.3 system-ui,-apple-system,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.35)";
-    ITEMS.forEach(function (item, i) {
+  function place() {
+    var at = caretPoint(field), room = window.innerHeight - 8;
+    menu.style.maxHeight = Math.min(room, 320) + "px";
+    var tall = menu.offsetHeight, top = at.y + 4;
+    if (top + tall > room) top = Math.max(4, at.y - at.h - tall - 4);
+    menu.style.top = top + "px";
+    menu.style.left = Math.max(4, Math.min(at.x, window.innerWidth - menu.offsetWidth - 4)) + "px";
+  }
+  /** Draw the rows for what is typed after //; closes when nothing matches. */
+  function render(q) {
+    shown = entries(field).filter(function (e) { return !q.query || (e.name + " " + (e.plugin || "")).toLowerCase().indexOf(q.query) >= 0; });
+    if (!shown.length) return close();
+    index = Math.min(index, shown.length - 1);
+    menu.textContent = "";
+    shown.forEach(function (item, i) {
       var row = document.createElement("div");
       row.setAttribute("role", "option");
       row.style.cssText = "padding:6px 10px;border-radius:7px;cursor:pointer";
       var name = document.createElement("div"), desc = document.createElement("div");
       name.style.fontWeight = "600";
-      name.textContent = item[0];
+      name.textContent = item.name;
       desc.style.cssText = "font-size:12px;opacity:.65";
-      desc.textContent = item[1];
+      desc.textContent = item.desc || "";
       row.appendChild(name);
-      row.appendChild(desc);
-      row.addEventListener("mousedown", function (e) { e.preventDefault(); choose(i); });
+      if (item.desc) row.appendChild(desc);
+      // mousedown is kept from moving focus; the choice is made on click, so a finger dragging the list to scroll it chooses nothing.
+      row.addEventListener("mousedown", function (e) { e.preventDefault(); });
+      row.addEventListener("click", function () { choose(i); });
       menu.appendChild(row);
     });
-    document.body.appendChild(menu);
-    var at = caretPoint(el), room = window.innerHeight - 8;
-    menu.style.maxHeight = room + "px";
-    var tall = menu.offsetHeight, top = at.y + 4;
-    if (top + tall > room) top = Math.max(4, at.y - at.h - tall - 4);
-    menu.style.top = top + "px";
-    menu.style.left = Math.max(4, Math.min(at.x, window.innerWidth - menu.offsetWidth - 4)) + "px";
+    place();
     paint();
   }
-  function choose(i) {
-    var el = field, text = ITEMS[i][2]();
+  function open(el, q) {
     close();
-    if (!el) return;
-    var v = el.value, pos = el.selectionStart, from = v.lastIndexOf("\n", pos - 1) + 1;
-    el.value = v.slice(0, from) + text + v.slice(pos);
-    el.selectionStart = el.selectionEnd = from + text.length;
+    field = el;
+    index = 0;
+    menu = document.createElement("div");
+    menu.setAttribute("role", "listbox");
+    menu.style.cssText = "position:fixed;z-index:2147483647;min-width:200px;max-width:min(300px,calc(100vw - 8px));overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding:4px;border:1px solid var(--border, rgba(127,127,127,.4));border-radius:10px;background:var(--panel, #fff);color:var(--text, #202124);font:14px/1.3 system-ui,-apple-system,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.35)";
+    document.body.appendChild(menu);
+    render(q);
+    window.parent.postMessage({ k: "slash-list" }, "*"); // the running plugins' entries arrive as slash-items
+  }
+  function put(el, from, to, text, caret) {
+    if (el.tagName === "INPUT") text = text.replace(/\s*\n\s*/g, " ");
+    var v = el.value;
+    el.value = v.slice(0, from) + text + v.slice(to);
+    el.selectionStart = el.selectionEnd = from + (caret === undefined ? text.length : Math.min(caret, text.length));
     el.focus();
     el.dispatchEvent(new Event("input", { bubbles: true }));
   }
-  /** True when the caret sits at the end of a line that is just //. */
-  function slashLine(el) {
-    var v = el.value, pos = el.selectionStart, from = v.lastIndexOf("\n", pos - 1) + 1;
-    return el.selectionStart === el.selectionEnd && v.slice(from, pos) === "//" && (pos === v.length || v.charAt(pos) === "\n");
+  function choose(i) {
+    var el = field, item = shown[i], q = el && slashAt(el);
+    close();
+    if (!el || !item || !q) return;
+    if (item.key) {
+      // A plugin's entry: the host asks that plugin what to insert.
+      var n = ++seq;
+      var typed = el.value.slice(q.from, q.to);
+      waiting[n] = function (text) { if (typeof text === "string" && el.value.slice(q.from, q.to) === typed) put(el, q.from, q.to, text); };
+      window.parent.postMessage({ k: "slash-run", n: n, key: item.key }, "*");
+      return;
+    }
+    put(el, q.from, q.to, typeof item.text === "function" ? item.text() : item.text, item.caret);
   }
+  window.addEventListener("message", function (e) {
+    var d = e.data;
+    if (!d || typeof d !== "object") return;
+    if (d.k === "slash-items" && Array.isArray(d.items)) {
+      pluginItems = d.items.filter(function (x) { return x && typeof x.key === "string"; }).map(function (x) { return { key: x.key, name: String(x.name), desc: String(x.description || ""), plugin: String(x.plugin || "") }; });
+      if (menu && field) { var q = slashAt(field); if (q) render(q); }
+    } else if (d.k === "slash-text" && waiting[d.n]) {
+      var done = waiting[d.n];
+      delete waiting[d.n];
+      done(d.text);
+    }
+  });
   document.addEventListener("input", function (e) {
     var el = e.target;
     if (e.isComposing || !usable(el)) return;
-    if (slashLine(el)) { if (field !== el) open(el); }
-    else if (field === el) close();
+    var q = slashAt(el);
+    if (!q) { if (field === el) close(); return; }
+    if (field === el) render(q); else open(el, q);
   }, true);
   document.addEventListener("keydown", function (e) {
     if (!menu) return;
     var used = true;
-    if (e.key === "ArrowDown") index = (index + 1) % ITEMS.length;
-    else if (e.key === "ArrowUp") index = (index + ITEMS.length - 1) % ITEMS.length;
+    if (e.key === "ArrowDown") index = (index + 1) % shown.length;
+    else if (e.key === "ArrowUp") index = (index + shown.length - 1) % shown.length;
     else if (e.key === "Enter" || e.key === "Tab") choose(index);
     else if (e.key === "Escape") close();
     else used = false;
