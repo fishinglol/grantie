@@ -1,8 +1,7 @@
 # Granite Plugins docs
 
-The plugin-developer site — [grantie.vercel.app](https://grantie.vercel.app) — built with
-[VitePress](https://vitepress.dev). Content only; the plugin system itself lives in `packages/plugins` and
-`examples/plugins/`.
+The plugin-developer site, built with [VitePress](https://vitepress.dev). Content only; the plugin system
+itself lives in `packages/plugins` and `examples/plugins/`.
 
 ```bash
 npm install        # from the repo root
@@ -28,6 +27,12 @@ with Root Directory `apps/docs` also works, since Vercel then includes files out
 `api/installs*.ts` count installs in Upstash Redis. In the Vercel dashboard: `granite-docs` → Storage → Create →
 Upstash Redis, and connect it to the project (it adds `KV_REST_API_URL` / `KV_REST_API_TOKEN`). Until then the
 endpoints answer 503 and the site simply shows no numbers.
+
+### Custom domain
+
+A new project gets its own `<something>.vercel.app` domain by default; attach a custom subdomain (e.g.
+`docs.granite.app` or `plugins.granite.app`) in that project's Settings → Domains if you want one. This is a
+one-time dashboard setup that a code change here can't do by itself.
 
 ## Updating content
 
