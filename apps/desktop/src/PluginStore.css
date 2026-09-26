@@ -1,0 +1,17 @@
+/* The Store banner: a row of pages you can move between (dots and arrows). */
+.store-carousel { position: relative; overflow: hidden; border-radius: 20px; }
+.store-slides { display: flex; transition: transform 0.35s ease; }
+.store-slide { flex: 0 0 100%; min-width: 0; box-sizing: border-box; justify-content: center; }
+.store-slide p { margin: 0; max-width: 520px; font-size: 16px; line-height: 1.5; color: var(--text); }
+.store-slide-build {
+  background: radial-gradient(90% 120% at 50% 0%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%),
+    linear-gradient(120deg, color-mix(in srgb, var(--accent) 26%, var(--bg)), var(--panel));
+}
+.store-slide-build .store-get { margin-top: 8px; padding: 10px 26px; font-size: 14px; }
+.store-arrow { position: absolute; top: 50%; z-index: 2; display: grid; place-items: center; width: 34px; height: 34px; margin-top: -17px; border: 0; border-radius: 50%; background: color-mix(in srgb, var(--panel) 80%, transparent); color: var(--h); font-size: 22px; line-height: 1; cursor: pointer; }
+.store-arrow:hover { background: var(--panel-hover); }
+.store-arrow-left { left: 12px; }
+.store-arrow-right { right: 12px; }
+.store-dots { position: absolute; left: 50%; bottom: 12px; z-index: 2; display: flex; gap: 8px; padding: 6px 10px; border-radius: 999px; background: color-mix(in srgb, var(--panel) 70%, transparent); transform: translateX(-50%); }
+.store-dots button { width: 7px; height: 7px; padding: 0; border: 0; border-radius: 50%; background: var(--text-faint); cursor: pointer; }
+.store-dots button.on { background: var(--h); }

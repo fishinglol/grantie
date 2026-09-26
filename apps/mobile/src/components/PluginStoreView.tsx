@@ -23,8 +23,9 @@ export default function PluginStoreView({ catalog, installed, onInstall }: Plugi
   const [openId, setOpenId] = useState<string | null>(null);
   const [zoom, setZoom] = useState<CatalogPlugin['screenshots'][number] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  /** The "Build a plugin" page that invites people to write one. */
-  const [buildOpen, setBuildOpen] = useState(false);
+  /** Which page of the banner is showing (0: install, 1: build a plugin) and how wide the banner is. */
+  const [slide, setSlide] = useState(0);
+  const [bannerW, setBannerW] = useState(0);
   const { width } = useWindowDimensions();
   /** How many times each plugin has been installed (empty when the counter can't be reached). */
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -52,39 +53,6 @@ export default function PluginStoreView({ catalog, installed, onInstall }: Plugi
       </Pressable>
     );
   };
-
-  if (buildOpen) {
-    return (
-      <View>
-        <Pressable onPress={() => setBuildOpen(false)} style={styles.back} hitSlop={8}>
-          <Text style={styles.backText}>‹ Store</Text>
-        </Pressable>
-        <View style={styles.head}>
-          <Icon id="build" name="+" size={84} />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.kicker}>FOR DEVELOPERS</Text>
-            <Text style={styles.title}>Build a plugin</Text>
-            <Text style={styles.tagline}>One JavaScript file. The same on desktop and phone.</Text>
-            <View style={styles.headGet}>
-              <Pressable onPress={() => void Linking.openURL(BUILD_URL)} style={styles.get}>
-                <Text style={styles.getText}>READ THE GUIDE</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-        <Text style={styles.section}>Why build one</Text>
-        <Text style={styles.perm}>• Write plain JavaScript once. It runs in the desktop app and the phone app.</Text>
-        <Text style={styles.perm}>• A small API: commands, your own blocks inside a note, typing and paste hooks, link chips, a header button and vault access.</Text>
-        <Text style={styles.perm}>• It runs in a sandbox and asks for permission, so people can trust it before turning it on.</Text>
-        <Text style={styles.perm}>• Your plugin gets its own public page with your screenshots and a link to you, and the Store counts how many people install it.</Text>
-        <Text style={styles.section}>How it works</Text>
-        <Text style={styles.step}>1. Write a folder with a manifest.json and a main.js.</Text>
-        <Text style={styles.step}>2. Try it in your own vault, no build step.</Text>
-        <Text style={styles.step}>3. Send a pull request with three screenshots and a README.</Text>
-        <Text style={styles.step}>4. Once it is reviewed and merged, it shows up here.</Text>
-      </View>
-    );
-  }
 
   const open = catalog.find((c) => c.manifest.id === openId);
   if (open) {
@@ -153,12 +121,33 @@ export default function PluginStoreView({ catalog, installed, onInstall }: Plugi
 
   return (
     <View>
-      <View style={styles.banner}>
-        <Text style={styles.bannerKicker}>GRANITE PLUGINS</Text>
-        <Text style={styles.bannerTitle}>Make your notes do more. Just install.</Text>
-        <Pressable onPress={() => setBuildOpen(true)} style={[styles.get, { alignSelf: 'flex-start', marginTop: 14 }]}>
-          <Text style={styles.getText}>Build your own plugin</Text>
-        </Pressable>
+      <View onLayout={(e) => setBannerW(e.nativeEvent.layout.width)}>
+        {bannerW > 0 && (
+          <ScrollView
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onMomentumScrollEnd={(e) => setSlide(Math.round(e.nativeEvent.contentOffset.x / bannerW))}
+          >
+            <View style={[styles.banner, { width: bannerW }]}>
+              <Text style={styles.bannerKicker}>GRANITE PLUGINS</Text>
+              <Text style={styles.bannerTitle}>Make your notes do more. Just install.</Text>
+            </View>
+            <View style={[styles.banner, { width: bannerW }]}>
+              <Text style={styles.bannerKicker}>FOR DEVELOPERS</Text>
+              <Text style={styles.bannerTitle}>Build a plugin for Granite</Text>
+              <Text style={styles.bannerText}>One JavaScript file. Runs on desktop and phone. Get your own page and see how many people install it.</Text>
+              <Pressable onPress={() => void Linking.openURL(BUILD_URL)} style={[styles.get, { alignSelf: 'flex-start', marginTop: 14 }]}>
+                <Text style={styles.getText}>READ THE GUIDE</Text>
+              </Pressable>
+            </View>
+          </ScrollView>
+        )}
+        <View style={styles.dots}>
+          {[0, 1].map((i) => (
+            <View key={i} style={[styles.dot, slide === i && styles.dotOn]} />
+          ))}
+        </View>
       </View>
       <Text style={styles.listTitle}>All Plugins</Text>
       {catalog.map((entry) => (
@@ -179,6 +168,10 @@ export default function PluginStoreView({ catalog, installed, onInstall }: Plugi
 const styles = StyleSheet.create({
   banner: { backgroundColor: colors.panel, borderRadius: 20, padding: 20, marginBottom: 6, borderWidth: 1, borderColor: colors.panelHover },
   bannerKicker: { color: colors.accent, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
+  bannerText: { color: colors.text, fontSize: 14, lineHeight: 20, marginTop: 8 },
+  dots: { flexDirection: 'row', justifyContent: 'center', gap: 7, marginTop: 8 },
+  dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.panelHover },
+  dotOn: { backgroundColor: colors.accent },
   bannerTitle: { color: colors.heading, fontSize: 24, fontWeight: '800', lineHeight: 28, marginTop: 6 },
   listTitle: { color: colors.heading, fontSize: 20, fontWeight: '700', marginTop: 16, marginBottom: 4, paddingHorizontal: 4 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, paddingHorizontal: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.panelHover, borderRadius: 12 },
