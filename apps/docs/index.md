@@ -4,7 +4,7 @@ layout: home
 hero:
   name: Granite Plugins
   text: Build a plugin for Granite
-  tagline: One JavaScript file. Sandboxed. Runs the same on desktop and phone.
+  tagline: Granite is a local-first Markdown notes app for desktop and phone. Extend it with one JavaScript file, sandboxed, the same on both.
   image:
     src: /logo.png
     alt: Granite
@@ -33,3 +33,16 @@ features:
     title: Reviewed, not open upload
     details: Granite's Store only lists plugins whose code has been reviewed. Contributing means opening a pull request — see Publishing to the Store.
 ---
+
+## About Granite
+
+Granite is a **local-first Markdown notes app** for desktop and phone. Your notes are plain `.md` files in a folder on your
+own device, so they stay readable without Granite. The editor shows the formatting as you type, and plugins can add blocks,
+themes and shortcuts to it.
+
+- **Optional Google Drive sync.** Sign in with Google to keep a copy of your notes in a **Granite Vault** folder in your Drive
+  and on your other devices. Granite can only see files it created there, never the rest of your Drive, and it works fine
+  without signing in.
+- **Private by design.** Granite has no server that receives your notes, and no analytics or advertising. Read exactly what it
+  does with your data in the [privacy policy](/privacy).
+- **Open source.** The code is on [GitHub](https://github.com/fishinglol/grantie).

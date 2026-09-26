@@ -57,7 +57,7 @@ export default defineConfig({
     socialLinks: [{ icon: "github", link: "https://github.com/fishinglol/grantie" }],
     search: { provider: "local" },
     footer: {
-      message: "Granite plugins run in a sandbox with declared permissions — nothing is granted implicitly.",
+      message: 'Granite plugins run in a sandbox with declared permissions — nothing is granted implicitly. · <a href="/privacy">Privacy policy</a>',
     },
   },
 });
