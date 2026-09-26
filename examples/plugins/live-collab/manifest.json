@@ -1,0 +1,29 @@
+{
+  "id": "live-collab",
+  "name": "Live Collab",
+  "version": "1.2.0",
+  "tagline": "Share a note and edit it together, live",
+  "description": "Work on the same note with other people at the same time, like Google Docs: you see their cursors and selections with their names, and their typing appears as they type.",
+  "author": "Granite",
+  "permissions": [
+    "editor.sync",
+    "editor.read",
+    "editor.write",
+    "editor.blocks",
+    "editor.input",
+    "ui.panel",
+    "vault.read",
+    "vault.write",
+    "network"
+  ],
+  "minApiVersion": 7,
+  "setup": [
+    "Switch the plugin on (Plugins → Installed), then open the note you want to work on.",
+    "Press Share at the top right of the note, then Start sharing. The first time, type your name in the ⚙ settings of that window if you like: others see it next to your cursor.",
+    "Press Copy link and send the link to your friend. Anyone who has it can read and edit the note, so send it only to people you trust.",
+    "Your friend installs Live Collab too, presses Share, pastes the link under “Join someone else's note” and presses Join. It opens as a new note on their side.",
+    "Both of you need an up-to-date Granite (plugin API 7). To stop, press Share → Leave the live session.",
+    "Optional: to use your own relay server instead of Granite's, put its wss:// address in the ⚙ settings of the Share window (the plugin's README says how to run one)."
+  ],
+  "soon": true
+}

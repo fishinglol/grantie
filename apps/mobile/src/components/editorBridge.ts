@@ -14,14 +14,33 @@ export function createEditorBridge(post: (message: object) => void, getProps: ()
     if (ready) post({ type: 'plugins', plugins: getProps().plugins });
   };
 
+  /** Give the page a note to show (at first, and again when another note opens in the same page). */
+  const sendInit = () => {
+    const props = getProps();
+    post({
+      type: 'init',
+      value: props.initialText,
+      notePath: props.path,
+      embeds: [...props.embeds],
+      title: props.title,
+      reading: props.reading,
+      ...(props.canvas && { canvas: { vaultDir: VAULT_DIR, ...props.canvas } }),
+    });
+  };
+
   return {
     isReady: () => ready,
+    /** Another note was opened: show it in the page that is already loaded (its plugins keep running). */
+    sendOpen: () => ready && sendInit(),
     sendEmbeds: () => ready && post({ type: 'embeds', embeds: [...getProps().embeds] }),
     sendPlugins,
+    sendReading: () => ready && post({ type: 'reading', on: getProps().reading }),
     sendTitle: () => ready && post({ type: 'title', title: getProps().title }),
     sendFiles: () => ready && getProps().canvas && post({ type: 'files', ...getProps().canvas }),
     insert: (text: string) => post({ type: 'insert', text }),
+    setText: (text: string) => ready && post({ type: 'value', value: text }),
     addFile: (file: string) => post({ type: 'add-file', file }),
+    openPluginButton: (pluginId: string) => post({ type: 'plugin-button', pluginId }),
     runPluginCommand(pluginId: string, commandId: string): Promise<void> {
       const n = ++runSeq;
       return new Promise((resolve, reject) => {
@@ -42,18 +61,11 @@ export function createEditorBridge(post: (message: object) => void, getProps: ()
       switch (msg.type) {
         case 'ready':
           ready = true;
-          post({
-            type: 'init',
-            value: props.initialText,
-            notePath: props.path,
-            embeds: [...props.embeds],
-            title: props.title,
-            ...(props.canvas && { canvas: { vaultDir: VAULT_DIR, ...props.canvas } }),
-          });
+          sendInit();
           sendPlugins();
           break;
         case 'change':
-          if (typeof msg.value === 'string') props.onChange(msg.value);
+          if (typeof msg.value === 'string') props.onChange(msg.value, typeof msg.path === 'string' ? msg.path : undefined);
           break;
         case 'rename':
           props.onRename(String(msg.title)).then(
@@ -67,11 +79,17 @@ export function createEditorBridge(post: (message: object) => void, getProps: ()
         case 'open':
           props.onOpenFile(String(msg.file));
           break;
+        case 'open-link':
+          props.onOpenUrl(String(msg.url));
+          break;
         case 'notice':
           props.onNotice(String(msg.message));
           break;
         case 'plugin-commands':
           props.onPluginCommands(msg.commands as never);
+          break;
+        case 'plugin-buttons':
+          props.onPluginButtons(msg.buttons as never);
           break;
         case 'plugin-status':
           props.onPluginStatus(String(msg.id), (msg.error as string | null) ?? null);

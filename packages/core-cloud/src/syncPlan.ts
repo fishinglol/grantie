@@ -17,7 +17,9 @@ import type { LocalFile, RemoteFile, SyncIndex, SyncPlanItem } from "./types.ts"
 export function planSync(local: LocalFile[], remote: RemoteFile[], index: SyncIndex): SyncPlanItem[] {
   const remoteByPath = new Map(remote.map((r) => [r.path, r]));
   const localByPath = new Map(local.map((l) => [l.path, l]));
-  const paths = [...new Set([...localByPath.keys(), ...remoteByPath.keys()])].sort();
+  // Pictures and other files first, then notes: the other device then already has a picture when the note that shows it lands.
+  const isNote = (path: string) => /\.(md|markdown|canvas)$/i.test(path);
+  const paths = [...new Set([...localByPath.keys(), ...remoteByPath.keys()])].sort().sort((a, b) => Number(isNote(a)) - Number(isNote(b)));
 
   return paths.map((path): SyncPlanItem => {
     const l = localByPath.get(path);

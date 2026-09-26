@@ -1,0 +1,32 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "mobile-web",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd apps/mobile && npx expo start --web --port 8081"
+      ],
+      "port": 8081
+    },
+    {
+      "name": "desktop-web",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd apps/desktop && VITE_GOOGLE_CLIENT_ID=preview-only.apps.googleusercontent.com npx vite --port 1420"
+      ],
+      "port": 1420
+    },
+    {
+      "name": "mobile-web-drive",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd apps/mobile && EXPO_PUBLIC_GOOGLE_CLIENT_ID=preview-only.apps.googleusercontent.com npx expo start --web --port 8082"
+      ],
+      "port": 8082
+    }
+  ]
+}

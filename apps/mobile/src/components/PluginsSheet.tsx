@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
-import { PERMISSION_LABELS, PLUGINS_DIR, type CommandInfo, type InstalledPlugin } from '@granite/plugins';
+import { permissionLines, PLUGINS_DIR, type CommandInfo, type InstalledPlugin } from '@granite/plugins';
 import { colors } from '../theme';
 import type { CatalogPlugin } from '../catalog';
 import PluginStoreView from './PluginStoreView';
@@ -28,6 +28,10 @@ export interface PluginsSheetProps {
 /** The phone's Plugins screen: what is installed, switch on/off, and run commands. */
 export default function PluginsSheet({ visible, installed, enabled, errors, commands, hasNote, catalog, onInstall, onUninstall, onToggle, onRun, onRefresh, onClose }: PluginsSheetProps) {
   const [tab, setTab] = useState<'installed' | 'store'>('installed');
+  // Opened with nothing installed: show the Store instead of an empty list.
+  useEffect(() => {
+    if (visible && installed.length === 0) setTab('store');
+  }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
   /** The plugin (folder) whose Uninstall was tapped once and now asks "Sure?". */
   const [sure, setSure] = useState<string | null>(null);
   const uninstallRow = (folder: string) =>
@@ -101,12 +105,12 @@ export default function PluginsSheet({ visible, installed, enabled, errors, comm
                 </View>
                 {m.description ? <Text style={styles.desc}>{m.description}</Text> : null}
                 <View style={styles.perms}>
-                  {m.permissions.length === 0 ? (
+                  {permissionLines(m).length === 0 ? (
                     <Text style={styles.perm}>Needs no permissions</Text>
                   ) : (
-                    m.permissions.map((p) => (
-                      <Text key={p} style={styles.perm}>
-                        {PERMISSION_LABELS[p]}
+                    permissionLines(m).map((line) => (
+                      <Text key={line} style={styles.perm}>
+                        {line}
                       </Text>
                     ))
                   )}

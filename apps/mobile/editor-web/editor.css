@@ -62,3 +62,29 @@ body {
 .format-bar .format-italic { font-style: italic; font-weight: 600; font-family: Georgia, "Times New Roman", serif; }
 .format-bar .format-underline { text-decoration: underline; text-underline-offset: 3px; font-weight: 600; }
 .format-bar .format-strike { text-decoration: line-through; font-weight: 500; }
+
+/* A note in a sheet over the bottom of the page (a plugin opened it "beside": the calendar). Inside .page, so it follows the keyboard. */
+.format-bar { position: relative; z-index: 30; }
+.sheet-layer { position: absolute; inset: 0; z-index: 20; display: flex; flex-direction: column; justify-content: flex-end; }
+.sheet-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.45); animation: sheet-fade 0.2s ease-out; }
+.sheet {
+  position: relative;
+  height: 85%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-radius: 20px 20px 0 0;
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.5);
+  animation: sheet-up 0.22s ease-out;
+}
+.sheet-grab { touch-action: none; padding: 8px 18px 0; cursor: grab; }
+.sheet-handle { width: 40px; height: 5px; margin: 0 auto; border-radius: 3px; background: var(--text-faint); }
+.sheet-head { display: flex; align-items: center; gap: 8px; padding: 10px 0 2px; }
+.sheet-name { flex: 1; min-width: 0; }
+.sheet-name .note-title { display: block; width: 100%; padding: 0; border: 0; outline: none; background: transparent; color: var(--h); font: 700 22px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; text-overflow: ellipsis; }
+.sheet-name .note-title:focus { box-shadow: inset 0 -2px 0 var(--accent); }
+.sheet-close { width: 34px; height: 34px; border: 0; border-radius: 17px; background: var(--panel); color: var(--text-dim); font-size: 20px; line-height: 1; }
+.sheet-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.sheet-body .live-editor { flex: 1; height: auto; min-height: 0; }
+@keyframes sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes sheet-fade { from { opacity: 0; } to { opacity: 1; } }

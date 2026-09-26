@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { PERMISSION_LABELS, PLUGINS_DIR, type InstalledPlugin, type PluginManifest } from "@granite/plugins";
+import { useEffect, useState } from "react";
+import { permissionLines, PLUGINS_DIR, type InstalledPlugin, type PluginManifest } from "@granite/plugins";
 import PluginStore from "./PluginStore";
 import { CATALOG } from "./pluginCatalog";
 import type { PluginsState } from "./usePlugins";
@@ -12,12 +12,12 @@ export interface PluginsDialogProps {
 function Permissions({ manifest }: { manifest: PluginManifest }) {
   return (
     <div className="plugin-perms">
-      {manifest.permissions.length === 0 ? (
+      {permissionLines(manifest).length === 0 ? (
         <span>Needs no permissions</span>
       ) : (
-        manifest.permissions.map((p) => (
-          <span key={p} className="plugin-perm">
-            {PERMISSION_LABELS[p]}
+        permissionLines(manifest).map((line) => (
+          <span key={line} className="plugin-perm">
+            {line}
           </span>
         ))
       )}
@@ -46,6 +46,13 @@ function Uninstall({ id, sure, setSure, onConfirm }: { id: string; sure: string 
 export default function PluginsDialog({ plugins, onClose }: PluginsDialogProps) {
   const { installed, enabled, failed, commands, loadError, refresh, toggle, install, uninstall, run } = plugins;
   const [tab, setTab] = useState<"installed" | "store">("installed");
+  // Nothing installed yet: open on the Store instead of an empty list (only the first time the list loads, so uninstalling the last one doesn't jump).
+  const [decided, setDecided] = useState(false);
+  useEffect(() => {
+    if (installed === null || decided) return;
+    setDecided(true);
+    if (installed.length === 0) setTab("store");
+  }, [installed, decided]);
   const [busy, setBusy] = useState<string | null>(null);
   /** The plugin whose Uninstall button was pressed once and now asks "Sure?". */
   const [sure, setSure] = useState<string | null>(null);

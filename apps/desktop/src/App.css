@@ -701,6 +701,8 @@ button.skip:disabled { opacity: 0.4; cursor: default; }
 .file-list button { user-select: none; }
 .app.is-dragging, .app.is-dragging * { cursor: grabbing !important; user-select: none; }
 .file-list li.dragging { opacity: 0.4; }
+/* Rows picked with Shift / Ctrl / Cmd + click. */
+.file-list li.picked > button { background: rgba(232, 147, 95, 0.16); outline: 1px dotted var(--accent); outline-offset: -1px; }
 .file-list li.drop-target > button { background: rgba(232, 147, 95, 0.18); outline: 1px dashed var(--accent); outline-offset: -1px; }
 .file-list.drop-target { background: rgba(232, 147, 95, 0.06); }
 .drag-ghost {
@@ -866,6 +868,10 @@ button.skip:disabled { opacity: 0.4; cursor: default; }
   animation: spin 0.9s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+.modal-list-title { margin: 10px 0 4px; font-weight: 600; text-align: left; }
+.modal-list { max-height: 160px; overflow-y: auto; margin: 0 0 6px; padding: 6px 10px 6px 26px; border-radius: 8px; background: var(--bg-body, rgba(0,0,0,.2)); text-align: left; font-size: 13px; }
+.modal-list li { overflow-wrap: anywhere; }
+.modal-list .more { list-style: none; margin-left: -16px; opacity: .7; }
 .modal-actions { display: flex; justify-content: center; gap: 10px; }
 .modal-actions button {
   padding: 8px 18px;
@@ -946,7 +952,10 @@ button.skip:disabled { opacity: 0.4; cursor: default; }
 /* The ⋯ button at the top right of a note, and its menu of page-level plugin actions */
 .page-menu { position: absolute; top: 14px; right: 18px; z-index: 30; display: flex; gap: 2px; }
 .page-menu-btn { display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 8px; background: transparent; color: var(--text-dim); cursor: pointer; }
+.page-menu-btn { position: relative; }
 .page-menu-btn.on { color: var(--accent); }
+.page-menu-icon { width: 18px; height: 18px; background: currentColor; -webkit-mask: center / contain no-repeat; mask: center / contain no-repeat; }
+.page-menu-badge { position: absolute; top: 4px; right: 4px; width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 0 2px var(--bg); }
 .page-menu-btn:hover, .page-menu-btn[aria-expanded="true"] { background: var(--panel-hover); color: var(--h); }
 .page-menu-list { position: absolute; top: 34px; right: 0; min-width: 220px; padding: 4px; border-radius: 10px; background: var(--panel); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4); }
 .page-menu-list button { display: block; width: 100%; padding: 7px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
@@ -1014,6 +1023,8 @@ button.skip:disabled { opacity: 0.4; cursor: default; }
 .store-section h4 { margin: 0 0 10px; font-size: 20px; color: var(--h); }
 .store-section h4:not(:first-child) { margin-top: 22px; }
 .modal-card .store-desc { margin: 0; font-size: 15px; line-height: 1.6; color: var(--text); }
+.store-setup { margin: 0; padding-left: 22px; color: var(--text); font-size: 15px; line-height: 1.7; }
+.store-setup li { margin-bottom: 6px; padding-left: 4px; }
 .store-perms { margin: 0; padding-left: 20px; color: var(--text-dim); font-size: 14px; line-height: 1.8; }
 .store-zoom { position: fixed; inset: 0; z-index: 4000; display: grid; place-items: center; padding: 32px; background: rgba(4, 5, 8, 0.86); cursor: zoom-out; }
 .store-zoom img { max-width: 100%; max-height: 100%; border-radius: 14px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6); }

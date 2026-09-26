@@ -128,6 +128,132 @@ test("edits on both sides keep both copies and lose nothing", async () => {
   assert.equal(text(provider.remote.get("welcome.md")!.data), "my version");
 });
 
+test("both sides changed to the same bytes: no copy is made", async () => {
+  const { fs, provider, sync } = setup();
+  await fs.writeTextFile("/vault/welcome.md", "v1");
+  await sync.sync();
+  await provider.upload({ folderId: "folder-1", path: "welcome.md", data: new TextEncoder().encode("same"), existingId: provider.remote.get("welcome.md")!.id });
+  await fs.writeTextFile("/vault/welcome.md", "same");
+
+  const res = await sync.sync();
+
+  assert.equal(res.conflicted, 1);
+  assert.equal(res.items.find((i) => i.action === "conflict")!.conflictCopy, undefined);
+  assert.deepEqual((await listLocalFiles(fs, vaultDir)).map((f) => f.path), ["welcome.md"]);
+  assert.equal((await sync.sync()).conflicted, 0);
+});
+
+test("another device re-uploading the text we last synced is no conflict: the newer edit here wins, no copy", async () => {
+  const { fs, provider, sync } = setup();
+  await fs.writeTextFile("/vault/welcome.md", "v1");
+  await sync.sync();
+  // The phone saves the note it just downloaded, unchanged: Drive gets a new timestamp, same text.
+  await provider.upload({ folderId: "folder-1", path: "welcome.md", data: new TextEncoder().encode("v1"), existingId: provider.remote.get("welcome.md")!.id });
+  await fs.writeTextFile("/vault/welcome.md", "v2");
+
+  const res = await sync.sync();
+
+  assert.deepEqual((await listLocalFiles(fs, vaultDir)).map((f) => f.path), ["welcome.md"]);
+  assert.equal(await fs.readTextFile("/vault/welcome.md"), "v2");
+  assert.equal(text(provider.remote.get("welcome.md")!.data), "v2");
+  assert.equal(res.items.find((i) => i.path === "welcome.md")!.conflictCopy, undefined);
+});
+
+test("another device putting back an older version we already had is no conflict: our newer edit wins, no copy", async () => {
+  const { fs, provider, sync } = setup();
+  await fs.writeTextFile("/vault/welcome.md", "v1");
+  await sync.sync();
+  await fs.writeTextFile("/vault/welcome.md", "v2");
+  await sync.sync();
+  // A phone on an old build saves the v1 it downloaded earlier and uploads it over v2.
+  await provider.upload({ folderId: "folder-1", path: "welcome.md", data: new TextEncoder().encode("v1"), existingId: provider.remote.get("welcome.md")!.id });
+  await fs.writeTextFile("/vault/welcome.md", "v3");
+
+  const res = await sync.sync();
+
+  assert.deepEqual((await listLocalFiles(fs, vaultDir)).map((f) => f.path), ["welcome.md"]);
+  assert.equal(text(provider.remote.get("welcome.md")!.data), "v3");
+  assert.equal(res.items.find((i) => i.path === "welcome.md")!.conflictCopy, undefined);
+});
+
+test("an upload never overwrites a newer version on Drive that this device hasn't seen yet", async () => {
+  const desktop = setup();
+  const phone = { fs: new MemoryFs(), indexStore: memoryIndexStore() };
+  const phoneSync = new VaultSync({ ...phone, provider: desktop.provider, vaultDir, remoteFolderName: "Granite Vault" });
+  await desktop.fs.writeTextFile("/vault/welcome.md", "v1");
+  await desktop.sync.sync();
+  await phoneSync.sync();
+  await desktop.fs.writeTextFile("/vault/welcome.md", "desktop edit");
+  await phone.fs.writeTextFile("/vault/welcome.md", "phone edit");
+  // The desktop's upload lands after the phone listed Drive but before the phone uploads.
+  desktop.provider.afterList = () => desktop.sync.sync();
+
+  await phoneSync.sync();
+
+  assert.equal(text(desktop.provider.remote.get("welcome.md")!.data), "desktop edit");
+  // The phone's next sync sees the real conflict and keeps both edits.
+  await phoneSync.sync();
+  const phoneTexts = await Promise.all((await listLocalFiles(phone.fs, vaultDir)).map((f) => phone.fs.readTextFile(`/vault/${f.path}`)));
+  assert.deepEqual(phoneTexts.sort(), ["desktop edit", "phone edit"]);
+});
+
+test("records from before hashes existed get one on the next sync, so the echo case is covered right after updating", async () => {
+  const { fs, provider, indexStore, sync } = setup();
+  await fs.writeTextFile("/vault/welcome.md", "v1");
+  await sync.sync();
+  delete indexStore.current.files["welcome.md"]!.hash; // as the old version left it
+  await sync.sync();
+  await provider.upload({ folderId: "folder-1", path: "welcome.md", data: new TextEncoder().encode("v1"), existingId: provider.remote.get("welcome.md")!.id });
+  await fs.writeTextFile("/vault/welcome.md", "v2");
+
+  await sync.sync();
+
+  assert.deepEqual((await listLocalFiles(fs, vaultDir)).map((f) => f.path), ["welcome.md"]);
+  assert.equal(text(provider.remote.get("welcome.md")!.data), "v2");
+});
+
+test("a file saved here with unchanged text does not overwrite a newer edit from elsewhere", async () => {
+  const { fs, provider, sync } = setup();
+  await fs.writeTextFile("/vault/welcome.md", "v1");
+  await sync.sync();
+  await provider.upload({ folderId: "folder-1", path: "welcome.md", data: new TextEncoder().encode("newer, from the desktop"), existingId: provider.remote.get("welcome.md")!.id });
+  await fs.writeTextFile("/vault/welcome.md", "v1"); // same text, new timestamp
+
+  await sync.sync();
+
+  assert.deepEqual((await listLocalFiles(fs, vaultDir)).map((f) => f.path), ["welcome.md"]);
+  assert.equal(await fs.readTextFile("/vault/welcome.md"), "newer, from the desktop");
+  assert.equal(text(provider.remote.get("welcome.md")!.data), "newer, from the desktop");
+});
+
+test("a file saved here with unchanged text is not uploaded again", async () => {
+  const { fs, provider, sync } = setup();
+  await fs.writeTextFile("/vault/welcome.md", "v1");
+  await sync.sync();
+  const uploads = provider.uploads.length;
+  await fs.writeTextFile("/vault/welcome.md", "v1");
+
+  await sync.sync();
+  const res = await sync.sync();
+
+  assert.equal(provider.uploads.length, uploads);
+  assert.equal(res.items.find((i) => i.path === "welcome.md")!.action, "skip");
+});
+
+test("a conflict copy that conflicts again does not spawn a copy of itself", async () => {
+  const { fs, provider, sync } = setup();
+  const copy = "welcome (Drive copy 2026-09-03 14-05-09).md";
+  await fs.writeTextFile(`/vault/${copy}`, "v1");
+  await sync.sync();
+  await provider.upload({ folderId: "folder-1", path: copy, data: new TextEncoder().encode("their version"), existingId: provider.remote.get(copy)!.id });
+  await fs.writeTextFile(`/vault/${copy}`, "my version");
+
+  await sync.sync();
+
+  assert.deepEqual((await listLocalFiles(fs, vaultDir)).map((f) => f.path), [copy]);
+  assert.equal(text(provider.remote.get(copy)!.data), "my version");
+});
+
 test("the conflict copy itself reaches Drive on the following sync", async () => {
   const { fs, provider, sync } = setup();
   await fs.writeTextFile("/vault/welcome.md", "v1");
@@ -386,4 +512,253 @@ test("an unreadable .granite folder is skipped instead of stopping the notes fro
   assert.equal(res.failed, 0);
   assert.equal(text(provider.remote.get("a.md")!.data), "A");
   assert.equal(provider.remote.has(".granite/plugins/x/main.js"), false);
+});
+
+test("a note saved here while its newer Drive copy downloads is not overwritten by it", async () => {
+  const { fs, provider, sync } = setup();
+  await fs.writeTextFile("/vault/a.md", "v1");
+  await sync.sync();
+  // Another device edits the note; while this device downloads that, the user types here and auto-save writes the file.
+  provider.seed("a.md", "from the phone");
+  const realDownload = provider.download.bind(provider);
+  provider.download = async (id) => {
+    await fs.writeTextFile("/vault/a.md", "typed here just now");
+    return realDownload(id);
+  };
+
+  const res = await sync.sync();
+  provider.download = realDownload;
+
+  assert.equal(await fs.readTextFile("/vault/a.md"), "typed here just now");
+  assert.equal(res.downloaded, 0);
+  // The next sync sees a real conflict and keeps both.
+  const next = await sync.sync();
+  assert.equal(next.conflicted, 1);
+});
+
+test("a save that asks for a sync while one is running is uploaded right after it, not at the next poll", async () => {
+  const { fs, provider, sync } = setup();
+  await fs.writeTextFile("/vault/a.md", "one");
+  await sync.sync();
+  await fs.writeTextFile("/vault/a.md", "two");
+  // While that sync is uploading "two", the user types more and the app asks for another sync.
+  let second: Promise<unknown> | undefined;
+  const realUpload = provider.upload.bind(provider);
+  provider.upload = async (args) => {
+    const done = await realUpload(args);
+    provider.upload = realUpload;
+    await fs.writeTextFile("/vault/a.md", "three");
+    second = sync.sync();
+    return done;
+  };
+
+  const first = await sync.sync();
+  await second;
+
+  assert.equal(text(provider.remote.get("a.md")!.data), "three");
+  assert.ok(first.uploaded >= 1);
+});
+
+test("a note edited on different lines by both devices is merged, not copied", async () => {
+  const { fs, provider, sync } = await synced({ "a.md": "one\ntwo\nthree\nfour" });
+  await fs.writeTextFile("/vault/a.md", "ONE\ntwo\nthree\nfour"); // this device
+  provider.seed("a.md", "one\ntwo\nthree\nFOUR"); // another device, before it reached us
+
+  const res = await sync.sync();
+
+  const merged = "ONE\ntwo\nthree\nFOUR";
+  assert.equal(await fs.readTextFile("/vault/a.md"), merged);
+  assert.equal(text(provider.remote.get("a.md")!.data), merged);
+  assert.deepEqual([...provider.remote.keys()], ["a.md"]);
+  assert.equal(res.conflicted, 0);
+  assert.equal(res.downloaded, 1); // the note changed under the open editor: apps reload it
+  assert.ok(res.items.some((i) => i.path === "a.md" && i.action === "merge"));
+  // and it stays settled
+  assert.equal((await sync.sync()).uploaded, 0);
+});
+
+test("the same line edited differently on both devices still keeps both files", async () => {
+  const { fs, provider, sync } = await synced({ "a.md": "one\ntwo\nthree" });
+  await fs.writeTextFile("/vault/a.md", "one\nMINE\nthree");
+  provider.seed("a.md", "one\nTHEIRS\nthree");
+
+  const res = await sync.sync();
+
+  assert.equal(res.conflicted, 1);
+  assert.equal(await fs.readTextFile("/vault/a.md"), "one\nMINE\nthree");
+  assert.ok([...fs.files.keys()].some((k) => k.includes("(Drive copy")));
+  assert.equal(text(provider.remote.get("a.md")!.data), "one\nMINE\nthree");
+});
+
+test("a note with no saved base (synced before merging existed) keeps both files as before", async () => {
+  const { fs, provider, sync } = await synced({ "a.md": "one\ntwo\nthree\nfour" });
+  await fs.removeDir("/vault/.granite/sync-base");
+  await fs.writeTextFile("/vault/a.md", "ONE\ntwo\nthree\nfour");
+  provider.seed("a.md", "one\ntwo\nthree\nFOUR");
+
+  const res = await sync.sync();
+
+  assert.equal(res.conflicted, 1);
+});
+
+test("an unchanged note synced before merging existed gets its base saved by the next sync, so it can be merged later", async () => {
+  const { fs, provider, sync } = await synced({ "a.md": "one\ntwo\nthree\nfour" });
+  await fs.removeDir("/vault/.granite/sync-base");
+  provider.seed("zzz.md", "x"); // something changed on Drive, so the next poll runs a full sync
+  await sync.sync();
+  await fs.writeTextFile("/vault/a.md", "ONE\ntwo\nthree\nfour");
+  provider.seed("a.md", "one\ntwo\nthree\nFOUR");
+
+  const res = await sync.sync();
+
+  assert.equal(res.conflicted, 0);
+  assert.equal(await fs.readTextFile("/vault/a.md"), "ONE\ntwo\nthree\nFOUR");
+});
+
+/** A second device: its own disk and sync records, the same Drive. */
+function device(provider: FakeProvider) {
+  const fs = new MemoryFs();
+  const sync = new VaultSync({ fs, provider, vaultDir, remoteFolderName: "Granite Vault", indexStore: memoryIndexStore(), now: () => new Date(2026, 8, 3, 14, 5, 9) });
+  return { fs, sync };
+}
+const vaultNotes = (fs: MemoryFs) => [...fs.files.keys()].filter((k) => k.endsWith(".md") && !k.includes(".granite/sync-base"));
+
+test("laptop and phone edit the same card board at once: both edits survive, both end identical, no copy files", async () => {
+  const provider = new FakeProvider();
+  const laptop = device(provider);
+  const phone = device(provider);
+  const board = ["```cards", '{"v":1,"page":0}', ...Array.from({ length: 6 }, (_, i) => `{"id":"c${i}","t":"card ${i}"}`), "```"].join("\n");
+  await laptop.fs.writeTextFile("/vault/Bug list.md", board);
+  await laptop.sync.sync();
+  await phone.sync.sync(); // the phone now has it too
+
+  // Laptop: deletes card 1, retitles card 4. Phone (before the laptop's changes arrived): a picture on card 2, a new card at the end.
+  const lines = board.split("\n");
+  await laptop.fs.writeTextFile("/vault/Bug list.md", lines.filter((l) => !l.includes('"c1"')).map((l) => l.replace('"card 4"', '"card 4 (laptop)"')).join("\n"));
+  await phone.fs.writeTextFile("/vault/Bug list.md", lines.map((l) => l.replace('"card 2"', '"card 2","imgs":["data:image/jpeg;base64,AAAA"]')).join("\n").replace("\n```", '\n{"id":"new","t":"one more bug"}\n```'));
+  await laptop.sync.sync(); // laptop reaches Drive first
+  const res = await phone.sync.sync(); // the phone syncs on top of it
+  await laptop.sync.sync();
+  await phone.sync.sync();
+
+  const a = await laptop.fs.readTextFile("/vault/Bug list.md");
+  const b = await phone.fs.readTextFile("/vault/Bug list.md");
+  assert.equal(a, b);
+  assert.ok(!a.includes('"c1"'), "the laptop's deleted card is gone");
+  assert.ok(a.includes('"card 4 (laptop)"'));
+  assert.ok(a.includes("data:image/jpeg;base64,AAAA"), "the phone's picture is kept");
+  assert.ok(a.includes("one more bug"));
+  assert.deepEqual(vaultNotes(laptop.fs), ["/vault/Bug list.md"]);
+  assert.deepEqual(vaultNotes(phone.fs), ["/vault/Bug list.md"]);
+  assert.ok(res.items.some((i) => i.action === "merge"));
+  assert.equal(text(provider.remote.get("Bug list.md")!.data), a);
+});
+
+test("two devices editing different lines of one note over many rounds never lose a line or make a copy", async () => {
+  const provider = new FakeProvider();
+  const one = device(provider);
+  const two = device(provider);
+  const N = 40;
+  await one.fs.writeTextFile("/vault/n.md", Array.from({ length: N }, (_, i) => `line ${i}`).join("\n"));
+  await one.sync.sync();
+  await two.sync.sync();
+  let seed = 7;
+  let merges = 0;
+  const rand = (n: number) => {
+    seed = (seed + 0x6d2b79f5) | 0; // mulberry32
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return (((t ^ (t >>> 14)) >>> 0) % n);
+  };
+
+  for (let round = 0; round < 60; round++) {
+    // Each device may only touch its own half of the lines (even / odd), so no two edits ever hit the same line.
+    for (const [dev, parity] of [[one, 0], [two, 1]] as const) {
+      if (rand(3) === 0) continue;
+      const cur = (await dev.fs.readTextFile("/vault/n.md")).split("\n");
+      const at = rand(N / 2) * 2 + parity;
+      const i = cur.findIndex((l) => l.startsWith(`line ${at}`));
+      if (i >= 0) cur[i] = `line ${at} r${round}${parity ? "b" : "a"}`;
+      await dev.fs.writeTextFile("/vault/n.md", cur.join("\n"));
+    }
+    // A random order of syncs, so each device sometimes syncs on top of the other's unseen changes.
+    const order = rand(2) === 0 ? [one, two] : [two, one];
+    for (const d of order) if (rand(4) !== 0) merges += (await d.sync.sync()).items.filter((i) => i.action === "merge").length;
+  }
+  for (let k = 0; k < 3; k++) {
+    await one.sync.sync();
+    await two.sync.sync();
+  }
+
+  const a = await one.fs.readTextFile("/vault/n.md");
+  assert.equal(a, await two.fs.readTextFile("/vault/n.md"));
+  assert.equal(a.split("\n").length, N);
+  assert.ok(merges >= 5, `the rounds should have produced real merges, got ${merges}`);
+  assert.deepEqual(vaultNotes(one.fs), ["/vault/n.md"]);
+  assert.deepEqual(vaultNotes(two.fs), ["/vault/n.md"]);
+});
+
+test("the saved base copies are never uploaded", async () => {
+  const { fs, provider, sync } = await synced({ "a.md": "hello" });
+  assert.ok([...fs.files.keys()].some((k) => k.includes(".granite/sync-base/a.md")));
+  await sync.sync();
+  assert.deepEqual([...provider.remote.keys()], ["a.md"]);
+});
+
+test("a disk that refuses the base folder (a Tauri scope) does not stop the sync", async () => {
+  const { fs, provider, sync } = setup();
+  const forbid = (path: string) => {
+    if (path.includes(".granite/sync-base")) throw new Error(`forbidden path: ${path}`);
+  };
+  const [exists, write, mkdirp, read] = [fs.exists.bind(fs), fs.writeBinaryFile.bind(fs), fs.mkdirp.bind(fs), fs.readBinaryFile.bind(fs)];
+  fs.exists = async (p) => (forbid(p), exists(p));
+  fs.writeBinaryFile = async (p, d) => (forbid(p), write(p, d));
+  fs.mkdirp = async (p) => (forbid(p), mkdirp(p));
+  fs.readBinaryFile = async (p) => (forbid(p), read(p));
+  await fs.writeTextFile("/vault/a.md", "one\ntwo");
+  const first = await sync.sync();
+  assert.equal(first.failed, 0);
+  await fs.writeTextFile("/vault/a.md", "one\ntwo!");
+  const second = await sync.sync();
+  assert.equal(second.failed, 0);
+  assert.equal(text(provider.remote.get("a.md")!.data), "one\ntwo!");
+});
+
+function bigVault() {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < 10; i++) files[`n${i}.md`] = `note ${i}`;
+  return files;
+}
+
+test("a big deletion goes ahead when the user confirms, and the question lists the files", async () => {
+  const { fs, provider, indexStore } = await synced(bigVault());
+  let asked: { path: string; where: string }[] = [];
+  const sync = new VaultSync({
+    fs, provider, vaultDir, remoteFolderName: "Granite Vault", indexStore,
+    confirmDeletes: async (files) => ((asked = files), true),
+  });
+  provider.remote.clear(); // the user emptied the Drive folder
+
+  const res = await sync.sync();
+
+  assert.equal(asked.length, 10);
+  assert.ok(asked.every((f) => f.where === "here"));
+  assert.equal(res.deleted, 10);
+  assert.equal((await listLocalFiles(fs, vaultDir)).length, 0);
+});
+
+test("a declined big deletion changes nothing and is not asked about again right away", async () => {
+  const { fs, provider, indexStore } = await synced(bigVault());
+  let asks = 0;
+  const sync = new VaultSync({
+    fs, provider, vaultDir, remoteFolderName: "Granite Vault", indexStore,
+    confirmDeletes: async () => (asks++, false),
+  });
+  provider.remote.clear();
+
+  await assert.rejects(sync.sync(), /Nothing was changed/);
+  await assert.rejects(sync.sync(), /Nothing was changed/);
+
+  assert.equal(asks, 1);
+  assert.equal((await listLocalFiles(fs, vaultDir)).length, 10);
 });

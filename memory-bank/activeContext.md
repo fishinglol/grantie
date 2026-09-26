@@ -1,6 +1,6 @@
 # Active Context
 
-_Last updated: 2026-09-21_
+_Last updated: 2026-09-26 (Live Collab 1.2.0: encryption + built-in relay + Store "Before you start", see "Session 2026-09-26 (later)"; Share button / plugin API 7 / Live Collab 1.1.0 at "Session 2026-09-26 (Share button)"; built-in `//` list, `//` in plugin fields, Popup / Simple Table / Cards updates, sync delete confirm; see `progress.md` "2026-09-26")_
 
 ## Current focus
 **Phone app + sync** (branch `feat/mobile-live-editor`, pushed; PR into `main` not opened yet) — see
@@ -81,6 +81,171 @@ read-only. Confirmed: desktop only; split via ⋯ → "Split right" (no tabs); r
   a mock was built and removed). Real ones need a plugin server, or a local-only "my review" feature if the user wants one.
 - Also this session: a new note is created **empty** (no `# name` line; the title above the text is the name).
 - Checked in the browser previews only (desktop preview + Expo web at phone size); not on the Samsung phone or in the Tauri window.
+
+## Session 2026-09-26 — `//` list is built in (no plugin needed)
+User (Thai): `//` on a normal page showed nothing in the real app (WKWebView; not reproduced in the Chrome preview with every plugin installed, and the real window can't be screenshotted on macOS 13),
+then asked for `//` to be a **native default of the app**. Done in `packages/live-editor/src/LiveEditor.tsx`: `CORE_ITEMS` (Heading 1-3, Bulleted / Numbered list, Quote, Code block, Divider, Markdown table) are always in the list,
+plugin entries follow them; choosing a built-in inserts text directly (`insertPluginText(..., caret)`), no plugin frame. The list now also opens when several characters arrive as one input (`//quo`) — it opens when the line first becomes `//…`,
+and Escape still keeps it closed. The inputHandler no longer depends on `menuItems().length`. The Simple Table cell menu is the plugin's own: user asked for cell types that suit a table, so Simple Table 1.5.0 adds **Date** (`YYYY-MM-DD`), **Time** (`HH:MM`) and **Checkbox** (`☐`/`☑` text, click toggles) next to Dropdown / Link, and **Popup** (1.6.0, permission `vault.read`: a note picker; the cell holds `[Title](Folder/Note.md)`, drawn as a chip; clicking opens the note beside / as the phone's bottom sheet, like the Popup plugin's card)
+(plain text in the cell, so the table stays Markdown; needs UPDATE in the Store; phone: regenerate `pluginCatalog.ts`, `npm run build:editor` in `apps/mobile`). Offering *other plugins'* entries inside a cell is **not built**: it needs a new plugin API (a plugin exposing "cell" entries to another plugin's frame); most entries (Cards, Calendar, headings) are whole blocks that can't live in a cell. Ask the user if they still want it.
+Checked in the desktop preview (no plugins: list, filter, Enter, code block caret inside, H2, quote; Dropdown plugin entry still works). **Not checked in the real Tauri window or on the phone**: needs `tauri build` (desktop) and `node scripts/build-editor.mjs` in `apps/mobile` (phone).
+
+- **`//` in every plugin's text fields** (user: "it need to be able to use // for all plugin", after a screenshot of `//` typed in a Cards note): `packages/plugins/src/slash.ts` (`SLASH_SCRIPT`) is injected by `bootstrapHtml` into every *block* frame:
+  `//` alone on a line of a `<textarea>` / text `<input>` opens Date / Time / Checkbox under the caret, Enter/Tab/arrows/Escape, the field gets a normal `input` event. Opt out with `data-slash="off"` (Simple Table 1.6.1 does: it has its
+  own cell menu; older installed copies show both menus until UPDATE); search boxes are skipped. Text-only entries: whole-block plugins (Cards, Calendar...) can't live inside a field. Checked in the preview (Cards title + body).
+  Needs desktop rebuild + phone `npm run ship` (host code is in `editorHtml.ts`).
+  **Later the same night (user was angry that Cards showed only Date/Time/Checkbox):** the frame menu now shows the *whole* list: Date/Time/Checkbox + Markdown blocks + every running plugin's entries (frame posts `slash-list` /
+  `slash-run` to the host, `#onBlockMessage` answers with `menuItems()` / `runInput("item")`), filters as you type `//cal`. A whole-block entry (Calendar...) lands as its source text inside the field: only the note draws it.
+  Phone scroll bug: the `//` list chose an entry on `pointerdown`, so touching the list to scroll it picked something; now `mousedown` (keeps focus) + `click` (main editor and frame menu). Checked with a harness iframe (full list, filter, plugin round trip, scrollable); the real Cards frame click test failed only because the browser pane's emulated viewport mis-mapped clicks.
+
+## Session 2026-09-26 (later) — "Sync stopped: it would delete 45 of 95 files" -> a confirm dialog
+User imported too many folders, deleted them in Drive by hand; both devices stuck on the mass-delete breaker (`MAX_UNATTENDED_DELETES`, >5 and >30% of tracked files). Desktop index: 35 tracked, 11 missing locally (would trash 11 on Drive) — same breaker.
+Fix: `VaultSyncOptions.confirmDeletes(files: PendingDeletion[])` (`{path, where: "here" | "drive"}`) in `core-cloud`; true = the whole plan runs, false / no callback = the old error. A "no" for the same batch is not asked again for 10 min (`ASK_AGAIN_MS`).
+Desktop: `DeletionsDialog.tsx` (list + "Not now" / "Delete N files"), state in `NoteApp`. Phone: `askAboutDeletions` in `App.tsx` (Alert). 2 new engine tests (core-cloud 79). The dialog was not looked at on screen (no Drive in the preview); phone shipped by `npm run ship`, desktop needs `tauri build`.
+
+## Session 2026-09-26 (night) — Popup: create notes, follow renames
+User: the Popup card should be able to create a new note, and when the note is renamed the card must not break. Done:
+- **Popup 1.1.0** (+ **Simple Table 1.7.0**'s note cell): the picker has a `+ Create "name"` row (name may contain `/` folders; `newNotePath`), `vault.write` permission added. Popup also self-heals: a missing note is looked up by file name and followed if exactly one match.
+- **Rename / move follows** (`core-notes` `retargetNoteRefs`, tested): after a note rename / move or a folder move, both apps rewrite `note:` lines of ```popup fences and `[Title](note:Path.md)` cells in table rows across the vault (desktop `fixNoteRefs` in `NoteApp.tsx`, phone `fixNoteRefs` in `App.tsx`; note list taken from before the move). Simple Table note cells now use the `note:` scheme so `relocateLinks` (which treats plain links as relative) leaves them alone; old plain cells are still read.
+- Checked in the desktop preview: created "Brand new" from the card, renamed the note, the card followed. Phone not checked.
+
+## Session 2026-09-26 (night, later) — toast that never went away
+Desktop `NoteApp` toast: its hide timer was the effect's cleanup, and the effect early-returns for "Saved …" / "Read + parsed …"; a "Saved" arriving after "Moved …" ran the cleanup (timer cancelled) and left the toast up forever. The timer is now a ref (`toastTimer`). Durations shortened on desktop and phone: 2 s normal, 4 s for errors (was 3 / 6). Phone `say()` already used a ref, only the durations changed.
+
+## Session 2026-09-26 (night, later still) — Cards 1.3.0 -> 1.4.0: bold / italic / strike / underline (1.3.0's textarea + `formatEdit` version was replaced by 1.4.0 below)
+User (screenshot of the phone's B I U bar): the Cards plugin should have the same formatting, with Cmd+Shift+X too, on phone and desktop (shortcuts on desktop). Done in `examples/plugins/cards/main.js`: `formatEdit` (a port of `toggleFormat`, kept equal by a parity test in `cards.test.ts`), a B I S U bar under the card editor's text
+(buttons keep the selection; used on the last focused field: title, body or a checklist item), shortcuts Ctrl/Cmd+B, +I, +U, +Shift+X in those fields, and `inline()` draws `**bold**`, `*italic*`, `~~strike~~`, `<u>underline</u>` (also `***both***`) on the board cards (title, body, checklist items) with DOM nodes, no innerHTML. Text stays Markdown.
+Checked in a same-origin harness iframe (shortcuts + button + render); a real click test in the preview frame is unreliable in this browser pane. Needs UPDATE in the Store (Cards 1.3.0) and `npm run ship` for the phone.
+
+### Cards 1.4.0 — the editor shows the formatting while typing** (user saw raw `**~~Hello~~**` in the card editor): title, text and checklist items are now `contenteditable` rich fields (`richField`, `mdToDom`, `domToMd` in `cards/main.js`); Markdown is still what is stored (literal `* ~ \ <` typed by the user are stored escaped, `inline()` reads `\*`).
+  Formatting uses `document.execCommand` (bold / italic / strikeThrough / underline), the B I S U buttons light up for the text at the caret, paste is plain text, Enter = line break (single-line fields: `onEnter`). The frame `//` menu (`slash.ts`) now also works in contenteditable fields (selection ranges + `execCommand`).
+  The earlier textarea `formatEdit` port and its parity test were removed. Checked in the same-origin harness (real Cards code + `slash.ts`): shortcuts, button, Enter, `//head` -> Heading 1, save as Markdown, card render. Needs UPDATE in the Store + `npm run ship`. Not checked with the phone's Thai keyboard.
+
+## Session 2026-09-26 (latest) — Live Collab is "SOON" in the Store
+User is worried about the security of Live Collab (a relay run by Granite, encryption not reviewed by anyone) and chose to **hold the plugin back**: manifest `"soon": true` (new optional field, `parseManifest`) makes both Stores show a disabled **SOON** button and "Coming soon" on the plugin's page (the "Before you start" steps are hidden while soon), and `install()` refuses it on both apps. The Store description no longer promises encryption (it was an unreviewed claim); the README still describes the design. **Copies already installed keep working** (nothing removes them; uninstall is in the Installed tab). To release later: remove `"soon"`, set `DEFAULT_SERVER`, get the design reviewed. Tests: plugins 116.
+
+## Session 2026-09-26 (later) — Live Collab 1.2.0: end-to-end encryption, a built-in relay, "Before you start" in the Store
+User: running a relay (server + tunnel) is too hard for non-technical people. Agreed: (1) **Granite runs one relay for everyone** (Cloudflare Workers, free tier), built in as the default with the server field in ⚙ optional; (2) **end-to-end encryption** so that relay can't read notes; (3) the Store page must tell people what to do first.
+- **Encrypted transport replaces y-websocket** (dependency removed). `src/relay.ts` `RelayProvider`: the invite's `room` (32 chars) is now a *secret*; the wire room name = first 32 hex of SHA-256("granite-live-room:"+secret), the AES-GCM key = SHA-256("granite-live-key:"+secret) (room name is the AAD). Same surface as the old provider (`synced`, `on("sync"|"status")`, `awareness`) plus `on("error")`. Awareness is encrypted too; a newcomer is told about us by re-broadcasting once. After a reconnect it re-sends the full state (Yjs merges). No WebCrypto (`crypto.subtle`) -> live editing is refused with a message, never unencrypted. Invite/link formats did not change.
+- **Relay** = `server/room.mjs` (`Room`: an ordered list of opaque blobs, replayed to newcomers, first byte = type 1 UPDATE kept / 4 AWARENESS not kept / 3 CAUGHT_UP / 254 TOO_MANY / 255 LOG_FULL; max 20 people, 4 MB of updates, no compaction) used by both `server/server.mjs` (Node, `npm run server`) and `worker/index.js` + `wrangler.toml` (Cloudflare Worker, one Durable Object `LiveRoom` per room, SQLite-class migration for the free plan). The relay only accepts room names of 32 `[a-z0-9]`.
+- **Default server**: `DEFAULT_SERVER` in `src/invite.ts` (**empty until the Worker is deployed**: the user must run `npx wrangler login && npx wrangler deploy` in `examples/plugins/live-collab`, then the address `wss://granite-live.<name>.workers.dev` goes into that constant, `npm run build`, bump version). `serverFor(settings)` = own server, else default. Until it is set the Share window still asks for a server, and the Store's "Before you start" step 2 is only fully true once it is set.
+- **Manifest `setup`** (new optional field, up to 8 steps of 300 chars): `parseManifest` validates it; both Stores show it as a numbered "Before you start" list (desktop `PluginStore.tsx` + `.store-setup` CSS, phone `PluginStoreView.tsx`). Live Collab 1.2.0 fills it (6 steps) and its description now says everything is encrypted.
+- Tests: plugins 115; Live Collab 35 (room unit tests, seal/open incl. wrong room / tampering, the relay holds no plaintext ("SECRETWORD" not in what a newcomer is replayed), Worker wiring with stand-ins for `WebSocketPair`/`Response`, plus the earlier e2e). Browser preview (desktop): Store page shows the steps; from the Share window Start sharing reaches "connecting" and the unreachable-server message, i.e. WebCrypto works in the plugin frame there.
+- **Not checked**: the Worker on real Cloudflare (`wrangler` was not run: adding/using it needs the user's approval and login), WebCrypto in the phone WebView, the phone's Store text (only type-checked), real relay over the internet from a browser, two real people.
+
+## Session 2026-09-26 (Share button) — plugin API 7 + Live Collab 1.1.0
+User found Live Collab hard to use (`//` block + settings note + ⋯ menu) and asked for a **Share button like Google Docs** at the top right. Confirmed: (1) add a plugin API for a button + window, (2) invite by link only (no accounts / e-mail), (3) the server stays self-run.
+- **Plugin API 7** (`API_VERSION` 7, permission `ui.panel`): `granite.ui.headerButton({ title, icon(svg), open(el, panel) })`, `ui.setBadge(#rrggbb|null)`, `ui.copy(text)`. Host (`packages/plugins/src/host.ts`): `headerButtons()`, `openPanel(id)`, `closePanel()`, 4th constructor arg `onButtonsChanged`, optional `HostAdapter.copyText`.
+  **The window is the plugin's own hidden main frame**, shown with CSS (`.granite-panel-frame`, centred card >600px wide, bottom sheet below) + a dimmed backdrop; so the window shares state with the plugin (no message relay). Escape / tap outside / `panel.close()` close it. The frame gets the editor's colour variables (`panel-open` message) and `style-src`/`img-src data:` in its CSP. One window at a time; a block frame can't add a button or badge. Icons are checked (`checkSvgIcon`) and get `xmlns` added by the host (an `<svg>` without it draws nothing as an image). Tests: `packages/plugins/test/ui-panel.test.ts` (plugins: 114).
+- **Desktop**: `PageMenu` draws the plugin buttons left of the book/split/⋯ buttons (icon via CSS mask so it takes the button colour, badge dot); `NoteApp` sets the pane active before opening. **Phone**: no `react-native-svg` (no new dependency, and a native module would break the installed app), so the top bar shows a **text pill** with the button's title (+ badge dot). Messages `plugin-buttons` (page → app) and `plugin-button` (app → page); `NoteEditorHandle.openPluginButton`. The window is drawn inside the editor WebView page (bottom sheet).
+- **Live Collab 1.1.0** (`examples/plugins/live-collab`, needs API 7; new permissions `ui.panel`, `editor.write`): `src/panel.ts` (window DOM, redrawn from a state object; typed text/focus survive a redraw), `main.ts` (state, actions), `invite.ts` (`inviteLink` = `granite-live://host/room` for wss servers, `parseInviteInput` accepts the link or a ```` ```collab ```` block, `withSettings`, `withInvite`). Window: not live = Start sharing + Join with a link (+ ⚙ name/server, writes `Live Collab.md`); live = people list (Yjs awareness, colours), invite link + Copy, Leave. **Start sharing** inserts the invite block at the top *after the note's `---` properties* (a first version put it above them and broke the properties: found in the preview, fixed, tested), an empty note can't be shared, no server -> the settings open. **Join** writes `Shared note <last 6 of room>.md` (or re-opens it), opens it, goes live. A `ws://` server is copied as the block (no short link). Dot on the button while live. Old `//` entry + ⋯ commands kept.
+  Dropped from the plan: "Stop sharing changes the room" (the room id is in the shared text, so it would not stop anyone); Stop just leaves.
+- Checked: plugin tests 24 (incl. `test/fakeDom.ts` + e2e that presses Start / Copy / Join / Leave against the real relay, settings, empty note, bad link), plugins 114, `tsc -b` (desktop: only the old `vite.config.ts` error; mobile clean), `expo export` android OK. Browser previews: desktop (button, window, settings, error text, frontmatter kept) and phone-size (pill, sheet). Timing: the window draws 48 ms after the press (screenshots of the cross-process frame lag by ~1 s).
+- **Not checked**: a real relay from the browser previews (the frame's CSP only allows `wss:`; the Node e2e covers sync), Copy link in the phone WebView (fallbacks: `execCommand`, the link field is selectable), the real Tauri window, the real phone (needs `npm run ship`), two real people. Store pictures still show the old flow (not re-shot).
+
+## Session 2026-09-25 (latest) — the Live Collab plugin itself (stage 2 of live collaboration)
+The user asked where the "share with a friend" plugin was: **it did not exist yet** (only plugin API 6 had been built; my earlier wording hid that). Built now, with no more questions (defaults chosen, all changeable):
+`examples/plugins/live-collab/` (id `live-collab`, v1.0.0, needs API 6). Yjs + `y-websocket` client + `@codemirror/state`, bundled by esbuild into `main.js` (`npm run build` in that folder; it has its own `package.json`/`node_modules`).
+- Flow: settings note `Live Collab.md` (`name:`, `server:`), `//` -> **Live session** inserts a ```` ```collab ```` invite block (server + 32-char random room id), `⋯` -> **Go live with this note** / **Leave the live session**.
+  Whoever connects first (with real text) seeds the room; a note that is only the invite can't start one; a note with other text that joins is saved to `Live Collab backup <date>.md` first, then becomes the room's text.
+- `src/authority.ts` = the plugin's half of API 6 (Yjs text + ordered log, edits mapped with `ChangeSet.map`), `src/invite.ts` (pure text handling), `src/main.ts` (glue: provider, awareness -> carets, notices), `server/server.mjs` (`ws` + `y-websocket/bin/utils`, in-memory, only accepts 32-char `[a-z0-9]` rooms).
+- **Found and fixed: CSP `connect-src https:` does NOT cover `wss:` in Chrome** (I had claimed it did). `network` now gives `https: wss:` (`bootstrapHtml`), with a test. New optional manifest field **`connect`** (`wss://host` / `ws://host:port`, shown in the permission lists via `permissionLines()`).
+- **Chrome blocks plain `ws://` to localhost / LAN from a sandboxed plugin frame** (local-network protection; opaque origin). So the plugin needs a `wss://` server (Cloudflare Tunnel or a TLS host; README says how). For the demo, headless Chrome was started with `--disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessSendPreflights,BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessRespectPreflightResults` (test only).
+- Tests: `npm test` in the plugin folder = authority fuzz (200 seeds, two Yjs peers with slow queues), invite/settings, the built `main.js` in a vm, and an end-to-end test (real `main.js` + real relay + two simulated editors); packages/plugins 90, live-editor 4, core-cloud 77.
+  **Real run (headless Chrome, two isolated contexts, real relay):** Ann makes the invite with `//`, goes live; Bo pastes it into an empty note and joins; each sees the other's name-flagged caret and selection; both typing at once ends identical. The 4 store pictures in `screenshots/` are captures of that run.
+- **Not checked:** the phone (needs `npm run ship`, API 6), the real Tauri window (WKWebView may treat local `ws://` differently), the internet / a real `wss` host, Drive sync on both sides at once, two real people. Not built: canvas pointers, a presence list, per-note (not per-app) sessions, encryption (the relay can read the text).
+- The screenshot driver was a throwaway CDP script (not committed): headless Chrome + `Target.createBrowserContext` per person + `Input.insertText`.
+
+## Session 2026-09-25 (after the restructure) — "the plugin Store is empty"
+User (Thai) saw nothing in the plugin Store. Checked: the Store is **not** empty (desktop preview lists Calendar, Cards, Dropdown, Excel, …; all 8 examples pass `parseManifest`, have 3+ pictures and
+are in the phone's generated `pluginCatalog.ts`). The trap was the screen: **Plugins** (desktop: gear bottom-left → Plugins; phone: sidebar → gear → Plugins) opened on the **Installed** tab, which says
+"No plugins installed yet" until something is installed; the Store is the second tab. Fix: both `PluginsDialog` and `PluginsSheet` now open on the Store when nothing is installed (desktop: once, when the list first loads).
+Also re-ran everything after the user's restructure: plugins 88, live-editor 4, core-cloud 77 pass; both apps `tsc -b` clean (still the old `vite.config.ts` note). If the **phone** Store is still empty, the phone is on an old
+bundle (`src/pluginCatalog.ts` and `editorHtml.ts` are generated: `npm run build:editor`, then Reload in Expo Go or `npm run ship`; plain `npx expo start` does not run the `prestart` hook).
+
+## Session 2026-09-25 (night) — phone + laptop at once: faster, steadier Drive sync (user chose to stay on Drive, no relay server)
+User (Thai): phone and laptop open together, edits/pictures reach the other side slowly and the page "flickers"; some typed text in tables/cards was lost. Chose **stay on Drive** (not the Yjs relay).
+Done (tests: `core-cloud` 60 pass; `tsc` clean except the old `vite.config.ts` note):
+- `core-cloud`: a download never overwrites a note saved locally while it downloaded; pictures/other files are planned **before** notes; a `sync()` asked for while one runs
+  is re-run right after (if the vault changed) instead of waiting for the next poll.
+- Desktop: `reloadDoc` and `refreshVaultFiles` no longer clobber typed text / redraw the whole note when nothing changed; autosave 1.5s -> 0.8s; poll 5s -> 3s (both apps).
+  `LiveEditor` keeps the editors of the last 4 notes alive (hidden) so switching back doesn't reload plugin frames (`MAX_KEPT_EDITORS`).
+- Phone: a sync that rewrites the open note updates it in place (`NoteEditorHandle.setText` -> the page's existing `value` message) instead of remounting the WebView (a canvas still remounts);
+  the same typed-while-reading guard as the desktop; photos picked at JPEG quality 0.7 (`IMAGE_QUALITY`).
+- **Not verified on real devices / real Drive.** Phone: `npm run ship` (the page's LiveEditor changed -> `node scripts/build-editor.mjs` first). Not built: shrinking photo pixels (needs `expo-image-manipulator`, unapproved).
+
+## Session 2026-09-25 (night, last) — "make opening a page feel like nothing happens"
+User still saw the plugin blocks (cards) re-render slowly when going back to a page. Findings + changes:
+- **Phone was the big cost**: every note switch rebuilt the whole WebView (`key={docId:revision}`), reloading the 1MB editor page and every plugin. Now a plain note is shown by the page already loaded
+  (`NoteEditor` `docId` prop -> `bridge.sendOpen()` re-sends `init`; WebView `source` fixed at mount); canvases (and note<->canvas) still rebuild. Checked in the phone web preview (page marker survives a note switch).
+- **Bug found in my own keep-alive**: a hidden editor's plugin block can still save late (Table blur / 250 ms debounce) and `onChange` would have written that text into the note now showing. `LiveEditor`'s
+  `onChange(text, notePath)` now says which note the editor belongs to; desktop `editDoc(changedPath ?? p)`, phone page sends `path` and `App.onChange` writes a late save of another note to its own file.
+- Card editor popup: pictures shrink/scroll (Cards 1.2.1, needs UPDATE in the Store).
+- Not measured on a real device; the real Bug list note is only 232 KB (4 pictures of 35-98 KB), so data size is not the cost. New builds needed: desktop `tauri build` + `npm run ship`.
+
+## Session 2026-09-25 (late night) — three-way merge instead of "(Drive copy …)" files
+User's case: same note edited on the laptop (text, deleted cards) and on the phone (picture in a card + text) before either reached the other -> "changed on both sides" -> a `(Drive copy …)` file.
+Chose: merge by lines like git, hand-written (no library). Built: `packages/core-cloud/src/merge3.ts` (`merge3(base, ours, theirs)`; null = same lines changed differently or too big), `VaultSync` keeps each `.md`'s text
+at its last sync in `<vault>/.granite/sync-base/` (skipped by `listLocalFiles`, so never synced; backfilled for unchanged notes; **must** stay under `.granite`: the Tauri fs scope forbids every other dot folder, and the first version used `.granite-sync` and made every desktop sync fail with "forbidden path", fixed the same night) and, in a conflict, merges when the base's hash matches the record; new `SyncAction` `"merge"` (counted in `downloaded`, so
+apps reload the note). Same-line conflicts, canvases, notes without a base or with non-UTF-8 bytes still keep both files. Apps: a note with **unsaved typing** is merged with the incoming copy (`OpenDoc.saved` on desktop, `savedText` on the phone), so neither side's edit is dropped.
+Tests: core-cloud 73 pass (merge3 unit tests + engine cases). **Not tried on real Drive / two real devices.** Cards/tables are one JSON/row per line, so different cards/rows merge; one line changed on both sides (or two adjacent... adjacent lines DO merge) still copies.
+
+## Session 2026-09-25 (later) — live collaboration as a plugin: plugin API 6 built, the plugin itself not yet
+User asked (Thai) for Google-Docs-style live editing with other people's cursors, "as a plugin, like FigJam". Answered: possible, but the plugin API
+could not do it (no change events, no caret info, no way to apply remote edits or draw carets). User chose **B: a real plugin** and **sharing with other
+people** (not only their own devices), a **self-run `y-websocket` server**, and approved the libraries `yjs`, `y-protocols`, `y-websocket` and `esbuild`
+(devDependency, to bundle the plugin into one `main.js`). Invites for other people are assumed to be a room link + secret (no accounts yet): **unconfirmed**.
+- **Built: plugin API 6** (`API_VERSION` 6, permission `editor.sync`, `granite.editor.sync.{start,stop,remote,ack,setCursors}`). The *plugin is the authority*
+  (holds the shared text, keeps an ordered log); the editor follows it. `packages/live-editor/src/syncClient.ts` (pure, one edit in flight + a buffer,
+  CodeMirror `ChangeSet` JSON on the wire; a fuzz test in `packages/live-editor/test/`), `sync.ts` (`SyncSession`, `Remote` annotation, remote-caret
+  decorations, `SyncPort`), `LiveEditorHandle.sync`. Host side in `packages/plugins/src/host.ts` (`HostAdapter.sync`, `checkCursors`, one session at a time, ends when
+  another note opens or the plugin is unloaded); desktop `usePlugins.ts` and phone `editor-web/main.tsx` forward it to the active editor.
+- Remote edits are `addToHistory: false` (undo only undoes the user's own typing, checked), still reach `onChange` (so they save and sync to Drive), and are allowed in reading mode.
+- Checked: unit tests (plugins 88, live-editor 4) and a throwaway browser harness against the real editor (converges with a slow authority, no echo, undo, carets follow
+  the text, reading mode, clamp/stop). **Not checked**: through a real plugin frame, on the phone, with two real people.
+- **Not built yet (stage 2)**: `examples/plugins/live-collab/` (Yjs + y-websocket bundled with esbuild; the room/invite; names and colours; the relay server script);
+  keeping Drive sync from writing a second copy during a live session (test in `packages/core-cloud` first); canvas pointers.
+- **Open design points for stage 2**: (1) the plugin has no UI or settings API, so the server address / name / room have to come from somewhere (idea: a ```` ```collab ````
+  invite block in the note + a settings note); (2) the plugin sandbox's `connect-src https:` allows `wss://` but not plain `ws://` (LAN / localhost dev needs a manifest
+  field naming the servers, or a `wss` tunnel); (3) an editor that joins must not have its own text merged with the room's (Yjs would duplicate it).
+- `apps/desktop` `tsc -b` shows `vite.config.ts: Unused '@ts-expect-error'`; that file is untouched by this work.
+
+## Session 2026-09-25 — reading mode on the phone
+User asked for the desktop's reading mode (book button, see 2026-09-23) on the **phone**. Built: a book button in `NoteScreen`'s top bar
+(lit with the accent colour while on); `reading` state in `App.tsx` → `NoteEditorProps.reading` → bridge (`reading` in `init` + a `reading { on }`
+message) → the editor page passes `readOnly` to `LiveEditor` (title locked too), `CanvasView` and the calendar sheet's editor.
+It stays on across notes until toggled (not per note), and is not saved across app restarts.
+Checked in the web preview only (tapping the button toggles `contenteditable` and the title's `readOnly`); **not on the Samsung phone**.
+`editorHtml.ts` was regenerated (`node scripts/build-editor.mjs`); `npx tsc -b` passes.
+
+## Session 2026-09-24 (night, newest) — Drive copies came back
+User (Thai, screenshots) saw `my own schedule (Drive copy …)` files pile up again while editing on the desktop. Each copy was an older desktop
+version, made on the Mac: another device (the phone, most likely on an old build) uploaded stale versions over newer ones. Fixed in `core-cloud`
+(upload only over the version the sync listed; a remote that went back to a version this device already had is not a conflict). Details:
+`progress.md` "Second follow-up". **Open**: phone needs `npm run ship` + restart; not verified on real Drive; the 5 leftover copies were not deleted.
+
+## Session 2026-09-24 (evening) — Smart Chips + Dropdown plugins, plugin API 5
+User (Thai, screenshots of Google Docs smart chips and the Sheets dropdown) asked for two plugins: paste a link -> "Tab to replace with [icon] Title" for many apps, and `//` -> an editable coloured dropdown.
+Done (details: `progress.md` "Smart Chips + Dropdown plugins, plugin API 5"): plugin API 5 (`granite.links.register`, permission `editor.links`), link chips + the paste offer in `LiveEditor`, a clickable chip
+(`onOpenLink`, desktop + phone), Smart Chips 1.0.0 (~66 sites) and Dropdown 1.0.0 (own block, `//` entry). Decisions the user confirmed: API 5 with the Google-style offer; dropdown as a block, not inline.
+**Open**: not run on the phone or in the real Tauri window; the running `tauri dev` window picks up the editor change by reload, but the two plugins must be installed from the Store (not put into the vault by hand);
+Google Docs titles can't be read (chips say "Google Docs"). Not committed / pushed yet. Phone: `npm run ship` (editor page changed).
+
+## Session 2026-09-24 (newest) — `//` list, calendar opens beside, phone check
+User asked for: a `//` list of plugin things, calendar notes opening beside the calendar (Obsidian-like screenshot), and fixes for phone bugs in the table/calendar. Done (details: `progress.md`
+"`//` list, open-beside, table layout, frame-reuse bug"): plugin API 4, the list, open-beside (desktop split; phone: bottom sheet with a second editor in the same WebView, changed later on 2026-09-24 from a back pill), table layout fix, a real bug in plugin-frame reuse.
+**Open**: the phone bug the user sees is NOT reproduced (works in the phone web preview) - ask for a screenshot after they run `npm run ship` and restart the app; installed plugin copies need UPDATE in the Store
+(Simple Table 1.1.0, Calendar 1.1.0, Cards 1.2.0, Excel 1.4.0) - the `//` list shows the old Simple Table as one entry until then. Not committed / pushed yet.
+
+## Session 2026-09-24 (latest) — table bugs, endless Drive copies, Calendar plugin
+User (Thai) reported: a Simple Table "disappearing", rows/columns "wrong", and `my own schedule (Drive copy ...)` files multiplying on the phone. Findings and fixes (details: `progress.md`):
+1. **Table "disappears" on Backspace** = the hidden closing fence being eaten. Fixed for all plugin blocks (`backspaceAfterBlock`).
+2. **Endless Drive copies + a table reverting while typing** = timestamp-only sync treated a device re-saving unchanged bytes as an edit. Fixed with `SyncRecord.hash` in `core-cloud` (+4 tests, 55 total).
+   The phone needs the new build (`npm run ship`); an update is now applied on first open (`expo-updates` in `App.tsx`). The desktop is single-instance.
+   Old copies were moved to the Trash by hand (8 files, twice).
+3. **"Row / column wrong"**: never reproduced (`+ Row`, `+ Column`, Tab behave in the preview). Most likely the same sync revert. **Ask the user again** if it persists after both apps are updated.
+4. **Calendar plugin** (port of Just Simple Calendar, MIT) + plugin API 3 (`vault.open`). Not yet run on a real phone.
+Open: why the phone re-saves an unchanged note (not found; harmless now); Delete-forward above a plugin block still joins it to the fence.
 
 ## Session 2026-09-24 (later) — Uninstall, plugin API 2, Simple Table
 User asked for an Uninstall button on plugins, no plugin buttons on the canvas bar for plugins that aren't installed (already how it worked), and a new

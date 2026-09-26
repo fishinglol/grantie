@@ -76,6 +76,22 @@ declared permissions, explicit per-device enable**.
   example folder only shows in a running dev server after touching `pluginCatalog.ts` (or a restart).
 - **API 2 + Simple Table + Uninstall (2026-09-24)**: permission `editor.input`, `granite.input.trigger / onPaste` (typing a text alone on an empty line; pasting
   tab-separated cells), `API_VERSION` 2, an Uninstall button on both apps, and the Simple Table plugin that uses them. Details in `progress.md`.
+- **API 3 + Calendar (2026-09-24)**: `granite.vault.open(path)` (permission `vault.read`), `API_VERSION` 3, and the Calendar plugin (`examples/plugins/calendar`, a port of the MIT
+  Obsidian plugin Just Simple Calendar: month / weeks / year views, multi-day bars, click opens a note, double-click / long-press an empty day creates a dated note). Settings
+  live in the block text (`view / date / end / title / week / page`). Details, what is not ported (hover preview, right-click menu) and what is unverified (real phone, big
+  vaults) in `progress.md` "Calendar plugin + plugin API 3".
+- **API 4 (2026-09-24)**: `granite.input.addItem(...)` (an entry in the `//` list; the editor draws the list) and `granite.vault.open(path, { beside })`. `//` is now owned by the list, not by one
+  plugin's trigger (`input.trigger` still works for other texts, and a legacy `//` trigger appears as one entry). Simple Table 1.1.0, Calendar 1.1.0, Cards 1.2.0, Excel 1.4.0 use it.
+- **API 5 + Smart Chips + Dropdown (2026-09-24)**: `granite.links.register` (permission `editor.links`), `API_VERSION` 5: a plugin describes sites (name, colour, svg icon, `title(url)`), the editor draws `[Title](url)` links to them as chips
+  and offers "Tab to replace with" on a pasted address; a chip click opens the page (`onOpenLink`). Two plugins use it / the `//` list: Smart Chips (~66 sites) and Dropdown (coloured choice block). Details, limits and what is unverified:
+  `progress.md` "Smart Chips + Dropdown plugins, plugin API 5".
+  Block frames also get `granite.links.chip / title / open` (Simple Table draws link chips and dropdowns in table cells).
+- **API 6 (2026-09-25)**: permission `editor.sync`, `granite.editor.sync.start / stop / remote / ack / setCursors`, `API_VERSION` 6: a plugin can follow the open note's edits and caret and apply other people's edits and draw their carets
+  (the base of live collaboration). The plugin is the authority (ordered log; edits as CodeMirror `ChangeSet` JSON, so a plugin bundles `@codemirror/state`); one session at a time. Details and status: `activeContext.md` "Session 2026-09-25 (later)".
+- **API 7 (2026-09-26)**: permission `ui.panel`, `granite.ui.headerButton / setBadge / copy`, `API_VERSION` 7: a plugin puts a button at the top of a note (desktop icon next to book/split/⋯, phone text pill) that opens a window of the plugin's own (its main frame shown as a card / bottom sheet). Live Collab 1.1.0 is the first user (the Share button). Details: `activeContext.md` "Session 2026-09-26 (Share button)".
+- **Manifest `setup` (2026-09-26)**: optional list of "Before you start" steps, shown numbered on a plugin's Store page (both apps). Live Collab uses it.
+- **Live Collab (2026-09-25)**: `examples/plugins/live-collab` uses API 6 (see `activeContext.md` "the Live Collab plugin itself"). Also added: manifest `connect` (servers a plugin may reach) and `network` now includes `wss:` in the CSP (`https:` alone does not cover it).
+- **Popup (2026-09-25)**: `examples/plugins/popup`, a `//` entry that inserts a ```` ```popup ```` block (`note: path`); a card that opens the note with `vault.open(path, { beside: true })` (phone bottom sheet, desktop split). No API change. Details: `progress.md` "Popup plugin".
 - **Next**: command palette (Cmd+P) so commands aren't only reachable from the Plugins screen; CodeMirror
   extension / event / settings APIs; plugin registry + install-from-URL; docs site; a Worker layer for hangs;
   `desktopOnly` plugins are hidden on the phone but never exercised.

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { Fragment, useRef, useState } from 'react';
 import { PanResponder, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { colors } from '../theme';
 import { noteTitle } from '@granite/core-notes';
@@ -89,12 +89,33 @@ export default function NoteList({ notes, folders, selected, title, syncing, onO
     });
   };
 
+  /** Start (or cancel) creating: the target folder is opened, so the name is typed, and the result appears, inside it. */
+  const startCreating = (kind: 'note' | 'folder' | 'canvas') => {
+    setCreating(creating === kind ? null : kind);
+    if (activeFolder) setCollapsed((prev) => (prev.has(activeFolder) ? new Set([...prev].filter((f) => f !== activeFolder)) : prev));
+  };
+
   const commit = () => {
     const trimmed = name.trim();
     if (creating && trimmed) onCreate(creating, activeFolder, trimmed);
     setCreating(null);
     setName('');
   };
+
+  const nameInput = (depth = 0) => (
+    <TextInput
+      autoFocus
+      value={name}
+      onChangeText={setName}
+      onSubmitEditing={commit}
+      placeholder={creating === 'note' ? 'Note name' : creating === 'canvas' ? 'Canvas name' : 'Folder name'}
+      placeholderTextColor={colors.textFaint}
+      style={[styles.input, { marginLeft: depth * 16 }]}
+      returnKeyType="done"
+    />
+  );
+  /** The name is typed under the target folder's row; when that row is hidden (inside a collapsed folder) it goes at the end. */
+  const inputUnder = rows.some((r) => r.kind === 'folder' && r.rel === activeFolder) ? activeFolder : '';
 
   const toggle = (folder: string) => {
     setActiveFolder(folder);
@@ -121,18 +142,20 @@ export default function NoteList({ notes, folders, selected, title, syncing, onO
         >
           {rows.map((row) =>
             row.kind === 'folder' ? (
-              <Pressable
-                key={row.rel}
-                onPress={() => toggle(row.rel)}
-                onLongPress={() => onFolderMenu(row.rel)}
-                delayLongPress={350}
-                style={({ pressed }) => [styles.row, { marginLeft: row.depth * 16 }, dragging?.over === row.rel && styles.dropTarget, pressed && styles.pressed]}
-              >
-                <Icon name={row.open ? 'folder-open-outline' : 'folder-outline'} size={22} color={activeFolder === row.rel ? colors.accent : colors.textDim} />
-                <Text style={[styles.label, activeFolder === row.rel && { color: colors.accent }]} numberOfLines={1}>
-                  {nameOf(row.rel)}
-                </Text>
-              </Pressable>
+              <Fragment key={row.rel}>
+                <Pressable
+                  onPress={() => toggle(row.rel)}
+                  onLongPress={() => onFolderMenu(row.rel)}
+                  delayLongPress={350}
+                  style={({ pressed }) => [styles.row, { marginLeft: row.depth * 16 }, dragging?.over === row.rel && styles.dropTarget, pressed && styles.pressed]}
+                >
+                  <Icon name={row.open ? 'folder-open-outline' : 'folder-outline'} size={22} color={activeFolder === row.rel ? colors.accent : colors.textDim} />
+                  <Text style={[styles.label, activeFolder === row.rel && { color: colors.accent }]} numberOfLines={1}>
+                    {nameOf(row.rel)}
+                  </Text>
+                </Pressable>
+                {creating && inputUnder === row.rel && nameInput(row.depth + 1)}
+              </Fragment>
             ) : (
               <Pressable
                 key={row.rel}
@@ -155,30 +178,19 @@ export default function NoteList({ notes, folders, selected, title, syncing, onO
               </Pressable>
             ),
           )}
-          {creating && (
-            <TextInput
-              autoFocus
-              value={name}
-              onChangeText={setName}
-              onSubmitEditing={commit}
-              placeholder={creating === 'note' ? 'Note name' : creating === 'canvas' ? 'Canvas name' : 'Folder name'}
-              placeholderTextColor={colors.textFaint}
-              style={styles.input}
-              returnKeyType="done"
-            />
-          )}
+          {creating && inputUnder === '' && nameInput()}
           {notes.length === 0 && folders.length === 0 && !creating && <Text style={styles.empty}>No notes yet — tap the pencil to add one</Text>}
         </ScrollView>
       </View>
 
       <View style={styles.toolbar}>
-        <Pressable onPress={() => setCreating(creating === 'note' ? null : 'note')} hitSlop={10} style={styles.tool}>
+        <Pressable onPress={() => startCreating('note')} hitSlop={10} style={styles.tool}>
           <Icon name="square-edit-outline" size={26} color={creating === 'note' ? colors.accent : colors.text} />
         </Pressable>
-        <Pressable onPress={() => setCreating(creating === 'folder' ? null : 'folder')} hitSlop={10} style={styles.tool}>
+        <Pressable onPress={() => startCreating('folder')} hitSlop={10} style={styles.tool}>
           <Icon name="folder-plus-outline" size={26} color={creating === 'folder' ? colors.accent : colors.text} />
         </Pressable>
-        <Pressable onPress={() => setCreating(creating === 'canvas' ? null : 'canvas')} hitSlop={10} style={styles.tool} accessibilityLabel="New canvas">
+        <Pressable onPress={() => startCreating('canvas')} hitSlop={10} style={styles.tool} accessibilityLabel="New canvas">
           <Icon name="view-grid-plus-outline" size={26} color={creating === 'canvas' ? colors.accent : colors.text} />
         </Pressable>
         {folders.length > 0 && (

@@ -4,11 +4,12 @@ A spreadsheet that lives **inside a note**, like Excel or Google Sheets. It is n
 in place, in the flow of the page, on desktop and phone.
 
 - Permissions: **Draw its own blocks inside your notes** (`editor.blocks`) and **Change the open note**
-  (`editor.read` / `editor.write`, only for the two commands that add a sheet to the note). It never reads your other notes and has no network.
+  (`editor.read` / `editor.write`, only for the two commands that add a sheet to the note) and **See what you type on an empty line** (`editor.input`, only for
+  its entry in the `//` list). It never reads your other notes and has no network. Needs plugin API 4.
 - Install: copy this folder to `<vault>/.granite/plugins/excel/` (it syncs to your phone), then switch it on
   under Plugins on each device.
 - Use: open a note and pick **Turn this page into a sheet** from the **⋯** button at the top right of the page (phone: the ⋮
-  menu). The whole page becomes a sheet. Or run **Insert a spreadsheet** from the Plugins screen, or type a ```` ```sheet ````
+  menu). The whole page becomes a sheet. Or type **`//`** on an empty line and pick **Spreadsheet**, or run **Insert a spreadsheet** from the Plugins screen, or type a ```` ```sheet ````
   fence yourself: each sheet is one fenced block, so a note can also hold several, between paragraphs. A page that
   already has text keeps it, below the sheet.
 - The sheet is stored as JSON between the fences, one cell per line, so it is a normal Markdown note that syncs

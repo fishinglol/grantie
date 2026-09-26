@@ -1,6 +1,6 @@
 # Progress
 
-_Last updated: 2026-09-21_
+_Last updated: 2026-09-25_
 
 ## Done
 - **`conflict_cleaner` CLI v0.1** — finds & resolves sync-conflict files (Python,
@@ -456,8 +456,160 @@ pasted become that table.
   **Not verified**: typing `//` with a phone soft keyboard / IME (Android composition may not go through CodeMirror's `inputHandler` the same way), a real Excel
   clipboard (only a synthetic paste event with the same text was tried), the Tauri window. Not built: column widths, alignment buttons, sorting, drag reorder,
   focusing the first cell of a table that `//` just created (the user clicks a cell).
+- **Fix (2026-09-24): table "disappearing" on Backspace.** From the line under a plugin block, Backspace used to put the (invisible)
+  cursor at the end of the hidden closing ``` and the next one ate a backtick, so the block turned into raw text. Now
+  `backspaceAfterBlock` (`LiveEditor.tsx`, all plugin blocks): at the block's end or the start of the line after it, the first Backspace
+  selects the block (shown as highlighted text), a second deletes it (like images); an empty line under it (not the note's last) is just
+  removed. Verified in the desktop web preview. Not handled: Delete (forward) at the end of the line *above* a block joins it to the
+  opening fence. User also said "row and column also wrong" — not yet explained (asked what they meant).
+- **Fix (2026-09-24): endless `(Drive copy …)` files + a table reverting while typing (desktop + phone open).** Evidence in the
+  user's vault (`~/Documents/GraniteVault-new`): 5 copies of `my own schedule.md` 12-25 s apart, each holding the *previous* desktop
+  version. So one device gave Drive a new timestamp with unchanged bytes (the phone, likely; why it re-saves is **not found**), and
+  timestamp-only sync read that as an edit: a conflict + copy on the desktop, or the stale side winning and overwriting the newer edit
+  (the table "going back"). Fix in `core-cloud`: `SyncRecord.hash` (cyrb53 of the bytes at the last sync, set by push/pull);
+  an upload whose bytes equal it is skipped; a conflict where one side still equals it goes to the side that really changed, no copy.
+  3 new tests in `syncEngine.test.ts`. Old index records have no hash until their next push/pull. Needs both apps updated
+  (phone: `npm run ship`). The existing 5 copies are older versions and were left for the user to delete.
+  - **Follow-up the same day:** 3 more copies appeared 15:00–15:01, made by the *phone* (their file times on the desktop are later than
+    their names = downloaded). The update was published 14:55, and expo-updates (default settings, no `Updates.*` code in the app)
+    only runs a downloaded update on the *next* cold start, so the phone was still on the old sync. Also closed a gap: records
+    without `hash` (written by the old code) get one on the next sync while the file is still unchanged (`skip`/`unchanged`), so
+    a device's first conflict after updating is covered too. Test added. A note really edited on both devices within one sync
+    window still (correctly) gets a copy.
+  - **Second follow-up (evening): copies came back** (`my own schedule (Drive copy …)` at 20:28, 20:28, 21:00, 21:10), made on the Mac,
+    each holding an *older desktop version*, while the user edited only on the desktop. The desktop's records were consistent, so another
+    device (the phone, most likely still on an old build) uploaded a stale version over the newer one; uploads overwrote Drive blindly.
+    Fix in `core-cloud`: (1) `UploadArgs.ifModifiedTime`: an overwrite first checks Drive still has the version this sync listed, else
+    `RemoteChangedError`, the item is skipped and the next sync sorts it out (Drive v3 has no conditional write: check-then-write, a
+    sub-second window, one extra GET per upload). (2) `SyncRecord.older`: the last 20 hashes this device synced; in a conflict, a remote
+    that went back to one of them is a stale upload, not an edit: local wins, no copy. Not applied to the download case (local unchanged),
+    so a real undo on another device still arrives. 2 tests (57 total). Not verified against real Drive or the phone. Could not confirm
+    which device wrote the stale versions (reading Drive revision history with the app's token was blocked). **The phone needs
+    `npm run ship` + a full app restart**, or it keeps uploading stale versions (the desktop no longer copies them, but can still be
+    reverted to one when it has no unsaved edit).
 
-## Left to do
+### Calendar plugin + plugin API 3 (2026-09-24, desktop and phone)
+User linked github.com/DavidHurtadoAI/just-simple-calendar (an Obsidian plugin, MIT) and asked for it in the phone app. Answers: notes with a date in their
+properties; all 3 views; full page + inside a note. It cannot be dropped in (it is built on Obsidian's Bases API), so it is a **port**:
+`examples/plugins/calendar` (id `calendar`, block language `calendar`, `LICENSE` kept, credit in the header of `main.js`, `README.md` and the manifest author).
+The date math, `layoutDays` lanes, the three views and the CSS are theirs (CSS re-pointed at Granite's theme variables); reading, opening and creating notes are Granite's.
+- **Plugin API 3** (`API_VERSION` 3): `granite.vault.open(path)` (permission `vault.read`), `HostAdapter.openNote`. Desktop: `usePlugins` `openNote` -> `load(join(dir, rel))`.
+  Phone: `vault` request `{ op: 'open' }` -> `App.tsx` `openNote`. A plugin sets `"minApiVersion": 3`.
+- **Storage**: the block text is the settings (`view: month|infinite|linear`, `date`, `end`, `title`, `week`, `page: 1`). A note's date comes from its front matter
+  (`properties()` in `main.js`, top-level `key: value` only; a list value reads as "").
+- **Behaviour**: click/tap a note opens it; double-click an empty day (phone: long-press 550 ms) creates `YYYY-MM-DD.md` (or `... 2.md`) with the date property and opens it;
+  ⚙ edits the property names and week start (saved into the block); ↻ re-reads the notes (the plugin reads every note once per mount and on ↻, not live).
+- **Not ported**: hover preview, right-click menu (open in tab / to the right / delete) - no host API for them.
+- **Verified** (desktop web preview + headless Chrome at 1440x900 and 390 wide): month/weeks/year render, multi-day bars with continuation arrows, lanes, click opens the
+  note, double-click creates and opens a dated note, the calendar as a whole page and inside a note. 3 real screenshots in `screenshots/` (so the Store lists it).
+  Tests: `packages/plugins/test/calendar.test.ts` (settings, dates, grid, ranges, lanes, front matter).
+  **Not verified**: the phone itself (WebView, touch, long-press to create), a real vault with hundreds of notes (it reads every note on mount), Tauri window.
+  Fixed on the way: the year view showed a stray header row (`[hidden]` lost to `display: grid`), narrow screens lost the room for the continuation arrow.
+
+### `//` list, open-beside, table layout, frame-reuse bug (2026-09-24, plugin API 4, desktop + phone)
+User (Thai) after trying the phone: table and calendar still buggy on the phone; wants `//` to list the plugins' things (Calendar, Table...) like Notion; wants a tap on a note/day in the
+calendar to open it beside the calendar (a screenshot of Obsidian's calendar | note split); asked to be told the plan before code ("yes do it" after).
+- **Phone bugs: NOT reproduced.** Ran the phone app in the Expo web preview at 390 px (in-memory fs, plugins seeded by hand): typing, Tab, `+ Row`, `//`, opening notes, the calendar all worked.
+  Real device only: Android WebView, real touch, IME keyboard, and possibly the phone still running an older build (an OTA needs two restarts, now one). **Ask for a screenshot / what happens.**
+  Found and fixed on the way: (1) `BlockWidget.updateDOM` reused a plugin frame for a block of a *different* language, so opening a note with a calendar after one with a table kept showing the table
+  (files were never touched); now `dom.dataset.lang` must match. Very likely behind "plugin appears then vanishes". (2) Simple Table's delete-row `×` was an extra table column, so the table was 26 px
+  wider than its block, "Delete table" stuck out past its edge and a phone got a sideways scroll. The `×` now sits inside the row's last cell (`td.last textarea` has right padding).
+- **Plugin API 4** (`API_VERSION` 4): `granite.input.addItem({ id, name, description?, insert })` (permission `editor.input`) puts an entry in the `//` list; `granite.vault.open(path, { beside })`.
+  Host: `PluginHost.menuItems()` (a pre-API-4 plugin that answers the `//` trigger gets one entry named after the plugin, so an installed Simple Table 1.0.0 is not lost), `runInput("item", { text: key })`
+  (key = `pluginId:item:id` or `pluginId:trigger`), `HostAdapter.openNote(path, { beside, origin })` where `origin` is the block the call came from (`#call` gets `block.container`), `BlockBridge.menuItems`.
+- **`//` list** (`slashMenu()` in `LiveEditor.tsx`, a `StateField` + `showTooltip`, no new dependency): opens when `//` is typed alone on an empty line (`input.type`, not in a code block, not reading mode)
+  and at least one entry exists; typing more filters (name + plugin), ArrowUp/Down, Enter/Tab or a tap (`pointerdown` + preventDefault so the phone keeps its keyboard) choose, Escape / blur / moving off the
+  line close it and leave the text alone. Choosing deletes the typed text and inserts what the plugin returns (`insertPluginText`). CSS `.cm-slash-*` in `live-editor.css`.
+  Entries: Calendar, Cards, Spreadsheet, Table (plugins bumped: simple-table 1.1.0, calendar 1.1.0, cards 1.2.0, excel 1.4.0, all `minApiVersion` 4; **installed copies in a vault are old until the user taps UPDATE in
+  the Store**; Simple Table's `//` trigger is gone from 1.1.0, its entry replaces it).
+- **Open beside**: desktop `NoteApp` `openNote(rel, { beside, origin })`: splits if there is one pane, target = the pane other than the one holding `origin` (`[data-pane]`), then `load()`; the next click replaces
+  the right pane. **Phone (changed 2026-09-24)**: the note slides up as a **bottom sheet** (85% height, handle, ×, pull down or tap outside to close) over the calendar. To use little RAM it is a **second
+  `LiveEditor` inside the same WebView page** (`Sheet` in `editor-web/main.tsx`), NOT a second WebView (estimate 5-15 MB vs 40-80 MB; not measured on a device). The page handles the plugin's
+  `vault.open(path,{beside:true})` itself: `vault read` -> sheet; edits are written by `vault write` with `quiet:true` (App.tsx skips `refresh()`), 700 ms after typing stops, on `visibilitychange` hidden, and on close
+  (`quiet:false`, so the sidebar list refreshes). The plugin's `open` call **resolves when the sheet closes**; Calendar 1.2.0 then re-reads its notes if the call took over 1 s (on desktop it resolves at once, no rescan).
+  Guards: opening the note the page itself shows does nothing (the calendar's own note is on its calendar). The sheet has a read-only name (no rename); relative image links in it resolve against the main note's folder
+  (`![[x.png]]` works everywhere). Removed: the ‹ back pill (`backRel`, `NoteScreen` `back`, `op:'open'.beside`).
+- **Verified** (desktop web preview + phone web preview at 390 px + headless Chrome): the list with 4 plugins, filter `//ta` -> Table -> Enter, tap on a row, calendar click -> split, second click replaces the right pane,
+  double-click a day creates+opens on the right, table fits 390 px. Phone sheet (2026-09-24 evening, standalone harness page faking the app at 390 px): tap a note -> sheet, typing saves quietly, × closes, calendar rescans (a date changed behind it moved the note), double-click an empty day creates+opens in the sheet, dragging the handle down closes. Tests: `packages/plugins/test/menu-items.test.ts` (each plugin's entry and manifest; 55 pass).
+  **Not verified**: the real phone (touch on the list, soft keyboard vs. the sheet, finger drag on the handle, RAM), the Tauri window, the list on a phone with the soft keyboard covering the lower half (CodeMirror flips it above).
+- New Store picture for Simple Table: `screenshots/00-slash-list.webp`.
+- **Follow-up (17:50): the user's screenshots showed errors that were stale builds, not code bugs.** Desktop: `/Applications/Granite.app` (built 11:51) reported `unknown permission "editor.input"` and drew
+  `calendar` blocks as raw text. Phone: toast `granite.vault.open is not a function` (an older phone editor running the Calendar synced from the desktop vault). Fixes: rebuilt the desktop app
+  (`npm run tauri build -- --bundles app`, output `src-tauri/target/release/bundle/macos/Granite.app`; the user must replace the installed one), the phone editor page now refuses a plugin whose
+  `minApiVersion` > `API_VERSION` ("needs a newer version of Granite", same as desktop; only helps builds from now on), and Calendar 1.1.1 shows "Update the Granite app..." when `vault.open` is missing.
+- Preview tip: the phone web preview keeps files only in memory (`memFs`); to seed it I temporarily exported `window.__memFs` from `apps/mobile/src/memFs.ts` (reverted; do not commit) and served
+  `examples/plugins` from a tiny CORS python server, then opened Plugins to make the app rescan.
+
+### Smart Chips + Dropdown plugins, plugin API 5 (2026-09-24 evening, desktop + phone)
+User (Thai, five Google Docs / Sheets screenshots) asked for two new plugins: (1) paste a link -> a "Tab to replace with [icon] Title" bar -> a chip, for **many apps, each with its own look**;
+(2) type `//` -> a coloured dropdown chip the user can edit (the Sheets dropdown from their Excel plugin work, images 4-5). Answers: API 5 like Google Docs (offer + Tab), dropdown as **its own block** (not inline).
+- **Plugin API 5** (`API_VERSION` 5, permission `editor.links`): `granite.links.register(provider | provider[])` with `{ id, name, label?, hosts, color, icon (<svg>), title?(url) }`. `hosts` are `youtube.com`
+  (+ subdomains) or `docs.google.com/document` (that path only); the longest match wins. New `packages/plugins/src/links.ts` (no DOM): `checkLinkProvider` (icon must be a plain `<svg>`: no script / image / use / style /
+  href / url() / on*=, max 4000 chars; colour `#rrggbb`), `findLinkProvider`, `svgDataUri`. Host: `PluginHost.linkChip(url)`, `runInput("link", { text: pluginId:providerId, url })` (the plugin's `title(url)`; 5 s),
+  `BlockBridge.linkChip`. A provider's `title` function stays in the sandbox (only the metadata is sent).
+- **Editor** (`LiveEditor.tsx`): `[text](url)` whose site is registered is drawn as a chip (`chipDeco`, `.cm-chip`, icon as `--chip-icon` data-URI background; markup shows only when the cursor is strictly inside, `within()`).
+  `linkChips()`: pasting a lone http(s) address of a known site leaves it as text and shows `.cm-chip-suggest` above it ("tab to replace with [chip]", "tap" on a coarse pointer); the label is the provider's `label`, replaced by the
+  plugin's title when it arrives; Tab / tap turns it into `[Title](url)` (brackets escaped, `( ) space` percent-encoded), any typing / cursor move / Escape dismisses it. Backspace right after a chip deletes the whole chip.
+  A click on a chip (Ctrl/Cmd-click on any other link) calls the new `onOpenLink` prop: desktop `openUrl` (Tauri opener), phone `open-link` bridge message -> `Linking.openURL` (`NoteEditorProps.onOpenUrl`). Links were not
+  clickable at all before this. The chip markdown helper is duplicated in `accept()` (live-editor has no dependency on `@granite/plugins`).
+- **Smart Chips 1.0.0** (`examples/plugins/smart-chips`, permissions `editor.links` + `network`, `minApiVersion` 5): ~66 sites (Google Docs / Sheets / Slides / Forms / Drive / Calendar / Gmail / Meet / Maps, YouTube, Spotify,
+  SoundCloud, Vimeo, TikTok, X, Reddit, GitHub, Notion, Figma, LINE, Shopee, Lazada, Pantip, ...). Icons are **coloured rounded squares with a simple white shape or letter drawn by the plugin, not the sites' logos**. Titles: oEmbed
+  (YouTube, Spotify, SoundCloud, TikTok, Vimeo: checked with `curl -H "Origin: null"`, YouTube echoes it, the others send `*`; Vimeo returned 404 for the one video tried, so **Vimeo's title is unverified**), or read off the
+  address (GitHub `owner/repo · PR #12`, Reddit slug, Wikipedia incl. Thai, Notion / Figma / Medium / Stack Overflow slugs, Maps place, X `Post by @name`), otherwise the site's name. **Google Docs / Sheets titles cannot be read
+  (login needed)**: the chip says "Google Docs". Only those sites' own endpoints are contacted; other sites get no chip at all.
+- **Dropdown 1.0.0** (`examples/plugins/dropdown`, block language `dropdown`, `editor.blocks` + `editor.input`, `minApiVersion` 4): `//` -> "Dropdown" inserts a block with important / normal / not really / not important, none chosen.
+  Stored as `value: <chosen>` + one `name | colour` line per option (10 colours, light and dark tints; `tidy()` drops empty names and dedupes on Done). Chip -> list (tap the chosen one again to clear) -> pencil -> editor
+  (drag handle, colour swatch -> inline palette, name, bin, "Add another item", Done, Delete dropdown), like the Sheets "Data validation rules" panel. The frame grows with its content (no floating popup: a frame can't draw outside itself).
+  Gotcha fixed: moving a dragged row in the DOM drops its pointer capture, so the drop was never seen; rows now follow the pointer with a `transform` and are reordered on release.
+- **Tests**: `packages/plugins/test/links.test.ts` (provider checks, site matching, every Smart Chips provider valid, titles incl. Thai) and `dropdown.test.ts` (storage, tidy, `//` entry); `menu-items.test.ts` lists Dropdown. 72 pass.
+  `tsc --noEmit` clean in plugins / live-editor / desktop (desktop `tsc -b` still shows the old unrelated `vite.config.ts` error) / mobile; `npm run build:editor` in `apps/mobile` regenerates `editorHtml.ts` + `pluginCatalog.ts` (8 plugins).
+- **Verified** in the desktop preview (in-app browser + headless Chrome): the offer for a Google Docs address (looks like the user's screenshot), the real YouTube title (Thai and English), Tab, Backspace removing a chip,
+  many sites in one note, `//` -> Dropdown, choose, palette, drag reorder (persisted in the note text), add / rename / delete. 7 real screenshots (headless Chrome over CDP against the dev server, `cwebp -q 82`) are in the two `screenshots/` folders.
+  **Not verified**: the phone (tap on the bar, soft keyboard, WebView paste event, `Linking.openURL`), the real Tauri window (`openUrl` on a chip click), Vimeo / TikTok / SoundCloud titles, a very long Thai title wrapping,
+  the dropdown on a light theme (none exists), a sync round trip. Not built: pasting over selected text to link it, a hover card, real logos, several chosen options, a dropdown inside a table cell or a sentence.
+- **Follow-up (same evening): dropdown in a table cell.** The user typed `//` in a Simple Table cell (screenshot) and nothing happened: their images 4-5 were a *cell* dropdown and I had left "dropdown inside a table cell"
+  as not built. Now **Simple Table 1.2.0**: `//` in a data cell makes its column a dropdown (four default options), the list opens under the cell, chips are drawn over a read-only textarea, pencil -> the same options editor
+  (drag / swatch / rename / delete / add / Remove dropdown / Done). Cells hold the plain option name; the options are one trailing `<!-- dropdowns {"col":[[name,colour],...]} -->` line inside the fence (parsed by
+  `parseTable`, sanitised by `cleanDropdowns`, absent when unused so old tables are unchanged; `delCol` renumbers it). Renaming an option renames the cells that held it (`links` captured on entering the editor).
+  The popup floats over the table, so the block gets a `min-height` big enough to hold it. Tests +4 (76). Verified in the in-app browser: `//`, pick, click another cell, pencil, rename, Done, text in the note.
+  **Not verified**: the phone, drag reorder inside the table popup (same code as the Dropdown plugin, tested there), Store picture for it (none added), a first attempt right after inserting a table by script did nothing once and worked
+  on every retry (not explained; an installed older copy must be **UPDATED in the Store** to 1.2.0 to get this).
+- **Follow-up 2 (same evening): `//` in a cell is a menu; links in cells become chips (Simple Table 1.3.0, `minApiVersion` 5, + `editor.links`).** The user's next screenshots: a pasted YouTube link in a cell stayed plain text, and `//` jumped
+  straight into the dropdown list ("there is no list / option first"; confirmed by asking: they want a menu of what the cell can be, like the `//` list in a note). Now `//` alone in a data cell opens a menu (Dropdown, Link; arrows + Enter,
+  Escape keeps the text), Dropdown then behaves as before, Link clears the cell with a "Paste a link" hint. **API 5 addition for block frames**: `granite.links.chip(url)` (how a link looks, from any running plugin's providers),
+  `granite.links.title(url)` (that plugin's `title`), `granite.links.open(url)` (`HostAdapter.openUrl`: desktop Tauri opener, phone `open-link` message), all permission `editor.links`. In a cell a pasted address of a known site is turned into
+  `[label](url)` at once and the real title replaces the label when it arrives; unknown sites stay plain. A link cell is drawn as a chip overlay (`.lchip`, click opens) over its textarea (text transparent, one line high, raw
+  Markdown shown while focused). Fixed on the way: the coarse-pointer CSS came before `.dd .chip` so the phone tweak was overridden. Tests 78. Verified (headless Chrome, iframe reached via `Target.setAutoAttach` sessions, the
+  script's `inFrame`): YouTube title, GitHub, unknown site stays text, one-line rows; the `//` menu in the in-app browser. **Not verified**: a real clipboard paste (synthetic `ClipboardEvent` only; the in-app browser's Cmd+V does not
+  reach the system clipboard), the phone, `links.open` in the Tauri window, the ↑↓ Enter menu keys were pressed once (Down + Enter chose Link). Old installed Simple Table copies must be UPDATED (they also need the app rebuilt for API 5).
+- **Follow-up 3 (same evening, Simple Table 1.3.1): a plain click on a dropdown cell chose a value.** The user's screenshots: after picking in one cell, clicking the next cell in the column showed "normal" / "not really" without
+  any command. Cause: a click opened the list under that cell, the list covers the cells below, so the *next* click landed on an option. Now a click only selects the cell; the list opens with the **▾** button at the cell's right
+  edge (`.caret`, shown on hover / focus, always on touch), a double-click, or Enter / Space. Verified in the in-app browser (pick, click the next cell = focus only, ▾ opens). **Automation note**: the first click into a freshly
+  inserted plugin frame in the in-app browser only focuses the frame and the typing is lost (the doc stays unchanged); retry once. Same quirk as the "first `//` did nothing" seen earlier, so it is the test tool, not the plugin.
+- **Follow-up 4 (2026-09-25, Simple Table 1.4.0): a dropdown is per cell, not per column; "+ Row / + Column" labels.** The user (English this time) saw the whole column become dropdowns after using `//` in one cell, and said "+ Row makes a column,
+  + Column makes a row". (1) The design was per column; now `model.dd = { col: { options, rows: [row numbers] } }`, stored `<!-- dropdowns {"1":{"o":[[name,colour]],"r":[2]}} -->`; options are shared by a column's dropdown cells, `//` in another
+  cell of the column reuses them; "Remove from this cell"; `delRow` / `delCol` renumber; the 1.2 format (options only) is read as "every data row" so old notes still work. (2) Row / column: scripted clicks (`rowcol` mode of the
+  screenshot script) give the right shapes (+ Row = one more row at the bottom, + Column = one more column on the right, with and without dropdown cells), so this is very likely **vocabulary**: the user called the vertical strip of dropdowns
+  "all row" in the same message, i.e. they call a column a "row" (earlier "row and column also wrong" complaint too). Labels are now "+ Row ↓" and "+ Column →" with tooltips. **Asked the user to say if it is still swapped**; if their
+  vocabulary really is the reverse, swap what the two buttons do. Tests 80.
+- **Store pictures showed as broken `?` in the user's running `tauri dev` window** (their screenshot): I had first put throw-away `*-tmp.webp` pictures in `screenshots/` so the plugin would be listed, then replaced them with the real files under
+  new names, and the running Vite kept its cached `import.meta.glob` list (old names). Fix: `touch apps/desktop/src/pluginCatalog.ts`, then reload the window. **After renaming / replacing files in `examples/plugins/*/screenshots/` always touch it.**
+- **Headless-Chrome gotcha**: in one scripted flow (`//` -> Dropdown -> real mouse click on the chip) the click reached the iframe but the list never opened, while the same click worked in the in-app browser pane and in the
+  screenshot script's other flow; not explained. The drag was therefore verified in the in-app browser. To read the note text in a preview: `document.querySelector('.cm-content').cmTile.view.state.doc.toString()`.
+
+### Multi-select in the desktop sidebar (2026-09-25)
+User (screenshots of many `my own schedule (Drive copy …)` files and of VS Code's Explorer with several picked rows) asked for Shift+click to pick many files on the desktop. `NoteApp.tsx`: `picked` (keys `d:folder` / `f:file`) and
+`pickAnchor`; Shift+click picks the visible rows from the last clicked (or the open note) to this one (`visibleKeys`), Ctrl/Cmd+click toggles one, a plain click clears; picked rows get a dotted orange outline (`.file-list li.picked`).
+Right-click on a picked row -> "Delete N items" (any other row drops the pick); Delete / Backspace (not in an input or the editor) does the same; Escape clears; rows that disappear leave the pick. `deleteMany` removes them in one go
+(files, then folders; a file inside a picked folder goes with it; one rescan, one sync), `DeleteDialog` got `count`. Verified in the desktop preview (range, Cmd toggle, menu, dialog, delete 2 of 4). `tsc --noEmit` clean.
+**Not built**: the phone, Cmd+A (dragging several rows was added right after, see below). **Not verified**: the Tauri window, real files on disk, a picked folder with contents, sync of a bulk delete.
+**Follow-up (same day): drag several picked rows into a folder (desktop only).** `beginDrag` takes the whole pick when the row it starts on is picked (`group`); the ghost says "N items", all picked rows dim; on a canvas each
+picked note becomes a card; on a folder the moves run one after the other (`moveFolderTo` for folders that are not inside another picked folder or the target, then `moveNote` for files not inside a picked folder), then the pick clears.
+Verified in the desktop preview (2 notes -> a folder; both moved). Not verified: picked folders with contents, a name clash mid-way (the existing per-note "already exists" status), the Tauri window, sync of a bulk move.
+Observed: after deleting the open note the pane keeps showing its title and an empty editor (same for the single delete; not touched).
+The first screenshot showed the endless `(Drive copy …)` files again: not investigated this session (the fix from 2026-09-24 needs both apps updated; ask which build and device made them).
+
+
 
 ### Finish / polish the local feature
 - [ ] Run on a real phone (Expo Go) and confirm read + image insert round-trips
@@ -504,6 +656,20 @@ pasted become that table.
 Note: the old "`SyncTransport` port + GoogleDriveTransport" item is **done**,
 under the name `CloudProvider` in `packages/core-cloud`.
 
+## Two devices at once: sync + editor robustness (2026-09-25)
+User runs the laptop and the phone together on one Drive vault and saw: text/pictures arriving late, plugin blocks flickering, typed text partly lost, `(Drive copy …)` files piling up, slow re-render when returning to a page.
+Chose to stay on Drive (no relay server). Everything below has unit tests (`core-cloud` 77) except the UI parts, which were checked in the browser previews only; **none of it was verified on real Drive / two real devices** beyond the user saying it looked fine.
+- **core-cloud**: `merge3.ts` (three-way line merge, hand-written); `VaultSync` saves each `.md`'s last-synced text in `.granite/sync-base/` and merges a both-sides-edited note when the base matches the record (`SyncAction` `"merge"`,
+  counted in `downloaded`); a download never overwrites a note saved locally while it downloaded; pictures/other files are planned before notes; a `sync()` requested while one runs is re-run right after if the vault changed;
+  base bookkeeping can never fail a sync. Tests include a two-device scenario (laptop deletes/retitles cards, phone adds a picture and a card) and a 60-round random run.
+- **Apps**: typed-but-unsaved text is merged with an incoming copy (desktop `OpenDoc.saved`, phone `savedText`); reload-after-sync no longer overwrites text typed while the file was read; the phone updates the open note in place (`NoteEditorHandle.setText`);
+  desktop `refreshVaultFiles` only sets state when the lists changed; poll 5s -> 3s, desktop autosave 1.5s -> 0.8s; phone photos at JPEG quality 0.7.
+- **Editor**: `LiveEditor` keeps the editors of the last 4 notes alive, hidden with an `!important` display (CodeMirror sets `display:flex !important`), so plugin frames are not reloaded when going back (`MAX_KEPT_EDITORS`);
+  `onChange(text, notePath)` names the note an editor belongs to, because a hidden editor's plugin can still save late. Phone: a note opens in the page that is already loaded (`docId` -> `sendOpen`), canvases still rebuild the page.
+- **Small**: phone new-note/folder input opens under the selected folder and expands it; page-action icons in the ⋯ menu per plugin (`PAGE_ICONS`); Cards 1.2.1 (picture in the card popup shrinks and scrolls, Close stays reachable).
+- **Open**: typing delay (cause unknown, device/note not identified); table/card blocks redraw whole when the other device edits; shrinking photo pixels needs `expo-image-manipulator` (unapproved); the old `Granite.app` builds are kept in the session scratchpad only.
+- **Lessons**: test sync against a disk that enforces the Tauri scope (the in-memory fs did not, and a forbidden-path error in an unguarded `exists()` took down every sync); a hidden editor keeps running its plugin frames.
+
 ## Known issues / risks
 - **Editor extensions are built once per mount.** Hot-reload used to leave the running
   editor on stale code (this hid several fixes for a whole session). `LiveEditor.tsx`
@@ -536,3 +702,42 @@ under the name `CloudProvider` in `packages/core-cloud`.
   realtime channel — expect seconds of latency via its changes feed + push
   notifications. The CRDT merge layer is what makes concurrent edits safe and is
   transport-independent.
+
+### Duplicate "(Drive copy …)" files when editing a canvas (2026-09-24)
+Cause found on the user's Mac: `/Applications/Granite.app` and `tauri dev` were running at once, both syncing the same vault, Drive folder and
+`sync-index.json` every 5 s, so each drag on a canvas looked like "changed on both sides". Fixes: desktop is now **single-instance**
+(`tauri-plugin-single-instance`, first plugin in `src-tauri/src/lib.rs`; a second launch focuses the first window, so `tauri dev` can't run beside
+the installed app); and `VaultSync` no longer makes a conflict copy when both sides hold identical bytes or when the conflicting file is itself a
+"(Drive copy …)" file (local wins). Not verified against real Drive; a running phone app syncing the same vault could still cause real conflicts.
+The 6 leftover copies in `~/Documents/GraniteVault-new` (and Drive) were left for the user to delete.
+
+### Popup plugin (2026-09-25, no API change; desktop + phone)
+User (Thai, with a screenshot of the phone's open-beside bottom sheet) asked for a plugin named "Popup" that appears in the `//` list and goes in the Store, and said it must work with the other plugins too.
+Asked which meaning; chosen: **a note-link block**. `examples/plugins/popup` (id `popup`, 1.0.0, `minApiVersion` 4, permissions `editor.blocks`, `editor.input`, `vault.read`): `//` -> Popup inserts a ```` ```popup ```` fence
+(`note: <vault path>`), the block shows a searchable note picker, then a card (name + first two body lines, front matter skipped); a tap calls `granite.vault.open(path, { beside: true })` (phone: bottom sheet, desktop: split), pencil re-picks,
+bin removes, a missing note says so. No new API or dependency; it reuses what Calendar uses. Tests: `packages/plugins/test/popup.test.ts` (+ entry in `menu-items.test.ts`; 97 pass).
+Store pictures are real captures (headless Chrome over CDP against the desktop dev server, 4 x 1440x900) with Calendar, Cards, Dropdown and Popup installed together, so the `//` list shows them side by side.
+**Not verified**: the phone (bottom sheet from a Popup card, touch, keyboard) and the real Tauri window. The picker also lists the note it is in (opening it does nothing). Moving/renaming the target note breaks the card (path, not `[[link]]`).
+
+## 2026-09-26 — `//` everywhere, Popup / Simple Table / Cards, safer sync (branch `feat/mobile-live-editor`, commits 476b964 … 5e38892)
+Everything below is pushed and was shipped to the phone with `npm run ship` (EAS Update, channel `preview`). **Checked in the desktop preview and unit tests only** (not on the phone, not in a rebuilt Tauri window);
+the desktop app needs `npm run tauri build` (`/Applications/Granite.app` is an old build), and plugins need UPDATE in the Store.
+- **Built-in `//` list** (`LiveEditor.tsx`, `CORE_ITEMS`): headings, bulleted / numbered list, quote, code block, divider, Markdown table always appear, plugin entries follow. It opens when the line first becomes `//…` (also when several characters arrive as one input);
+  Escape keeps it closed. Entries are chosen on `click`, not `pointerdown` (a finger scrolling the list on a phone chose an entry).
+- **`//` in plugin text fields** (`packages/plugins/src/slash.ts`, injected into every block frame by `bootstrapHtml`): the same list (Date / Time / Checkbox + Markdown blocks + every running plugin's entries via `slash-list` / `slash-run`), for textareas, text inputs and contenteditable fields.
+  `data-slash="off"` opts a field out (Simple Table's cells have their own menu).
+- **Simple Table 1.7.0**: cell menu adds Popup (note link: pick or create; `[Title](note:Path.md)`), Date, Time, Checkbox. **Popup 1.1.0**: `+ Create "name"`, self-heals by file name. Rename / move of a note or folder rewrites both formats across the vault (`core-notes` `retargetNoteRefs`; desktop + phone `fixNoteRefs`).
+- **Cards 1.4.0**: title / text / checklist items are rich fields showing bold / italic / strike / underline while typing (B I S U bar, Ctrl/Cmd+B / I / U / Shift+X); stored as Markdown.
+- **Sync**: `VaultSyncOptions.confirmDeletes` replaces the hard stop on mass deletions (desktop `DeletionsDialog`, phone Alert); a "no" is not asked again for 10 minutes.
+- **Toast** (desktop): the hide timer is a ref (a later "Saved …" no longer leaves it up); 2 s normal, 4 s errors on desktop and phone.
+- Tests: plugins 102, core-cloud 79, core-notes 44, live-editor 4. Not checked: Thai keyboard in the Cards rich fields on the phone, the delete-confirm dialog on screen, real Drive.
+
+## 2026-09-26 — Share button (plugin API 7) and Live Collab 1.1.0
+See `activeContext.md` "Session 2026-09-26 (Share button)". Built: `ui.panel` API (host, desktop `PageMenu`, phone top-bar pill + editor page), Live Collab Share window (start sharing, copy link, join with a link, people list, settings). Tests: plugins 114, Live Collab 24. Not verified on a real phone / Tauri window / with two real people.
+
+## 2026-09-26 (later) — Live Collab 1.2.0
+End-to-end encrypted transport (`src/relay.ts`, `server/room.mjs`), Cloudflare Worker relay (`worker/`, `wrangler.toml`, **not deployed yet**: `DEFAULT_SERVER` empty), manifest `setup` steps shown in both Stores. See `activeContext.md` "Session 2026-09-26 (later)". Tests: plugins 115, Live Collab 35.
+
+
+## 2026-09-26 — Phone: offline no longer toasts "Sync failed" every 3 s
+`apps/mobile/App.tsx` `doSync`: with no internet the 3 s poll failed each time (`UnknownHostException oauth2.googleapis.com` from the token refresh) and re-showed the red toast forever. Now a network-type error (`isOffline`) shows **no toast** (user found it annoying): `isOfflineNow` state adds "· Offline" to the sidebar title and an "Offline: notes are saved on this phone…" line in the settings sheet caption; background polls wait `OFFLINE_RETRY_MS` (30 s); saves / Sync now / foreground still try; the first success clears it. Other errors still toast. Notes and the saved Google session work offline (restore reads local storage only). Desktop unchanged (status line only, retries every 3 s). Not checked on a real phone; needs `npm run ship` (an old build keeps showing the toast).

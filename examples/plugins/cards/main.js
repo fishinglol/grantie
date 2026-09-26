@@ -97,6 +97,110 @@ function h(tag, props, ...kids) {
   return el;
 }
 
+
+// ── text formatting: bold, italic, strike, underline ──
+// Card text is stored as Markdown (**bold**, *italic*, ~~strike~~, <u>underline</u>) but edited as it will look: the title, the text and the checklist
+// items are small rich-text fields (contenteditable). `mdToDom` / `domToMd` convert between the two; a literal * ~ \ or < the user typed is stored escaped.
+const INLINE = /\\([*~<\\])|\*\*\*([\s\S]+?)\*\*\*|\*\*([\s\S]+?)\*\*|~~([\s\S]+?)~~|<u>([\s\S]+?)<\/u>|\*([^*\s][^*]*?)\*/g;
+/** Markdown text -> DOM nodes (one line; a newline stays a newline). Unpaired markers stay as typed. */
+function inline(text) {
+  const frag = document.createDocumentFragment();
+  let last = 0;
+  for (const m of text.matchAll(INLINE)) {
+    if (m.index > last) frag.append(text.slice(last, m.index));
+    last = m.index + m[0].length;
+    const [, esc, bi, b, s, u, i] = m;
+    if (esc !== undefined) {
+      frag.append(esc);
+      continue;
+    }
+    const el = document.createElement(bi !== undefined || b !== undefined ? "strong" : s !== undefined ? "s" : u !== undefined ? "u" : "em");
+    const inner = inline(bi ?? b ?? s ?? u ?? i);
+    if (bi !== undefined) {
+      const em = document.createElement("em");
+      em.append(inner);
+      el.append(em);
+    } else el.append(inner);
+    frag.append(el);
+  }
+  if (last < text.length) frag.append(text.slice(last));
+  return frag;
+}
+/** Fill a rich field from Markdown: lines are separated by <br> (and a trailing newline gets the placeholder <br> that makes the empty last line show). */
+function mdToDom(el, md) {
+  el.replaceChildren();
+  md.split("\n").forEach((line, i) => {
+    if (i) el.append(document.createElement("br"));
+    el.append(inline(line));
+  });
+  if (md.endsWith("\n")) el.append(document.createElement("br"));
+}
+/** The Markdown of what a rich field shows. */
+function domToMd(root) {
+  const wrap = (open, close, s) => {
+    const m = /^(\s*)([\s\S]*?)(\s*)$/.exec(s); // spaces stay outside the markers, or `** x**` would not render
+    return m[2] ? m[1] + open + m[2] + close + m[3] : s;
+  };
+  const walk = (node) => {
+    let out = "";
+    for (const n of node.childNodes) {
+      if (n.nodeType === 3) out += n.data.replace(/ /g, " ").replace(/[\\*~<]/g, "\\$&");
+      else if (n.nodeName === "BR") out += "\n";
+      else if (n.nodeType === 1) {
+        const inner = walk(n);
+        const tag = n.nodeName.toLowerCase();
+        if (tag === "b" || tag === "strong") out += wrap("**", "**", inner);
+        else if (tag === "i" || tag === "em") out += wrap("*", "*", inner);
+        else if (tag === "s" || tag === "strike" || tag === "del") out += wrap("~~", "~~", inner);
+        else if (tag === "u") out += wrap("<u>", "</u>", inner);
+        else if (tag === "div" || tag === "p") out += (out && !out.endsWith("\n") ? "\n" : "") + inner;
+        else out += inner;
+      }
+    }
+    return out;
+  };
+  const md = walk(root);
+  return root.lastChild && root.lastChild.nodeName === "BR" ? md.slice(0, -1) : md; // the browser's own <br> at the end is not a line
+}
+/**
+ * A text field that shows its Markdown formatting as it is typed. `el.md` reads / writes the Markdown; it fires ordinary `input` events.
+ * `single`: no line breaks (Enter is left to `onEnter`).
+ */
+function richField(cls, o) {
+  const el = h("div", { class: "rf " + cls, contenteditable: "true", role: "textbox", "aria-multiline": o.single ? "false" : "true", "data-ph": o.placeholder || "", spellcheck: "false" });
+  mdToDom(el, o.value || "");
+  Object.defineProperty(el, "md", { get: () => domToMd(el), set: (v) => mdToDom(el, v) });
+  el.addEventListener("input", () => {
+    if (el.childNodes.length === 1 && el.firstChild.nodeName === "BR") el.replaceChildren(); // emptied: back to the placeholder
+  });
+  el.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || e.isComposing || e.shiftKey && o.single) return;
+    e.preventDefault();
+    if (o.single) o.onEnter && o.onEnter();
+    else document.execCommand("insertLineBreak");
+  });
+  el.addEventListener("paste", (e) => {
+    const text = e.clipboardData && e.clipboardData.getData("text/plain");
+    if (e.clipboardData && e.clipboardData.files && e.clipboardData.files.length) return; // a picture: the editor takes it
+    if (text == null) return;
+    e.preventDefault(); // plain text only, whatever the source's formatting was
+    text.replace(/\r/g, "").split("\n").forEach((line, i) => {
+      if (i) o.single ? document.execCommand("insertText", false, " ") : document.execCommand("insertLineBreak");
+      if (line) document.execCommand("insertText", false, line);
+    });
+  });
+  el.addEventListener("drop", (e) => e.preventDefault());
+  return el;
+}
+const FORMAT_CMD = { bold: "bold", italic: "italic", strike: "strikeThrough", underline: "underline" };
+/** Toggle a format on what is selected in a rich field (or on the word at the caret). */
+function applyFormat(field, kind) {
+  if (!field) return;
+  field.focus();
+  document.execCommand("styleWithCSS", false, false);
+  document.execCommand(FORMAT_CMD[kind], false);
+}
+
 // Material Design icon paths (Apache-2.0)
 const ICON = {
   palette: "M12 3a9 9 0 0 0 0 18c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z",
@@ -193,30 +297,38 @@ button{font:inherit;color:inherit}
 .editor.inline{box-shadow:0 1px 4px rgba(0,0,0,.35)}
 .editor>*{flex:none}
 .editor .ebody,.editor .eimgs{overflow:auto}
+/* Pictures give way to the title, text and buttons, and scroll on their own: a tall photo must not push Close off a phone screen. */
+.editor>.eimgs{flex:0 1 auto;min-height:0;max-height:50vh}
 .ebody{flex:1 1 auto;min-height:0;padding:0 16px}
 .etitle{border:0;outline:0;background:none;color:inherit;font:inherit;font-size:17px;font-weight:600;padding:14px 44px 8px 16px;width:100%;box-sizing:border-box}
-.ebodyta{border:0;outline:0;background:none;color:inherit;font:inherit;resize:none;width:100%;box-sizing:border-box;padding:4px 0 10px;min-height:56px;display:block}
-.etitle::placeholder,.ebodyta::placeholder,.eit input[type=text]::placeholder{color:var(--text-dim,#5f6368)}
+.ebodyta{border:0;outline:0;background:none;color:inherit;font:inherit;width:100%;box-sizing:border-box;padding:4px 0 10px;min-height:56px;display:block}
+.rf{white-space:pre-wrap;overflow-wrap:anywhere;cursor:text}
+.rf:empty::before{content:attr(data-ph);color:var(--text-dim,#5f6368);pointer-events:none}
+.etitle{min-height:1.4em}
 .epin{position:absolute;top:8px;right:8px;z-index:1}
 .eimg{position:relative}
 .eimg .ib{position:absolute;top:6px;left:6px;background:rgba(0,0,0,.55);color:#fff;opacity:0}
 .eimg:hover .ib{opacity:1}
 @media (hover:none){.eimg .ib{opacity:1}}
 .eit{display:flex;align-items:center;gap:8px;margin:1px 0}
-.eit input[type=text]{flex:1;border:0;outline:0;background:none;color:inherit;font:inherit;padding:5px 0;min-width:0}
-.eit.done input[type=text]{text-decoration:line-through;opacity:.6}
+.eit .eitext{flex:1;border:0;outline:0;background:none;color:inherit;font:inherit;padding:5px 0;min-width:0;min-height:1.4em}
+.eit.done .eitext{text-decoration:line-through;opacity:.6}
 .eit .ib{opacity:0}
 .eit:hover .ib,.eit:focus-within .ib{opacity:.72}
 .eadd{display:flex;align-items:center;gap:8px;padding:5px 0;color:var(--text-dim,#5f6368);cursor:pointer;border:0;background:none;width:100%;text-align:left}
 .eadd svg{width:18px;height:18px;fill:currentColor;margin:0 3px}
 .edone{border:0;background:none;padding:6px 0;color:var(--text-dim,#5f6368);cursor:pointer;display:block}
+.efmt{display:flex;gap:2px;padding:0 10px 2px}
+.fb{border:0;background:none;color:inherit;font:inherit;font-size:15px;width:32px;height:32px;border-radius:8px;cursor:pointer;opacity:.72}
+.fb:hover,.fb.on{opacity:1;background:rgba(127,127,127,.18)}
+.fb.bold{font-weight:700}.fb.italic{font-style:italic}.fb.strike{text-decoration:line-through}.fb.underline{text-decoration:underline}
 .efoot{display:flex;align-items:center;gap:2px;padding:6px 8px 8px}
 .efoot .sp{flex:1}
 .stamp{font-size:11px;color:var(--text-dim,#5f6368);padding:0 10px;text-align:right}
 .close{border:0;background:none;padding:6px 16px;border-radius:4px;cursor:pointer;font-weight:600}
 .close:hover{background:rgba(128,128,128,.2)}
-.overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;z-index:20}
-.overlay .editor{width:100%;max-width:600px;max-height:100%;box-shadow:0 8px 28px rgba(0,0,0,.5)}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:flex-start;padding:16px;box-sizing:border-box;overflow:auto;z-index:20}
+.overlay .editor{width:100%;max-width:600px;max-height:100%;margin:auto;box-shadow:0 8px 28px rgba(0,0,0,.5)}
 .pop{position:fixed;z-index:30;background:var(--panel,#fff);color:var(--text,#202124);border:1px solid var(--border,#dadce0);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.35);padding:6px}
 .swatches{display:grid;grid-template-columns:repeat(6,28px);gap:6px;padding:4px}
 .sw{width:28px;height:28px;border-radius:50%;border:1px solid var(--border,#9aa0a6);cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center;background:var(--sw)}
@@ -340,7 +452,7 @@ function startBoard(root, model, source, block) {
     const el = h("div", { class: "editor" + (o.inline ? " inline" : "") });
     tint(el, card);
     const imgHost = h("div", { class: "eimgs" });
-    const title = h("input", { class: "etitle", placeholder: "Title", value: card.t });
+    const title = richField("etitle", { placeholder: "Title", value: card.t, single: true, onEnter: () => focusBody() });
     const bodyHost = h("div", { class: "ebody" });
     const stamp = h("span", { class: "stamp" });
     const pinBtn = iconBtn("pin", "Pin note", () => {
@@ -380,17 +492,16 @@ function startBoard(root, model, source, block) {
     function paintBody() {
       bodyHost.replaceChildren();
       if (!card.list) {
-        const ta = h("textarea", { class: "ebodyta", placeholder: "Take a note…", rows: 1, value: card.b });
-        const fit = () => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; };
-        ta.addEventListener("input", () => { card.b = ta.value; fit(); touch(); });
+        const ta = richField("ebodyta", { placeholder: "Take a note…", value: card.b });
+        ta.addEventListener("input", () => { card.b = ta.md; touch(); });
         bodyHost.append(ta);
-        requestAnimationFrame(fit);
         focusBody = () => ta.focus();
         return;
       }
       const row = (item, i) => {
-        const text = h("input", { type: "text", value: item.x, placeholder: "List item", "data-i": i });
-        text.addEventListener("input", () => { item.x = text.value; touch(); });
+        const text = richField("eitext", { placeholder: "List item", value: item.x, single: true });
+        text.setAttribute("data-i", i);
+        text.addEventListener("input", () => { item.x = text.md; touch(); });
         text.addEventListener("keydown", (e) => {
           if (e.key === "Enter") {
             e.preventDefault();
@@ -426,15 +537,15 @@ function startBoard(root, model, source, block) {
         bodyHost.append(h("button", { class: "edone", type: "button", onclick: () => { showDone = !showDone; paintBody(); } }, (showDone ? "▾ " : "▸ ") + done.length + (done.length === 1 ? " completed item" : " completed items")));
         if (showDone) bodyHost.append(...done);
       }
-      focusBody = () => (bodyHost.querySelector(".eit input[type=text]:last-of-type") || bodyHost).focus();
+      focusBody = () => (bodyHost.querySelector(".eit .eitext") || bodyHost).focus();
       if (focusIdx >= 0) {
-        const t = bodyHost.querySelector(`input[data-i="${focusIdx}"]`);
+        const t = bodyHost.querySelector(`.eitext[data-i="${focusIdx}"]`);
         if (t) t.focus();
         focusIdx = -1;
       }
     }
 
-    title.addEventListener("input", () => { card.t = title.value; touch(); });
+    title.addEventListener("input", () => { card.t = title.md; touch(); });
     el.addEventListener("paste", (e) => {
       const files = [...((e.clipboardData && e.clipboardData.files) || [])].filter((f) => f.type.startsWith("image/"));
       if (!files.length) return;
@@ -467,7 +578,30 @@ function startBoard(root, model, source, block) {
 
     paintImgs();
     paintBody();
-    el.append(pinBtn, imgHost, title, bodyHost, h("div", { class: "efoot" }, palette, add, arch, more, h("span", { class: "sp" }), stamp, h("button", { class: "close", type: "button", onclick: () => o.onClose() }, "Close")));
+    // Format bar (B I S U) and the shortcuts Ctrl/Cmd+B, +I, +U and +Shift+X, on whichever field was used last; the buttons light up for the text at the caret.
+    let field = null;
+    el.addEventListener("focusin", (e) => { if (e.target.classList && e.target.classList.contains("rf")) field = e.target; });
+    const FORMATS = [["bold", "B", "Bold (Ctrl/Cmd+B)"], ["italic", "I", "Italic (Ctrl/Cmd+I)"], ["strike", "S", "Strikethrough (Ctrl/Cmd+Shift+X)"], ["underline", "U", "Underline (Ctrl/Cmd+U)"]];
+    const fmtBar = h("div", { class: "efmt" }, FORMATS.map(([kind, label, tip]) => {
+      const b = h("button", { class: "fb " + kind, type: "button", title: tip, "aria-label": tip }, label);
+      b.addEventListener("mousedown", (e) => e.preventDefault()); // the text stays selected and focused
+      b.addEventListener("click", () => applyFormat(field && el.contains(field) ? field : el.querySelector(".ebodyta,.eitext") || title, kind));
+      return b;
+    }));
+    const paintFmt = () => {
+      const live = field && field === document.activeElement;
+      FORMATS.forEach(([kind], i) => fmtBar.children[i].classList.toggle("on", !!live && document.queryCommandState(FORMAT_CMD[kind])));
+    };
+    document.addEventListener("selectionchange", paintFmt);
+    el.addEventListener("keydown", (e) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || !(e.target.classList && e.target.classList.contains("rf"))) return;
+      const key = e.key.toLowerCase();
+      const kind = key === "b" && !e.shiftKey ? "bold" : key === "i" && !e.shiftKey ? "italic" : key === "u" && !e.shiftKey ? "underline" : key === "x" && e.shiftKey ? "strike" : null;
+      if (!kind) return;
+      e.preventDefault();
+      applyFormat(e.target, kind);
+    });
+    el.append(pinBtn, imgHost, title, bodyHost, fmtBar, h("div", { class: "efoot" }, palette, add, arch, more, h("span", { class: "sp" }), stamp, h("button", { class: "close", type: "button", onclick: () => o.onClose() }, "Close")));
     return { el, focus: () => focusBody(), title, addImage: () => add.click() };
   }
 
@@ -514,18 +648,18 @@ function startBoard(root, model, source, block) {
     else el.addEventListener("click", () => granite.notice("Restore this note before editing it"));
     if (c.imgs.length) el.append(h("div", { class: "cimgs" }, c.imgs.map((src) => h("img", { src, alt: "" }))));
     const body = h("div", { class: "cbody" });
-    if (c.t) body.append(h("div", { class: "ctitle" }, c.t));
+    if (c.t) body.append(h("div", { class: "ctitle" }, inline(c.t)));
     if (c.list) {
       const open = c.list.filter((i) => !i.d);
       const done = c.list.filter((i) => i.d);
       for (const item of open.slice(0, 12)) {
         const box = h("input", { type: "checkbox" });
         box.addEventListener("change", act(() => { item.d = 1; c.ts = Date.now(); }));
-        body.append(h("div", { class: "cit" }, box, h("span", {}, item.x)));
+        body.append(h("div", { class: "cit" }, box, h("span", {}, inline(item.x))));
       }
       if (open.length > 12) body.append(h("div", { class: "cmore" }, "+ " + (open.length - 12) + " more"));
       if (done.length) body.append(h("div", { class: "cmore" }, "+ " + done.length + (done.length === 1 ? " completed item" : " completed items")));
-    } else if (c.b) body.append(h("div", { class: "ctext" }, c.b));
+    } else if (c.b) body.append(h("div", { class: "ctext" }, inline(c.b)));
     if (!c.t && !c.b && !c.list) body.append(h("div", { class: "ctext" }, ""));
     el.append(body);
     if (inBin) {
@@ -708,6 +842,13 @@ if (typeof granite !== "undefined") {
       await granite.editor.setText(front + (front && !front.endsWith("\n") ? "\n" : "") + board + (blank ? "" : "\n" + body.replace(/^\n+/, "")));
       if (!blank) granite.notice("The board is at the top; your text is below it");
     },
+  });
+
+  granite.input.addItem({
+    id: "cards",
+    name: "Cards",
+    description: "Sticky-note cards, in a grid",
+    insert: () => "```cards\n" + serializeBoard(emptyBoard(false)) + "\n```",
   });
 
   granite.commands.add({

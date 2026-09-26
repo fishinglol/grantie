@@ -1,7 +1,7 @@
 import { basename, dirname } from "@granite/core-notes";
 import { ensureOk, type HttpClient } from "./http.ts";
 import { mimeTypeFor } from "./mime.ts";
-import type { CloudProvider, UploadArgs } from "./provider.ts";
+import { RemoteChangedError, type CloudProvider, type UploadArgs } from "./provider.ts";
 import type { RemoteFile } from "./types.ts";
 
 const API = "https://www.googleapis.com/drive/v3";
@@ -198,6 +198,11 @@ export class GoogleDriveProvider implements CloudProvider {
     const encoder = new TextEncoder();
 
     if (args.existingId) {
+      if (args.ifModifiedTime) {
+        // Drive v3 has no conditional write, so check just before it: this only leaves a sub-second window.
+        const now = await (await this.#req(`${API}/files/${args.existingId}?fields=modifiedTime`, {}, "Drive check file")).json();
+        if (now.modifiedTime !== args.ifModifiedTime) throw new RemoteChangedError(args.path);
+      }
       const json = await (
         await this.#req(
           `${UPLOAD_API}/files/${args.existingId}?uploadType=media&fields=${FILE_FIELDS}`,

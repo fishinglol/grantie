@@ -39,7 +39,8 @@
     "preweb": "npm run build:editor",
     "preios": "npm run build:editor",
     "preandroid": "npm run build:editor",
-    "eas-build-post-install": "npm run build:editor"
+    "eas-build-post-install": "npm run build:editor",
+    "ship": "npm run build:editor && set -a && . ./.env && set +a && npx eas-cli update --channel preview --environment preview --platform android --message \"update $(date +%F-%H:%M)\""
   },
   "private": true
 }

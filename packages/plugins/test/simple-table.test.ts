@@ -57,3 +57,80 @@ test("a single value or plain text is not turned into a table", () => {
 test("the inserted fence is the language plus the table", () => {
   assert.match(fence(blankTable(2, 2)), /^```simple-table\n\| {2}\| {2}\|\n\| --- \| --- \|\n\| {2}\| {2}\|\n```$/);
 });
+
+test("dropdown cells are stored on a trailing comment line and read back", () => {
+  const dd = { 0: { options: [{ name: "important", color: "red" }, { name: "normal", color: "yellow" }], rows: [1] } };
+  const m = { rows: [["Priority", "Note"], ["important", "a"], ["", "b"]], aligns: ["", ""], dd };
+  const text = serializeTable(m);
+  assert.equal(text.split("\n").pop(), '<!-- dropdowns {"0":{"o":[["important","red"],["normal","yellow"]],"r":[1]}} -->');
+  assert.deepEqual(plain(parseTable(text)), m);
+});
+
+test("only the listed rows of a column are dropdowns; rows outside the table are dropped", () => {
+  const text = '| a |\n| --- |\n| x |\n| y |\n<!-- dropdowns {"0":{"o":[["ok","red"]],"r":[2,9,0,2]}} -->';
+  assert.deepEqual(plain(parseTable(text).dd), { 0: { options: [{ name: "ok", color: "red" }], rows: [2] } });
+});
+
+test("a 1.2 dropdowns line (options only) means every data row of the column", () => {
+  const text = '| a | b |\n| --- | --- |\n| x | 1 |\n| y | 2 |\n<!-- dropdowns {"1":[["ok","red"]]} -->';
+  assert.deepEqual(plain(parseTable(text).dd), { 1: { options: [{ name: "ok", color: "red" }], rows: [1, 2] } });
+});
+
+test("a table without dropdowns has no dd and no extra line", () => {
+  const m = { rows: [["a", "b"], ["1", "2"]], aligns: ["", ""] };
+  assert.ok(!serializeTable(m).includes("dropdowns"));
+  assert.ok(!("dd" in plain(parseTable(serializeTable(m)))));
+});
+
+test("a dropdowns line is made safe: unknown columns, colours and duplicate names are dropped, names cannot end the comment or fence", () => {
+  const text = '| a | b |\n| --- | --- |\n| x | y |\n<!-- dropdowns {"1":{"o":[["ok","chartreuse"],["ok","red"],["",""]],"r":[1]},"7":{"o":[["z","red"]],"r":[1]},"x":[]} -->';
+  assert.deepEqual(plain(parseTable(text).dd), { 1: { options: [{ name: "ok", color: "gray" }], rows: [1] } });
+  const back = serializeTable({ rows: [["a"], ["--> ```"]], aligns: [""], dd: { 0: { options: [{ name: "--> ```", color: "red" }], rows: [1] } } });
+  const last = back.split("\n").pop()!;
+  assert.ok(!/[<>`]/.test(last.slice("<!-- dropdowns ".length, -" -->".length)));
+  assert.equal(plain(parseTable(back).dd)[0].options[0].name, "--> ```");
+});
+
+test("a broken dropdowns line is ignored, the table still reads", () => {
+  const m = plain(parseTable("| a |\n| --- |\n| 1 |\n<!-- dropdowns {oops -->"));
+  assert.deepEqual(m.rows, [["a"], ["1"]]);
+});
+
+test("a link cell is a Markdown link and reads back, brackets and parentheses included", () => {
+  const { parseLinkCell, linkCell } = hooks;
+  const cell = linkCell("Video [1]", "https://example.com/a(b)?x=1 2");
+  assert.equal(cell, "[Video \\[1\\]](https://example.com/a%28b%29?x=1%202)");
+  assert.deepEqual(plain(parseLinkCell(cell)), { title: "Video [1]", url: "https://example.com/a%28b%29?x=1%202" });
+  assert.equal(parseLinkCell("just text"), null);
+  assert.equal(parseLinkCell("[x](ftp://example.com)"), null);
+});
+
+test("a link cell survives the table text", () => {
+  const m = { rows: [["Topic"], [hooks.linkCell("A | B", "https://youtu.be/x")]], aligns: [""] };
+  assert.deepEqual(plain(parseTable(serializeTable(m))), m);
+});
+
+test("the cell menu's Date and Time entries write plain text", () => {
+  const d = new Date(2026, 8, 5, 7, 3);
+  assert.equal(hooks.stamp("date", d), "2026-09-05");
+  assert.equal(hooks.stamp("time", d), "07:03");
+});
+
+test("a popup cell is a Markdown link to a note and reads back", () => {
+  const cell = hooks.noteCell("Projects/My plan (v2).md");
+  assert.equal(cell, "[My plan (v2)](note:Projects/My%20plan%20%28v2%29.md)");
+  assert.deepEqual(plain(hooks.parseNoteCell(cell)), { title: "My plan (v2)", path: "Projects/My plan (v2).md" });
+  assert.equal(hooks.parseNoteCell("[Docs](https://example.com/a.md)"), null);
+  assert.equal(hooks.parseNoteCell("plain text"), null);
+});
+
+test("popup cells made before the note: scheme are still read", () => {
+  assert.deepEqual(plain(hooks.parseNoteCell("[Plan](Projects/Plan.md)")), { title: "Plan", path: "Projects/Plan.md" });
+});
+
+test("a new note's name becomes a vault path", () => {
+  assert.equal(hooks.newNotePath("  My: plan? "), "My plan.md");
+  assert.equal(hooks.newNotePath("Projects/Big idea.md"), "Projects/Big idea.md");
+  assert.equal(hooks.newNotePath("../x"), "x.md");
+  assert.equal(hooks.newNotePath("///"), "");
+});

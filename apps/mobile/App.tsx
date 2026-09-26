@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, AppState, BackHandler, Platform, Share, StyleSheet, View } from 'react-native';
+import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, AppState, BackHandler, Linking, Platform, Share, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
-import { IMAGE_FILE, basename, dirname, embedImage, join, moveFolder, noteTitle, relocateLinks, renamedNoteFile } from '@granite/core-notes';
-import { PLUGINS_DIR, discoverPlugins, readPluginCode, type CommandInfo, type InstalledPlugin } from '@granite/plugins';
-import { GoogleDriveProvider, VaultSync, type DeviceCode, type GoogleSession } from '@granite/core-cloud';
+import * as Updates from 'expo-updates';
+import { IMAGE_FILE, basename, dirname, embedImage, join, moveFolder, noteTitle, relocateLinks, renamedNoteFile, retargetNoteRefs } from '@granite/core-notes';
+import { PLUGINS_DIR, discoverPlugins, readPluginCode, type CommandInfo, type HeaderButton, type InstalledPlugin } from '@granite/plugins';
+import { GoogleDriveProvider, VaultSync, merge3, type DeviceCode, type GoogleSession, type PendingDeletion } from '@granite/core-cloud';
 import { emptyCanvas, serializeCanvas } from '@granite/canvas/format';
 
 import { expoFs } from './src/expoFs';
@@ -25,11 +26,20 @@ import PluginsSheet from './src/components/PluginsSheet';
 import { nameOf, parentOf } from './src/tree';
 import { CATALOG, type CatalogPlugin } from './src/catalog';
 import Toast from './src/components/Toast';
+import Icon from './src/components/Icon';
 import type { NoteEditorHandle, PluginVaultRequest } from './src/components/NoteEditor.types';
 
 const isWeb = Platform.OS === 'web';
 const fs = isWeb ? memFs : expoFs;
 const SAVE_DELAY_MS = 700;
+/** Photos are re-compressed to this JPEG quality: a full-quality phone photo is several MB and is what makes a picture slow to reach the other device. */
+const IMAGE_QUALITY = 0.7;
+/** Icon of a plugin's "Turn this page into …" action in the ⋯ menu (a plugin not listed gets a puzzle piece). */
+const PAGE_ICONS: Record<string, ComponentProps<typeof Icon>['name']> = {
+  calendar: 'calendar-month-outline',
+  cards: 'card-text-outline',
+  excel: 'table-large',
+};
 const isCanvas = (rel: string) => rel.toLowerCase().endsWith('.canvas');
 
 async function readBytes(uri: string): Promise<Uint8Array> {
@@ -48,6 +58,37 @@ function extFromMime(mime?: string): string {
   return (mime && map[mime]) || '.jpg';
 }
 
+/** How long background polling waits after a sync failed for lack of internet. */
+const OFFLINE_RETRY_MS = 30_000;
+
+/** True for the errors `fetch` throws when the phone can't reach the network (no signal, airplane mode, DNS failure, timeout). */
+const isOffline = (message: string) =>
+  /network request (failed|timed out)|fetch failed|UnknownHost|Unable to resolve host|failed to connect|connection (reset|refused|abort)|timed out|SocketTimeout|ENOTFOUND|ECONNREFUSED|ECONNRESET/i.test(message);
+
+/** Drive sync stopped because it would delete a lot at once: lists some of the files and asks before going ahead. */
+function askAboutDeletions(files: PendingDeletion[]): Promise<boolean> {
+  const here = files.filter((f) => f.where === 'here');
+  const drive = files.filter((f) => f.where === 'drive');
+  const list = (group: PendingDeletion[]) => group.slice(0, 6).map((f) => `• ${f.path}`).join('\n') + (group.length > 6 ? `\n…and ${group.length - 6} more` : '');
+  const body =
+    'Sync paused: this would delete a lot at once. Nothing has been changed yet.' +
+    (here.length ? `\n\nDeleted in Google Drive, so deleted from this phone (${here.length}):\n${list(here)}` : '') +
+    (drive.length ? `\n\nDeleted from this phone, so moved to the Drive trash (${drive.length}):\n${list(drive)}` : '');
+  const title = `Delete ${files.length} files to match?`;
+  if (Platform.OS === 'web') return Promise.resolve(window.confirm(`${title}\n\n${body}`));
+  return new Promise((resolve) =>
+    Alert.alert(
+      title,
+      body,
+      [
+        { text: 'Not now', style: 'cancel', onPress: () => resolve(false) },
+        { text: `Delete ${files.length} files`, style: 'destructive', onPress: () => resolve(true) },
+      ],
+      { cancelable: true, onDismiss: () => resolve(false) },
+    ),
+  );
+}
+
 export default function App() {
   const [scan, setScan] = useState<VaultScan>({ notes: [], folders: [], images: new Map() });
   /** The open note: its vault-relative path and its text as it was opened (edits live in the editor). */
@@ -57,6 +98,8 @@ export default function App() {
   const [dirty, setDirty] = useState(false);
   const [sidebar, setSidebar] = useState(true);
   const [menu, setMenu] = useState(false);
+  /** Reading mode: notes open as read-only until it is switched off (the book button stays lit meanwhile). */
+  const [reading, setReading] = useState(false);
   const [settings, setSettings] = useState(false);
   const [picking, setPicking] = useState(false);
   /** Folder whose menu (long-press) is open, and the one waiting for a destination in the picker. */
@@ -68,6 +111,7 @@ export default function App() {
   /** Code of the enabled plugins, by id, read from the vault. */
   const [pluginCode, setPluginCode] = useState<Record<string, string>>({});
   const [pluginCommands, setPluginCommands] = useState<CommandInfo[]>([]);
+  const [pluginButtons, setPluginButtons] = useState<HeaderButton[]>([]);
   const [pluginErrors, setPluginErrors] = useState<Record<string, string>>({});
   const [toast, setToast] = useState<string | null>(null);
   const [session, setSession] = useState<GoogleSession | null>(null);
@@ -81,6 +125,8 @@ export default function App() {
   const editor = useRef<NoteEditorHandle>(null);
   const openRel = useRef<string | null>(null);
   const pending = useRef<string | null>(null);
+  /** What the open note last held on disk (opened, reloaded or saved by us): the common starting point for merging typed-but-unsaved text with a newer copy from sync. */
+  const savedText = useRef('');
   /** The note's current text, for sharing. */
   const latest = useRef('');
   /** Always the current full-sync function, for callers declared before it. */
@@ -93,7 +139,7 @@ export default function App() {
   const say = useCallback((message: string) => {
     setToast(message);
     if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), /error|failed|already exists/i.test(message) ? 6000 : 3000);
+    toastTimer.current = setTimeout(() => setToast(null), /error|failed|already exists/i.test(message) ? 4000 : 2000);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -103,6 +149,36 @@ export default function App() {
       say(`Error: ${String(err)}`);
     }
   }, [say]);
+
+  const scanRef = useRef(scan);
+  scanRef.current = scan;
+
+  /**
+   * A note (or, with `folder`, a folder) was renamed or moved from `from` to `to` (vault paths): Popup cards and Simple Table note cells
+   * in the other notes that point at it are rewritten to follow. `notes` is the note list from before the move.
+   */
+  const fixNoteRefs = useCallback(async (from: string, to: string, folder: boolean, notes: string[]) => {
+    const now = (p: string) => (folder ? (p.startsWith(`${from}/`) ? `${to}${p.slice(from.length)}` : p) : p === from ? to : p);
+    for (const rel of notes) {
+      if (!/\.(md|markdown)$/i.test(rel)) continue;
+      const path = now(rel);
+      try {
+        const file = join(VAULT_DIR, path);
+        const text = await fs.readTextFile(file);
+        const fixed = retargetNoteRefs(text, from, to, folder);
+        if (fixed === text) continue;
+        await fs.writeTextFile(file, fixed);
+        if (openRel.current === path) {
+          latest.current = fixed;
+          savedText.current = fixed;
+          setOpen({ rel: path, text: fixed });
+          setDocId((d) => d + 1);
+        }
+      } catch {
+        // Unreadable right now: leave that note as it is.
+      }
+    }
+  }, []);
 
   /** Write the pending edit to disk now. */
   const flush = useCallback(async () => {
@@ -114,6 +190,7 @@ export default function App() {
     pending.current = null;
     try {
       await fs.writeTextFile(join(VAULT_DIR, rel), text);
+      savedText.current = text;
       setDirty(pending.current !== null);
     } catch (err) {
       pending.current = text;
@@ -122,7 +199,12 @@ export default function App() {
   }, [say]);
 
   const onChange = useCallback(
-    (text: string) => {
+    (text: string, path?: string) => {
+      // A late save from a note that is no longer open (a plugin block in the page): write it to its own file, not into the open one.
+      if (path && openRel.current !== null && path !== join(VAULT_DIR, openRel.current)) {
+        void fs.writeTextFile(path, text).then(() => syncNow.current());
+        return;
+      }
       pending.current = text;
       latest.current = text;
       setDirty(true);
@@ -141,6 +223,7 @@ export default function App() {
         openRel.current = rel;
         pending.current = null;
         latest.current = text;
+        savedText.current = text;
         setDirty(false);
         setOpen({ rel, text });
         setDocId((d) => d + 1);
@@ -151,6 +234,21 @@ export default function App() {
     },
     [flush, say],
   );
+
+  // A published update is used as soon as it is downloaded, not only after the next restart: save the open note, then reload.
+  useEffect(() => {
+    if (__DEV__ || !Updates.isEnabled) return;
+    void (async () => {
+      try {
+        if (!(await Updates.checkForUpdateAsync()).isAvailable) return;
+        await Updates.fetchUpdateAsync();
+        await flush();
+        await Updates.reloadAsync();
+      } catch {
+        // Offline or no update server: keep running this version.
+      }
+    })();
+  }, [flush]);
 
   // First launch: make sure there is a vault, list it, and open the welcome note.
   useEffect(() => {
@@ -175,20 +273,32 @@ export default function App() {
             vaultDir: VAULT_DIR,
             remoteFolderName: REMOTE_FOLDER_NAME,
             indexStore,
+            confirmDeletes: askAboutDeletions,
           })
         : null,
     [session],
   );
 
+  /** Set when a sync fails for lack of internet (no toast: the profile shows "Offline"); cleared by the next success. */
+  const offline = useRef(false);
+  const [isOfflineNow, setIsOfflineNow] = useState(false);
+  /** While offline, background polls wait until this time (ms since epoch); saves, the button and coming to the foreground still try. */
+  const retryAt = useRef(0);
+
   /** `poll` = the cheap background check; otherwise a full sync (after a save, button, foreground). */
   const doSync = useCallback(
     async (poll: boolean) => {
       if (!engine) return;
+      if (poll && offline.current && Date.now() < retryAt.current) return;
       try {
         if (!poll) setSyncing(true);
         await flush(); // the engine reads the file from disk
         const onProgress = () => setSyncing(true);
         const result = poll ? await engine.syncIfChanged(onProgress) : await engine.sync(onProgress);
+        if (offline.current) {
+          offline.current = false;
+          setIsOfflineNow(false);
+        }
         if (poll && result.items.length === 0) return; // nothing changed anywhere
         if (result.downloaded + result.conflicted + result.deleted + result.folders > 0) {
           await refresh();
@@ -197,14 +307,30 @@ export default function App() {
           // Reload the open note only if the sync rewrote or removed it, and never over unsaved edits.
           const rel = openRel.current;
           const touched = result.items.some(
-            (i) => i.path === rel && !i.error && (i.action === 'download' || i.action === 'delete-local'),
+            (i) => i.path === rel && !i.error && (i.action === 'download' || i.action === 'merge' || i.action === 'delete-local'),
           );
-          if (rel && touched && pending.current === null) {
+          if (rel && touched && pending.current !== null && !isCanvas(rel)) {
+            // Typed while syncing: merge that with the new copy instead of dropping either (the merged text is saved and synced next).
+            const disk = await fs.readTextFile(join(VAULT_DIR, rel)).catch(() => null);
+            const typed = pending.current;
+            const merged = disk !== null && typed !== null ? merge3(savedText.current, typed, disk) : null;
+            if (disk !== null && merged !== null) {
+              savedText.current = disk;
+              editor.current?.setText(merged);
+              onChange(merged);
+            }
+          } else if (rel && touched && pending.current === null) {
             const text = await fs.readTextFile(join(VAULT_DIR, rel)).catch(() => null);
-            if (text !== null) {
+            // Typed while the file was being read: those edits win, and reloading would wipe them.
+            if (text !== null && pending.current !== null) {
+              // keep what is on screen
+            } else if (text !== null) {
               latest.current = text;
+              savedText.current = text;
               setOpen({ rel, text });
-              setRevision((r) => r + 1);
+              // A note is updated in place (caret, scroll and drawn plugin blocks stay); a canvas is rebuilt.
+              if (isCanvas(rel)) setRevision((r) => r + 1);
+              else editor.current?.setText(text);
             } else {
               openRel.current = null;
               setOpen(null);
@@ -213,12 +339,19 @@ export default function App() {
         }
         if (result.failed > 0) say(`Sync: ${result.failed} file(s) failed`);
       } catch (err) {
-        say(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
+        const message = err instanceof Error ? err.message : String(err);
+        if (isOffline(message)) {
+          retryAt.current = Date.now() + OFFLINE_RETRY_MS;
+          offline.current = true;
+          setIsOfflineNow(true);
+        } else {
+          say(`Sync failed: ${message}`);
+        }
       } finally {
         setSyncing(false);
       }
     },
-    [engine, flush, refresh, say],
+    [engine, flush, refresh, say, onChange],
   );
   const runSync = useCallback(() => doSync(false), [doSync]);
   syncNow.current = runSync;
@@ -323,13 +456,11 @@ export default function App() {
     ]);
   };
 
-  /** Rename the open note's file from its title (it stays in its folder). Returns whether it happened. */
-  const renameNote = useCallback(
-    async (title: string): Promise<boolean> => {
-      const rel = openRel.current;
-      if (!rel) return false;
+  /** Rename a note's file from a title (it stays in its folder). Returns the new path, or null if it didn't happen. */
+  const renameFile = useCallback(
+    async (rel: string, title: string): Promise<string | null> => {
       const next = renamedNoteFile(basename(rel), title);
-      if (!next) return false;
+      if (!next) return null;
       const to = parentOf(rel) ? `${parentOf(rel)}/${next}` : next;
       const from = join(VAULT_DIR, rel);
       const dest = join(VAULT_DIR, to);
@@ -337,22 +468,35 @@ export default function App() {
         // A change of letter case alone is the same file on some systems, not a clash.
         if (from.toLowerCase() !== dest.toLowerCase() && (await fs.exists(dest))) {
           say(`"${next}" already exists`);
-          return false;
+          return null;
         }
         await flush(); // the pending edit is written to the old name before it moves
+        const before = scanRef.current.notes;
         await fs.moveFile(from, dest);
-        openRel.current = to;
-        setOpen((o) => o && { ...o, rel: to });
+        if (openRel.current === rel) {
+          openRel.current = to;
+          setOpen((o) => o && { ...o, rel: to });
+        }
         await refresh();
+        await fixNoteRefs(rel, to, false, before);
         say(`Renamed to ${noteTitle(next)}`);
         void runSync();
-        return true;
+        return to;
       } catch (err) {
         say(`Error: ${String(err)}`);
-        return false;
+        return null;
       }
     },
-    [flush, refresh, runSync, say],
+    [flush, refresh, runSync, say, fixNoteRefs],
+  );
+
+  /** Rename the open note's file from its title. Returns whether it happened. */
+  const renameNote = useCallback(
+    async (title: string): Promise<boolean> => {
+      const rel = openRel.current;
+      return rel ? (await renameFile(rel, title)) !== null : false;
+    },
+    [renameFile],
   );
 
   /** Remove a folder and everything in it (after the user confirmed). Sync then removes its files from Drive and other devices. */
@@ -430,6 +574,7 @@ export default function App() {
   /** Store: copy a bundled plugin into the vault (which syncs it to the desktop), switch it on here and pick it up. */
   const installPlugin = useCallback(
     async (entry: CatalogPlugin) => {
+      if (entry.manifest.soon) return;
       const id = entry.manifest.id;
       try {
         const dir = join(VAULT_DIR, PLUGINS_DIR, id);
@@ -483,15 +628,20 @@ export default function App() {
   const pluginVault = useCallback(
     async (request: PluginVaultRequest): Promise<unknown> => {
       if (request.op === 'list') return (await scanVault(fs)).notes.filter((n) => !isCanvas(n));
+      if (request.op === 'open') {
+        await openNote(request.path);
+        return;
+      }
+      if (request.op === 'rename') return renameFile(request.path, request.title); // the sheet's heading: the new path, or null
       const abs = join(VAULT_DIR, request.path);
       if (request.op === 'read') return fs.readTextFile(abs);
       await fs.mkdirp(dirname(abs));
       await fs.writeTextFile(abs, request.text);
-      await refresh();
+      if (!request.quiet) await refresh(); // the sheet saves as it goes and asks for the list to be refreshed once, when it closes
       void syncNow.current();
       return null;
     },
-    [refresh],
+    [refresh, openNote, renameFile],
   );
 
   /** Move a note into `folder` ("" = vault root), keeping its relative image links pointing at the same files. */
@@ -505,6 +655,7 @@ export default function App() {
       try {
         if (await fs.exists(dest)) return say(`"${name}" already exists in ${folder ? basename(folder) : 'the vault'}`);
         if (openRel.current === rel) await flush();
+        const before = scanRef.current.notes;
         const text = await fs.readTextFile(from);
         await fs.moveFile(from, dest);
         const fixed = relocateLinks(text, dirname(from), dirname(dest));
@@ -516,12 +667,13 @@ export default function App() {
           setDocId((d) => d + 1);
         }
         await refresh();
+        await fixNoteRefs(rel, to, false, before);
         say(`Moved to ${folder ? basename(folder) : 'the vault'}`);
       } catch (err) {
         say(`Error: ${String(err)}`);
       }
     },
-    [flush, refresh, say],
+    [flush, refresh, say, fixNoteRefs],
   );
 
   /** Move a folder into `target` ("" = vault root), keeping links from its notes to things outside it working. */
@@ -535,6 +687,7 @@ export default function App() {
         if (await fs.exists(join(VAULT_DIR, to))) return say(`"${name}" already exists in ${where}`);
         const inside = openRel.current?.startsWith(`${rel}/`) ? openRel.current : null;
         if (inside) await flush();
+        const before = scanRef.current.notes;
         await moveFolder(fs, join(VAULT_DIR, rel), join(VAULT_DIR, to));
         if (inside) {
           const moved = `${to}/${inside.slice(rel.length + 1)}`;
@@ -545,12 +698,13 @@ export default function App() {
           setDocId((d) => d + 1);
         }
         await refresh();
+        await fixNoteRefs(rel, to, true, before);
         say(`Moved ${name} to ${where}`);
       } catch (err) {
         say(`Error: ${String(err)}`);
       }
     },
-    [flush, refresh, say],
+    [flush, refresh, say, fixNoteRefs],
   );
 
   const create = useCallback(
@@ -584,7 +738,7 @@ export default function App() {
     if (!rel) return;
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) return say('Photo permission denied');
-    const picked = await ImagePicker.launchImageLibraryAsync({ quality: 1 });
+    const picked = await ImagePicker.launchImageLibraryAsync({ quality: IMAGE_QUALITY });
     if (picked.canceled || !picked.assets[0]) return;
     const asset = picked.assets[0];
     const fileName = asset.fileName ?? `image${extFromMime(asset.mimeType)}`;
@@ -637,19 +791,27 @@ export default function App() {
       {open ? (
         <NoteScreen
           ref={editor}
-          key={`${docId}:${revision}`}
+          // A note is shown by the page that is already loaded; a canvas (or moving between a note and a canvas) rebuilds it.
+          key={isCanvas(open.rel) ? `canvas:${docId}:${revision}` : 'note'}
+          docId={docId}
           path={join(VAULT_DIR, open.rel)}
           initialText={open.text}
           embeds={scan.images}
           title={noteTitle(basename(open.rel))}
           onRename={renameNote}
           dirty={dirty}
+          reading={reading}
+          onToggleReading={() => setReading((r) => !r)}
           onChange={onChange}
           onSwipeRight={() => setSidebar(true)}
           plugins={runningPlugins}
           onNotice={say}
+          onOpenUrl={(url) => void Linking.openURL(url)}
           onVault={pluginVault}
           onPluginCommands={setPluginCommands}
+          onPluginButtons={setPluginButtons}
+          buttons={isCanvas(open.rel) ? [] : pluginButtons}
+          onPressButton={(pluginId) => editor.current?.openPluginButton(pluginId)}
           onPluginStatus={(id, error) =>
             setPluginErrors((prev) => {
               const { [id]: _gone, ...rest } = prev;
@@ -670,7 +832,7 @@ export default function App() {
           notes={scan.notes}
           folders={scan.folders}
           selected={open?.rel ?? null}
-          title={email ?? 'Local vault'}
+          title={email ? (isOfflineNow ? `${email} · Offline` : email) : 'Local vault'}
           syncing={syncing}
           onOpen={openNote}
           onCreate={create}
@@ -696,7 +858,7 @@ export default function App() {
                   .filter((c) => c.page)
                   .map((c) => ({
                     label: c.name,
-                    icon: 'table-large' as const,
+                    icon: PAGE_ICONS[c.pluginId] ?? ('puzzle-outline' as const),
                     onPress: () => void editor.current?.runPluginCommand(c.pluginId, c.id).catch((e: unknown) => say(e instanceof Error ? e.message : String(e))),
                   })),
               ]
@@ -734,7 +896,7 @@ export default function App() {
       <ActionSheet
         visible={settings}
         onClose={() => setSettings(false)}
-        caption={email ?? 'Working locally — notes stay on this phone'}
+        caption={email ? (isOfflineNow ? `${email}\nOffline: notes are saved on this phone and sync when you are back online` : email) : 'Working locally — notes stay on this phone'}
         groups={
           email
             ? [

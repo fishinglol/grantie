@@ -3,6 +3,8 @@ export interface DeleteDialogProps {
   name: string;
   /** Set when deleting a folder: how many notes are inside it. */
   folderNotes?: number;
+  /** Set when several rows picked in the sidebar are deleted at once: how many. */
+  count?: number;
   /** True when Drive sync is on, so the note's Drive copy goes to the Drive trash as well. */
   synced: boolean;
   onCancel: () => void;
@@ -10,7 +12,7 @@ export interface DeleteDialogProps {
 }
 
 /** "Delete this note?" — confirmation before a note or a whole folder is removed from the vault. */
-export default function DeleteDialog({ name, folderNotes, synced, onCancel, onConfirm }: DeleteDialogProps) {
+export default function DeleteDialog({ name, folderNotes, count, synced, onCancel, onConfirm }: DeleteDialogProps) {
   const isFolder = folderNotes !== undefined;
   return (
     <div className="modal-backdrop" onClick={onCancel}>
@@ -21,15 +23,17 @@ export default function DeleteDialog({ name, folderNotes, synced, onCancel, onCo
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.key === "Escape" && onCancel()}
       >
-        <h2>
-          Delete {isFolder && "folder "}“{name}”?
-        </h2>
+        <h2>{count ? `Delete ${count} items?` : <>Delete {isFolder && "folder "}“{name}”?</>}</h2>
         <p>
-          {isFolder
+          {count
+            ? "The picked files, and the folders with everything in them, are deleted from this computer and can't be restored from here."
+            : isFolder
             ? `The folder and everything in it (${folderNotes} ${folderNotes === 1 ? "note" : "notes"}, plus its images and other files) is deleted from this computer and can't be restored from here.`
             : "The file is deleted from this computer and can't be restored from here."}
           {synced &&
-            ` ${isFolder ? "Their copies" : "Its copy"} in Google Drive go${isFolder ? "" : "es"} to the Drive trash, and ${isFolder ? "they are" : "it is"} removed from your other devices.`}
+            (count
+              ? " Their copies in Google Drive go to the Drive trash, and they are removed from your other devices."
+              : ` ${isFolder ? "Their copies" : "Its copy"} in Google Drive go${isFolder ? "" : "es"} to the Drive trash, and ${isFolder ? "they are" : "it is"} removed from your other devices.`)}
         </p>
         <div className="modal-actions">
           <button onClick={onCancel}>Cancel</button>

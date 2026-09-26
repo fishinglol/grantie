@@ -1,0 +1,21 @@
+{
+  "name": "granite-live-collab",
+  "version": "1.2.0",
+  "private": true,
+  "description": "Build files for the Live Collab plugin (main.js is generated from src/main.ts) and its relay server.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test --test-force-exit 'test/**/*.test.ts'",
+    "server": "node server/server.mjs"
+  },
+  "dependencies": {
+    "@codemirror/state": "^6.7.5",
+    "ws": "^8.18.0",
+    "y-protocols": "^1.0.6",
+    "yjs": "^13.6.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}
