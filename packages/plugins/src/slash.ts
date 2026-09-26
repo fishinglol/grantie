@@ -27,9 +27,28 @@ export const SLASH_SCRIPT = String.raw`
   ];
   var pluginItems = [];
   var menu = null, field = null, index = 0, shown = [], seq = 0, waiting = {};
+  /** A contenteditable field (Cards' text): read through the selection, edited with execCommand so undo and the plugin's own input handler keep working. */
+  function isRich(el) { return !!el.isContentEditable && el.tagName !== "INPUT" && el.tagName !== "TEXTAREA"; }
+  function singleLine(el) { return el.tagName === "INPUT" || el.getAttribute("aria-multiline") === "false"; }
+  function plain(node) {
+    var out = "";
+    for (var n = node.firstChild; n; n = n.nextSibling) out += n.nodeType === 3 ? n.data : n.nodeName === "BR" ? "\n" : plain(n);
+    return out;
+  }
+  /** The text before and after the caret of a rich field (a line break counts as one character), or null when there is no caret in it. */
+  function richParts(el) {
+    var sel = getSelection();
+    if (!sel || !sel.rangeCount || !sel.isCollapsed || !el.contains(sel.anchorNode)) return null;
+    var at = sel.getRangeAt(0), pre = document.createRange(), post = document.createRange();
+    pre.selectNodeContents(el);
+    pre.setEnd(at.startContainer, at.startOffset);
+    post.selectNodeContents(el);
+    post.setStart(at.endContainer, at.endOffset);
+    return { before: plain(pre.cloneContents()), after: plain(post.cloneContents()) };
+  }
   function usable(el) {
     if (!el || el.readOnly || el.disabled || el.getAttribute("data-slash") === "off") return false;
-    if (el.tagName === "TEXTAREA") return true;
+    if (el.tagName === "TEXTAREA" || isRich(el)) return true;
     if (el.tagName !== "INPUT") return false;
     var type = (el.getAttribute("type") || "text").toLowerCase();
     return type === "text" && !/search/i.test(el.getAttribute("placeholder") || "");
@@ -37,6 +56,10 @@ export const SLASH_SCRIPT = String.raw`
   function close() { if (menu) menu.remove(); menu = field = null; shown = []; }
   /** Where the caret is on screen (a hidden copy of the field's text up to the caret, measured). */
   function caretPoint(el) {
+    if (isRich(el)) {
+      var rc = getSelection().getRangeAt(0).getClientRects()[0] || el.getBoundingClientRect();
+      return { x: rc.left, y: rc.bottom, h: rc.height || 16 };
+    }
     var cs = getComputedStyle(el), mirror = document.createElement("div"), mark = document.createElement("span");
     ["fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "borderTopWidth", "borderRightWidth", "borderLeftWidth", "boxSizing"].forEach(function (k) { mirror.style[k] = cs[k]; });
     var box = el.getBoundingClientRect();
@@ -51,12 +74,19 @@ export const SLASH_SCRIPT = String.raw`
   }
   /** The //word at the caret: its start and the word, or null when the caret is not at the end of such a line. */
   function slashAt(el) {
+    if (isRich(el)) {
+      var p = richParts(el);
+      if (!p) return null;
+      var line = p.before.slice(p.before.lastIndexOf("\n") + 1), m = /^\/\/([^\s\/]*)$/.exec(line);
+      if (!m || !(p.after === "" || p.after.charAt(0) === "\n")) return null;
+      return { rich: true, n: line.length, typed: line, query: m[1].toLowerCase() };
+    }
     var v = el.value, pos = el.selectionStart, from = v.lastIndexOf("\n", pos - 1) + 1, m = /^\/\/([^\s\/]*)$/.exec(v.slice(from, pos));
     if (!m || el.selectionStart !== el.selectionEnd || !(pos === v.length || v.charAt(pos) === "\n")) return null;
-    return { from: from, to: pos, query: m[1].toLowerCase() };
+    return { from: from, to: pos, typed: v.slice(from, pos), query: m[1].toLowerCase() };
   }
   function entries(el) {
-    var all = BUILTIN.filter(function (b) { return !(b.multi && el.tagName === "INPUT"); }).concat(pluginItems);
+    var all = BUILTIN.filter(function (b) { return !(b.multi && singleLine(el)); }).concat(pluginItems);
     return all;
   }
   function paint() {
@@ -116,6 +146,20 @@ export const SLASH_SCRIPT = String.raw`
     el.focus();
     el.dispatchEvent(new Event("input", { bubbles: true }));
   }
+  /** Put text where the //word was (and, with caret, leave the caret that many characters into it). */
+  function replaceSlash(el, q, text, caret) {
+    if (!q.rich) return put(el, q.from, q.to, text, caret);
+    if (singleLine(el)) text = text.replace(/\s*\n\s*/g, " ");
+    el.focus();
+    var sel = getSelection();
+    for (var i = 0; i < q.n; i++) sel.modify("extend", "backward", "character");
+    document.execCommand("delete");
+    text.split("\n").forEach(function (line, k) {
+      if (k) document.execCommand("insertLineBreak");
+      if (line) document.execCommand("insertText", false, line);
+    });
+    if (caret !== undefined) for (var back = Math.max(0, text.length - caret); back > 0; back--) sel.modify("move", "backward", "character");
+  }
   function choose(i) {
     var el = field, item = shown[i], q = el && slashAt(el);
     close();
@@ -123,12 +167,11 @@ export const SLASH_SCRIPT = String.raw`
     if (item.key) {
       // A plugin's entry: the host asks that plugin what to insert.
       var n = ++seq;
-      var typed = el.value.slice(q.from, q.to);
-      waiting[n] = function (text) { if (typeof text === "string" && el.value.slice(q.from, q.to) === typed) put(el, q.from, q.to, text); };
+      waiting[n] = function (text) { var now = slashAt(el); if (typeof text === "string" && now && now.typed === q.typed) replaceSlash(el, now, text); };
       window.parent.postMessage({ k: "slash-run", n: n, key: item.key }, "*");
       return;
     }
-    put(el, q.from, q.to, typeof item.text === "function" ? item.text() : item.text, item.caret);
+    replaceSlash(el, q, typeof item.text === "function" ? item.text() : item.text, item.caret);
   }
   window.addEventListener("message", function (e) {
     var d = e.data;

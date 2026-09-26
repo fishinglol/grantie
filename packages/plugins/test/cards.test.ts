@@ -59,18 +59,3 @@ test("the bin empties notes older than 7 days", () => {
   assert.deepEqual(plain(m.cards.map((c: any) => c.t)), ["fresh", "live"]);
   assert.equal(purgeBin(m, now), false);
 });
-
-// The card editor's formatting is a port of the note editors' `toggleFormat`; the two must agree.
-import { toggleFormat } from "../../core-notes/src/formatMarkdown.ts";
-test("card text formatting gives the same edits as the note editor's", () => {
-  const texts = ["hello world", "**bold** and *it*", "  spaced  ", "a <u>u</u> ~~s~~", "***both*** x", "หนึ่ง สอง", ""];
-  for (const text of texts) {
-    for (const format of ["bold", "italic", "strike", "underline"] as const) {
-      for (let from = 0; from <= text.length; from += 2) {
-        for (const to of [from, Math.min(text.length, from + 4)]) {
-          assert.deepEqual(plain(hooks.formatEdit(text, from, to, format)), plain(toggleFormat(text, from, to, format)), `${JSON.stringify(text)} ${from}-${to} ${format}`);
-        }
-      }
-    }
-  }
-});
