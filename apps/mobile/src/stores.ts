@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { requireOptionalNativeModule } from 'expo';
 import { Directory, File, Paths } from 'expo-file-system';
 import type { IndexStore, SessionStore, StoredSession, SyncIndex } from '@granite/core-cloud';
 import type { PluginSettings } from '@granite/plugins';
@@ -41,14 +42,13 @@ const INDEX_FILE = 'sync-index.json';
 /**
  * The phone's Keychain / Keystore, or null where it isn't there: the web preview, or an installed build from before it was added
  * (an over-the-air update can't add native code, so the old file is used until the app is rebuilt).
+ *
+ * Ask the native side first: `require('expo-secure-store')` on a build without the module does not throw to the caller. Metro
+ * reports the failed load as a fatal error, which crashes the app (a try/catch around it never runs).
  */
 function secureStore(): typeof import('expo-secure-store') | null {
-  if (isWeb) return null;
-  try {
-    return require('expo-secure-store') as typeof import('expo-secure-store');
-  } catch {
-    return null;
-  }
+  if (isWeb || !requireOptionalNativeModule('ExpoSecureStore')) return null;
+  return require('expo-secure-store') as typeof import('expo-secure-store');
 }
 
 function deleteSessionFile(): void {
