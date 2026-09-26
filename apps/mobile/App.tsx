@@ -58,6 +58,13 @@ function extFromMime(mime?: string): string {
   return (mime && map[mime]) || '.jpg';
 }
 
+/** How long background polling waits after a sync failed for lack of internet. */
+const OFFLINE_RETRY_MS = 30_000;
+
+/** True for the errors `fetch` throws when the phone can't reach the network (no signal, airplane mode, DNS failure, timeout). */
+const isOffline = (message: string) =>
+  /network request (failed|timed out)|fetch failed|UnknownHost|Unable to resolve host|failed to connect|connection (reset|refused|abort)|timed out|SocketTimeout|ENOTFOUND|ECONNREFUSED|ECONNRESET/i.test(message);
+
 /** Drive sync stopped because it would delete a lot at once: lists some of the files and asks before going ahead. */
 function askAboutDeletions(files: PendingDeletion[]): Promise<boolean> {
   const here = files.filter((f) => f.where === 'here');
@@ -272,15 +279,26 @@ export default function App() {
     [session],
   );
 
+  /** Set when a sync fails for lack of internet (no toast: the profile shows "Offline"); cleared by the next success. */
+  const offline = useRef(false);
+  const [isOfflineNow, setIsOfflineNow] = useState(false);
+  /** While offline, background polls wait until this time (ms since epoch); saves, the button and coming to the foreground still try. */
+  const retryAt = useRef(0);
+
   /** `poll` = the cheap background check; otherwise a full sync (after a save, button, foreground). */
   const doSync = useCallback(
     async (poll: boolean) => {
       if (!engine) return;
+      if (poll && offline.current && Date.now() < retryAt.current) return;
       try {
         if (!poll) setSyncing(true);
         await flush(); // the engine reads the file from disk
         const onProgress = () => setSyncing(true);
         const result = poll ? await engine.syncIfChanged(onProgress) : await engine.sync(onProgress);
+        if (offline.current) {
+          offline.current = false;
+          setIsOfflineNow(false);
+        }
         if (poll && result.items.length === 0) return; // nothing changed anywhere
         if (result.downloaded + result.conflicted + result.deleted + result.folders > 0) {
           await refresh();
@@ -321,7 +339,14 @@ export default function App() {
         }
         if (result.failed > 0) say(`Sync: ${result.failed} file(s) failed`);
       } catch (err) {
-        say(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
+        const message = err instanceof Error ? err.message : String(err);
+        if (isOffline(message)) {
+          retryAt.current = Date.now() + OFFLINE_RETRY_MS;
+          offline.current = true;
+          setIsOfflineNow(true);
+        } else {
+          say(`Sync failed: ${message}`);
+        }
       } finally {
         setSyncing(false);
       }
@@ -807,7 +832,7 @@ export default function App() {
           notes={scan.notes}
           folders={scan.folders}
           selected={open?.rel ?? null}
-          title={email ?? 'Local vault'}
+          title={email ? (isOfflineNow ? `${email} · Offline` : email) : 'Local vault'}
           syncing={syncing}
           onOpen={openNote}
           onCreate={create}
@@ -871,7 +896,7 @@ export default function App() {
       <ActionSheet
         visible={settings}
         onClose={() => setSettings(false)}
-        caption={email ?? 'Working locally — notes stay on this phone'}
+        caption={email ? (isOfflineNow ? `${email}\nOffline: notes are saved on this phone and sync when you are back online` : email) : 'Working locally — notes stay on this phone'}
         groups={
           email
             ? [

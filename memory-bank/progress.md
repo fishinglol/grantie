@@ -738,3 +738,6 @@ See `activeContext.md` "Session 2026-09-26 (Share button)". Built: `ui.panel` AP
 ## 2026-09-26 (later) — Live Collab 1.2.0
 End-to-end encrypted transport (`src/relay.ts`, `server/room.mjs`), Cloudflare Worker relay (`worker/`, `wrangler.toml`, **not deployed yet**: `DEFAULT_SERVER` empty), manifest `setup` steps shown in both Stores. See `activeContext.md` "Session 2026-09-26 (later)". Tests: plugins 115, Live Collab 35.
 
+
+## 2026-09-26 — Phone: offline no longer toasts "Sync failed" every 3 s
+`apps/mobile/App.tsx` `doSync`: with no internet the 3 s poll failed each time (`UnknownHostException oauth2.googleapis.com` from the token refresh) and re-showed the red toast forever. Now a network-type error (`isOffline`) shows **no toast** (user found it annoying): `isOfflineNow` state adds "· Offline" to the sidebar title and an "Offline: notes are saved on this phone…" line in the settings sheet caption; background polls wait `OFFLINE_RETRY_MS` (30 s); saves / Sync now / foreground still try; the first success clears it. Other errors still toast. Notes and the saved Google session work offline (restore reads local storage only). Desktop unchanged (status line only, retries every 3 s). Not checked on a real phone; needs `npm run ship` (an old build keeps showing the toast).
