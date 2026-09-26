@@ -92,8 +92,17 @@ declared permissions, explicit per-device enable**.
 - **Manifest `setup` (2026-09-26)**: optional list of "Before you start" steps, shown numbered on a plugin's Store page (both apps). Live Collab uses it.
 - **Live Collab (2026-09-25)**: `examples/plugins/live-collab` uses API 6 (see `activeContext.md` "the Live Collab plugin itself"). Also added: manifest `connect` (servers a plugin may reach) and `network` now includes `wss:` in the CSP (`https:` alone does not cover it).
 - **Popup (2026-09-25)**: `examples/plugins/popup`, a `//` entry that inserts a ```` ```popup ```` block (`note: path`); a card that opens the note with `vault.open(path, { beside: true })` (phone bottom sheet, desktop split). No API change. Details: `progress.md` "Popup plugin".
+- **Docs site (2026-09-26)**: `apps/docs`, a new npm workspace, VitePress (user approved: content is nearly all
+  Markdown, so a static-site generator beats hand-rolling routing/markdown in React; picked over Nextra/plain
+  Vite+React). Deploys to `grantie.vercel.app`. Pages: `guide/` (getting started from `hello-granite`, the
+  manifest table, permissions + sandbox model, publishing/review process, a table of every example plugin with
+  permissions + what to read it for) and `api/` (one page per `GraniteApi` namespace: commands, editor incl.
+  `editor.sync`, blocks, input incl. `addItem`, links, `ui.panel`, vault + `safeNotePath`), hand-written from
+  `packages/plugins/src/api.ts` and `manifest.ts` (kept in sync by hand — no doc generator). `npm run build -w
+  @granite/docs` verified clean. **Not done**: the Vercel project's Root Directory must be set to `apps/docs` in
+  its dashboard (or a root `vercel.json`) — not something this session could do; see `apps/docs/README.md`.
 - **Next**: command palette (Cmd+P) so commands aren't only reachable from the Plugins screen; CodeMirror
-  extension / event / settings APIs; plugin registry + install-from-URL; docs site; a Worker layer for hangs;
+  extension / event / settings APIs; plugin registry + install-from-URL; a Worker layer for hangs;
   `desktopOnly` plugins are hidden on the phone but never exercised.
 
 ## Verdict
