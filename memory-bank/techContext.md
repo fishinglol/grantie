@@ -143,3 +143,14 @@
   Test the mobile app on a real phone via Expo Go, or install full Xcode /
   Android Studio.
 - Node is via nvm (`v24.16.0`).
+
+## OTA updates (`npm run ship`) can't add native modules (learned 2026-09-27)
+`eas update` only ships JS. The installed phone APK (`com.granite.notes`, built 2026-09-24) has no `ExpoSecureStore` native module, so the
+first OTA bundle that did `require('expo-secure-store')` **crashed the app at start** ("Cannot find native module 'ExpoSecureStore'").
+A `try/catch` around the `require` does NOT help: when a module is first required outside another module's init, Metro reports its
+failure through `ErrorUtils.reportFatalError` instead of throwing to the caller. Ask the native side first with
+`requireOptionalNativeModule('ExpoSecureStore')` (exported by `expo`) and only then `require` the library (`apps/mobile/src/stores.ts`).
+expo-updates keeps re-launching a cached broken update until a newer one has been downloaded, so ship the fix at once and start the app twice.
+Check a phone update on the real device: USB debugging on, `adb logcat -d | grep -E 'Running "main"|FATAL EXCEPTION|expo.updates'`
+(the phone must be unlocked and the USB link can drop; `adb devices` shows `unauthorized` until the phone's dialog is accepted).
+Storing the token in the Keystore on the phone needs a new native build (`eas build`, no local JDK/Android SDK on this Mac).
