@@ -1,8 +1,7 @@
 # Granite Plugins docs
 
-The plugin-developer site — [grantie.vercel.app](https://grantie.vercel.app) — built with
-[VitePress](https://vitepress.dev). Content only; the plugin system itself lives in `packages/plugins` and
-`examples/plugins/`.
+The plugin-developer site, built with [VitePress](https://vitepress.dev). Content only; the plugin system
+itself lives in `packages/plugins` and `examples/plugins/`.
 
 ```bash
 npm install        # from the repo root
@@ -12,14 +11,19 @@ npm run build -w @granite/docs   # outputs apps/docs/.vitepress/dist
 
 ## Deploying (Vercel)
 
-This is one app inside an npm-workspaces monorepo, so the Vercel project needs:
+**`grantie.vercel.app` is Granite's real marketing site (a separate project — its source isn't in this repo).
+Do not point it at `apps/docs`; that would replace the live marketing site.**
+
+Deploy this as its **own, separate** Vercel project instead (Vercel → Add New → Project, same GitHub repo,
+a distinct project name):
 
 - **Root Directory**: `apps/docs`
 - **Framework preset**: VitePress (or, if not offered, Build command `npm run build`, Output directory
   `.vitepress/dist`, Install command `npm install` — run from the monorepo root so workspace linking works)
 
-Set this once in the Vercel project's Settings → General → Root Directory (or `vercel.json` at the repo
-root); it isn't something a code change here can configure by itself.
+A new project gets its own `<something>.vercel.app` domain by default; attach a custom subdomain (e.g.
+`docs.granite.app` or `plugins.granite.app`) in that project's Settings → Domains if you want one. This is a
+one-time dashboard setup that a code change here can't do by itself.
 
 ## Updating content
 
