@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
-import { permissionLines, pluginHue, type InstalledPlugin } from '@granite/plugins';
+import { fetchInstallCounts, installsLabel, permissionLines, pluginHue, type InstalledPlugin } from '@granite/plugins';
 import { colors } from '../theme';
 import type { CatalogPlugin } from '../catalog';
 
@@ -24,6 +24,11 @@ export default function PluginStoreView({ catalog, installed, onInstall }: Plugi
   const [zoom, setZoom] = useState<CatalogPlugin['screenshots'][number] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const { width } = useWindowDimensions();
+  /** How many times each plugin has been installed (empty when the counter can't be reached). */
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    void fetchInstallCounts().then(setCounts);
+  }, []);
 
   const label = (entry: CatalogPlugin) => {
     const have = installed.find((p) => p.manifest?.id === entry.manifest.id)?.manifest;
@@ -68,6 +73,7 @@ export default function PluginStoreView({ catalog, installed, onInstall }: Plugi
           {[
             ['VERSION', m.version],
             ['DEVELOPER', m.author ?? '—'],
+            ...(counts[m.id] > 0 ? [['INSTALLS', counts[m.id].toLocaleString('en-US')]] : []),
             ['PERMISSIONS', String(m.permissions.length)],
           ].map(([k, v], i) => (
             <View key={k} style={[styles.fact, i > 0 && styles.factBorder]}>
@@ -121,7 +127,7 @@ export default function PluginStoreView({ catalog, installed, onInstall }: Plugi
         <Pressable key={entry.manifest.id} onPress={() => setOpenId(entry.manifest.id)} style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}>
           <Icon id={entry.manifest.id} name={entry.manifest.name} size={60} />
           <View style={styles.rowText}>
-            <Text style={styles.rowAuthor}>{entry.manifest.author ?? 'Community'}</Text>
+            <Text style={styles.rowAuthor}>{[entry.manifest.author ?? 'Community', installsLabel(counts[entry.manifest.id])].filter(Boolean).join(' · ')}</Text>
             <Text style={styles.rowName}>{entry.manifest.name}</Text>
             <Text style={styles.rowTag} numberOfLines={1}>{entry.manifest.tagline ?? entry.manifest.description}</Text>
           </View>

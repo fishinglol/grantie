@@ -94,16 +94,25 @@ declared permissions, explicit per-device enable**.
 - **Popup (2026-09-25)**: `examples/plugins/popup`, a `//` entry that inserts a ```` ```popup ```` block (`note: path`); a card that opens the note with `vault.open(path, { beside: true })` (phone bottom sheet, desktop split). No API change. Details: `progress.md` "Popup plugin".
 - **Docs site (2026-09-26)**: `apps/docs`, a new npm workspace, VitePress (user approved: content is nearly all
   Markdown, so a static-site generator beats hand-rolling routing/markdown in React; picked over Nextra/plain
-  Vite+React). Pages: `guide/` (getting started from `hello-granite`, the manifest table, permissions + sandbox
-  model, publishing/review process, a table of every example plugin with permissions + what to read it for) and
-  `api/` (one page per `GraniteApi` namespace: commands, editor incl. `editor.sync`, blocks, input incl.
-  `addItem`, links, `ui.panel`, vault + `safeNotePath`), hand-written from `packages/plugins/src/api.ts` and
-  `manifest.ts` (kept in sync by hand — no doc generator). `npm run build -w @granite/docs` verified clean.
-  **`grantie.vercel.app` turned out to be Granite's real marketing site** (a separate Vercel project — its
-  source is not in this repo; confirmed by the user from a screenshot after an initial, wrong assumption that
-  it was this site). **Not done**: deploy `apps/docs` as its **own, separate** Vercel project (Root Directory
-  `apps/docs`), not by repointing `grantie.vercel.app` — that would replace the live marketing site. Not
-  something this session could do (needs the user's Vercel dashboard); see `apps/docs/README.md`.
+  Vite+React). Deployed as its own Vercel project `granite-docs` (https://granite-docs-phi.vercel.app); `grantie.vercel.app` is the live marketing site and must NOT be repointed at it. Pages: `guide/` (getting started from `hello-granite`, the
+  manifest table, permissions + sandbox model, publishing/review process, a table of every example plugin with
+  permissions + what to read it for) and `api/` (one page per `GraniteApi` namespace: commands, editor incl.
+  `editor.sync`, blocks, input incl. `addItem`, links, `ui.panel`, vault + `safeNotePath`), hand-written from
+  `packages/plugins/src/api.ts` and `manifest.ts` (kept in sync by hand — no doc generator). `npm run build -w
+  @granite/docs` verified clean. Deployed by CLI from `apps/docs` (`vercel deploy --prod`); `apps/docs/vercel.json`
+  sets `outputDirectory` (`.vitepress/dist`) and `cleanUrls`.
+- **Public plugin pages + install counter (2026-09-26)**: user wants authors to promote their plugin (and so Granite),
+  a shareable link per plugin, an install count, mandatory screenshots. Built in `apps/docs`: `scripts/build-registry.mjs`
+  (runs before `dev`/`build`) reads `examples/plugins/*` with `parseManifest`, applies the same 3-screenshot rule, and writes
+  gitignored `api/_registry.json` + `api/_ids.ts` (ids inlined so the functions need no data file: `--prebuilt` mishandled a traced `_registry.json`) + `public/plugin-shots/<id>/`; `plugins/index.md` (grid) and `plugins/[id].md` (+ `.paths.mjs`,
+  Vue-interpolated so author text is escaped; og:title/og:image via `transformPageData`). New optional manifest field
+  `homepage` (https only). Counter: Vercel Functions `api/installs.ts` (GET all) and `api/installs/[id].ts` (POST, no body, id must
+  be in the registry, one hashed-IP per plugin per day via `SET NX EX 86400`), Upstash Redis over its REST API with plain `fetch`
+  (no dependency; env `KV_REST_API_URL`/`KV_REST_API_TOKEN`). **Not done**: create the Upstash Redis store in the Vercel
+  dashboard and connect it to `granite-docs` and redeploy (apps done: `packages/plugins/src/stats.ts` `reportInstall` (fresh installs only, not updates; id only, 5 s limit, never throws) is called from desktop `usePlugins.install` and mobile `installPlugin`, and both Stores show "N installs" via `fetchInstallCounts` — typechecked, not run on a device);  deploy must be
+  a full-repo build (the script needs `examples/` and `packages/`), so `vercel deploy` from `apps/docs` alone will fail until
+  `npm run deploy` (`vercel build` + `--prebuilt`) or Git integration is used. CI: `.github/workflows/ci.yml` (npm ci, `npm test --workspaces --if-present`, plugins typecheck, docs build; mobile/desktop typecheck not in it: desktop has a pre-existing `vite.config.ts` error, mobile needs generated files). Later: registry with
+  per-version hashes so plugins ship without an app release.
 - **Next**: command palette (Cmd+P) so commands aren't only reachable from the Plugins screen; CodeMirror
   extension / event / settings APIs; plugin registry + install-from-URL; a Worker layer for hangs;
   `desktopOnly` plugins are hidden on the phone but never exercised.

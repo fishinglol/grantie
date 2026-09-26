@@ -2,9 +2,11 @@
   "name": "@granite/docs",
   "private": true,
   "scripts": {
-    "dev": "vitepress dev",
-    "build": "vitepress build",
-    "preview": "vitepress preview"
+    "registry": "node scripts/build-registry.mjs",
+    "dev": "npm run registry && vitepress dev",
+    "build": "npm run registry && vitepress build",
+    "preview": "vitepress preview",
+    "deploy": "vercel build --prod --yes && vercel deploy --prebuilt --prod --yes"
   },
   "devDependencies": {
     "vitepress": "^1.5.0"

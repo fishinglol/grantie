@@ -13,10 +13,9 @@ then allows `connect-src https: wss:`). The only way out of the frame is `postMe
 answers RPC calls one at a time and refuses any call whose method needs a permission the manifest doesn't
 list.
 
-This has been verified against a hostile plugin attempting to reach the parent DOM, local storage, the
-network, and the desktop app's native bridge — all blocked. A plugin command also has a **15 second timeout**
-before the host kills it, so a hang or infinite loop in a command can't freeze the app (an infinite loop
-*inside* one call can still stall that plugin's own frame — see Known limits below).
+A plugin command also has a **15 second timeout** before the host kills it, so a hang or infinite loop in a
+command can't freeze the app (an infinite loop *inside* one call can still stall that plugin's own frame —
+see Known limits below).
 
 ## The permission list
 

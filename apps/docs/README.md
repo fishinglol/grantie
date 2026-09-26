@@ -11,15 +11,24 @@ npm run build -w @granite/docs   # outputs apps/docs/.vitepress/dist
 
 ## Deploying (Vercel)
 
-**`grantie.vercel.app` is Granite's real marketing site (a separate project — its source isn't in this repo).
-Do not point it at `apps/docs`; that would replace the live marketing site.**
+Its own Vercel project, `granite-docs` (never the project behind `grantie.vercel.app`, which is the marketing site).
+The site is built from the whole repository — `scripts/build-registry.mjs` reads `examples/plugins/` and
+`packages/plugins/` — so deploy a *prebuilt* output from this folder:
 
-Deploy this as its **own, separate** Vercel project instead (Vercel → Add New → Project, same GitHub repo,
-a distinct project name):
+```bash
+cd apps/docs && npm run deploy   # vercel build --prod && vercel deploy --prebuilt --prod
+```
 
-- **Root Directory**: `apps/docs`
-- **Framework preset**: VitePress (or, if not offered, Build command `npm run build`, Output directory
-  `.vitepress/dist`, Install command `npm install` — run from the monorepo root so workspace linking works)
+A plain `vercel deploy` from here would upload only `apps/docs` and fail. (Connecting the GitHub repo to the project
+with Root Directory `apps/docs` also works, since Vercel then includes files outside the root.)
+
+### Install counter (one-time setup)
+
+`api/installs*.ts` count installs in Upstash Redis. In the Vercel dashboard: `granite-docs` → Storage → Create →
+Upstash Redis, and connect it to the project (it adds `KV_REST_API_URL` / `KV_REST_API_TOKEN`). Until then the
+endpoints answer 503 and the site simply shows no numbers.
+
+### Custom domain
 
 A new project gets its own `<something>.vercel.app` domain by default; attach a custom subdomain (e.g.
 `docs.granite.app` or `plugins.granite.app`) in that project's Settings → Domains if you want one. This is a

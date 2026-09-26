@@ -5,7 +5,7 @@ import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import * as Updates from 'expo-updates';
 import { IMAGE_FILE, basename, dirname, embedImage, join, moveFolder, noteTitle, relocateLinks, renamedNoteFile, retargetNoteRefs } from '@granite/core-notes';
-import { PLUGINS_DIR, discoverPlugins, readPluginCode, type CommandInfo, type HeaderButton, type InstalledPlugin } from '@granite/plugins';
+import { PLUGINS_DIR, discoverPlugins, readPluginCode, reportInstall, type CommandInfo, type HeaderButton, type InstalledPlugin } from '@granite/plugins';
 import { GoogleDriveProvider, VaultSync, merge3, type DeviceCode, type GoogleSession, type PendingDeletion } from '@granite/core-cloud';
 import { emptyCanvas, serializeCanvas } from '@granite/canvas/format';
 
@@ -576,6 +576,7 @@ export default function App() {
     async (entry: CatalogPlugin) => {
       if (entry.manifest.soon) return;
       const id = entry.manifest.id;
+      const fresh = !installed.some((p) => p.manifest?.id === id);
       try {
         const dir = join(VAULT_DIR, PLUGINS_DIR, id);
         await fs.writeTextFile(join(dir, 'manifest.json'), entry.manifestText);
@@ -584,13 +585,14 @@ export default function App() {
         setEnabledPlugins(next);
         await pluginStore.save({ enabled: next });
         await refreshPlugins();
+        if (fresh) reportInstall(id);
         say(`Installed ${entry.manifest.name}`);
         if (session) void runSync();
       } catch (e) {
         say(`Couldn't install ${entry.manifest.name}: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
-    [enabledPlugins, refreshPlugins, say, session, runSync],
+    [installed, enabledPlugins, refreshPlugins, say, session, runSync],
   );
 
   /** Switch a plugin off and delete its folder (sync then removes it from the desktop too). */

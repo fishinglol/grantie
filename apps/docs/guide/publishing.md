@@ -28,6 +28,13 @@ So the only way onto the Store is a folder under `examples/plugins/<id>/` in the
    distribution today — nothing is installable from an unreviewed source, and there's no install-from-URL or
    community registry outside this repo.
 
+## Your plugin's public page
+
+Every listed plugin also gets a page of its own on this site (`/plugins/<id>`), built from the same folder: its
+name and tagline, your screenshots, the permissions it asks for, your `author` name (linked to `homepage` if you
+set one), and how many times it has been installed. Share that link anywhere — it previews with your first
+screenshot. Nothing extra to submit: the page appears once your pull request is merged and the site rebuilds.
+
 ## Updating a listed plugin
 
 Bump `version` in `manifest.json` in the **same change** as any behavior change — the Store's **Update**
