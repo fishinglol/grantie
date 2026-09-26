@@ -1,9 +1,11 @@
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
+use std::path::{Component, Path};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
+use tauri_plugin_fs::FsExt;
 
 /// Holds the bound loopback socket between `oauth_start` and `oauth_wait`.
 ///
@@ -112,6 +114,83 @@ fn respond(stream: &mut TcpStream, title: &str, message: &str) {
     let _ = stream.flush();
 }
 
+/// Where the Google session lives in the system keychain.
+const KEYCHAIN_SERVICE: &str = "dev.granite.desktop";
+const SESSION_ACCOUNT: &str = "google-session";
+
+fn session_entry() -> Result<keyring::Entry, String> {
+    keyring::Entry::new(KEYCHAIN_SERVICE, SESSION_ACCOUNT).map_err(|e| e.to_string())
+}
+
+/// The saved Google session (JSON), or None when there is none.
+#[tauri::command]
+fn session_load() -> Result<Option<String>, String> {
+    match session_entry()?.get_password() {
+        Ok(session) => Ok(Some(session)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[tauri::command]
+fn session_save(session: String) -> Result<(), String> {
+    session_entry()?.set_password(&session).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn session_clear() -> Result<(), String> {
+    match session_entry()?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Lets the app change files in a vault folder the person chose. The capability file only allows writing to the default
+/// `~/Documents/GraniteVault` and the app's config, so a bug in the page can't write anywhere else (e.g. `~/Library/LaunchAgents`).
+/// A vault must be a folder inside the home folder, not the home folder itself, not in `~/Library` or `~/Applications`, not hidden.
+fn allow_vault_dir(app: &AppHandle, dir: &Path) -> Result<(), String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let home = std::fs::canonicalize(&home).unwrap_or(home);
+    let dir = std::fs::canonicalize(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let inside = dir
+        .strip_prefix(&home)
+        .map_err(|_| format!("{} is not inside your home folder, so it can't be a vault", dir.display()))?;
+    let parts: Vec<String> = inside
+        .components()
+        .filter_map(|c| match c {
+            Component::Normal(p) => Some(p.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect();
+    let refused = match parts.first() {
+        None => true,
+        Some(first) => first == "Library" || first == "Applications" || parts.iter().any(|p| p.starts_with('.')),
+    };
+    if refused || !dir.is_dir() {
+        return Err(format!("{} can't be a vault", dir.display()));
+    }
+    let scope = app.fs_scope();
+    scope.allow_directory(&dir, true).map_err(|e| e.to_string())?;
+    // `**` does not match dot-folders on macOS/Linux; `.granite` (plugins, sync bookkeeping) belongs to the vault.
+    scope.allow_directory(dir.join(".granite"), true).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn allow_vault(app: AppHandle, dir: String) -> Result<(), String> {
+    allow_vault_dir(&app, Path::new(&dir))
+}
+
+/// The vaults saved in `vault-config.json` (the active one and recent ones) are allowed again at every launch.
+fn allow_saved_vaults(app: &AppHandle) {
+    let Ok(config) = app.path().app_config_dir() else { return };
+    let Ok(text) = std::fs::read_to_string(config.join("vault-config.json")) else { return };
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else { return };
+    let recent = json["recentVaults"].as_array().cloned().unwrap_or_default();
+    for dir in std::iter::once(&json["activeVaultDir"]).chain(recent.iter()).filter_map(|v| v.as_str()) {
+        let _ = allow_vault_dir(app, Path::new(dir));
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
@@ -130,7 +209,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_http::init())
         .manage(OauthListener::default())
-        .invoke_handler(tauri::generate_handler![oauth_start, oauth_wait])
+        .setup(|app| {
+            allow_saved_vaults(app.handle());
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![oauth_start, oauth_wait, session_load, session_save, session_clear, allow_vault])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

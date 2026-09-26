@@ -27,18 +27,21 @@ async function importKey(secret: string): Promise<CryptoKey> {
   return crypto.subtle.importKey("raw", await digest("key", secret), "AES-GCM", false, ["encrypt", "decrypt"]);
 }
 
-/** iv (12 bytes) followed by the ciphertext; the room name is authenticated too, so a blob can't be moved to another room. */
-export async function seal(key: CryptoKey, room: string, plain: Uint8Array): Promise<Uint8Array> {
+/** What is authenticated with a blob besides its content: the room, so it can't be moved to another room, and its type (the byte the relay sees), so it can't be relabelled. */
+const aad = (room: string, type: number) => enc.encode(`${room}:${type}`);
+
+/** iv (12 bytes) followed by the ciphertext. */
+export async function seal(key: CryptoKey, room: string, type: number, plain: Uint8Array): Promise<Uint8Array> {
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const cipher = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: enc.encode(room) }, key, plain));
+  const cipher = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: aad(room, type) }, key, plain));
   const out = new Uint8Array(12 + cipher.length);
   out.set(iv);
   out.set(cipher, 12);
   return out;
 }
 
-export async function open(key: CryptoKey, room: string, blob: Uint8Array): Promise<Uint8Array> {
-  return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: blob.slice(0, 12), additionalData: enc.encode(room) }, key, blob.slice(12)));
+export async function open(key: CryptoKey, room: string, type: number, blob: Uint8Array): Promise<Uint8Array> {
+  return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: blob.slice(0, 12), additionalData: aad(room, type) }, key, blob.slice(12)));
 }
 
 type Status = { status: "connecting" | "connected" | "disconnected" };
@@ -129,7 +132,7 @@ export class RelayProvider {
     const { room, key } = await this.#ready;
     let plain: Uint8Array;
     try {
-      plain = await open(key, room, data.subarray(1));
+      plain = await open(key, room, type, data.subarray(1));
     } catch {
       return; // not ours (wrong key or tampered with): ignored
     }
@@ -146,7 +149,7 @@ export class RelayProvider {
         const ws = this.#ws;
         if (!ws || ws.readyState !== 1) return;
         const { room, key } = await this.#ready;
-        const blob = await seal(key, room, plain);
+        const blob = await seal(key, room, type, plain);
         const out = new Uint8Array(1 + blob.length);
         out[0] = type;
         out.set(blob, 1);

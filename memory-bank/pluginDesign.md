@@ -111,8 +111,11 @@ declared permissions, explicit per-device enable**.
   (no dependency; env `KV_REST_API_URL`/`KV_REST_API_TOKEN`). **Not done**: create the Upstash Redis store in the Vercel
   dashboard and connect it to `granite-docs` and redeploy (apps done: `packages/plugins/src/stats.ts` `reportInstall` (fresh installs only, not updates; id only, 5 s limit, never throws) is called from desktop `usePlugins.install` and mobile `installPlugin`, and both Stores show "N installs" via `fetchInstallCounts` — typechecked, not run on a device);  deploy must be
   a full-repo build (the script needs `examples/` and `packages/`), so `vercel deploy` from `apps/docs` alone will fail until
-  `npm run deploy` (`vercel build` + `--prebuilt`) or Git integration is used. CI: `.github/workflows/ci.yml` (npm ci, `npm test --workspaces --if-present`, plugins typecheck, docs build; mobile/desktop typecheck not in it: desktop has a pre-existing `vite.config.ts` error, mobile needs generated files). Later: registry with
+  `npm run deploy` (`vercel build` + `--prebuilt`) or Git integration is used. CI: `.github/workflows/ci.yml` (npm ci, `npm test --workspaces --if-present`, plugins typecheck, docs build; mobile/desktop typecheck not in it: desktop has a pre-existing `vite.config.ts` error, mobile needs generated files). Build-a-plugin promo: docs page `apps/docs/build.md` (`/build`, nav "Build a plugin") and page 2 of the Store banner, a carousel like the App Store's (dots + arrows on desktop with styles in `apps/desktop/src/PluginStore.css`; swipe + dots on the phone); its READ THE GUIDE button opens `BUILD_URL` (`packages/plugins/src/stats.ts`). First tried a separate page opened from a button; the user wanted the banner pages instead. Later: registry with
   per-version hashes so plugins ship without an app release.
+- **Security hardening (2026-09-26)**: frames can't navigate out (`frame-src 'none'` on both app pages), re-consent when a plugin asks for
+  more (`PluginSettings.approved`), string-aware `checkPluginCss`, styles paused during consent/delete dialogs, the phone page only obeys
+  the app. Details and open items: `securityReport.md`.
 - **Next**: command palette (Cmd+P) so commands aren't only reachable from the Plugins screen; CodeMirror
   extension / event / settings APIs; plugin registry + install-from-URL; a Worker layer for hangs;
   `desktopOnly` plugins are hidden on the phone but never exercised.

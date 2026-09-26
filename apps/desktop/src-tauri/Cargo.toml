@@ -25,6 +25,8 @@ tauri-plugin-dialog = "2"
 tauri-plugin-http = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The Google session (refresh token) is kept in the system keychain: macOS Keychain, Windows Credential Manager, Linux kernel keyring.
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2"

@@ -1,12 +1,12 @@
 import { Platform } from 'react-native';
 import { Directory, File, Paths } from 'expo-file-system';
 import type { IndexStore, SessionStore, StoredSession, SyncIndex } from '@granite/core-cloud';
+import type { PluginSettings } from '@granite/plugins';
 
 /**
  * Sign-in and sync bookkeeping live in the app's document directory next to, not inside, the
  * vault: the vault must stay a clean folder of `.md` files and assets, since it syncs to Drive.
- * The session file holds a Google refresh token in plain text; the folder is private to this
- * app (sandbox). Moving it to the Keychain/Keystore (`expo-secure-store`) is a follow-up.
+ * The Google session is the exception: it is kept in the Keychain / Keystore (`sessionStore`).
  * On the web preview it falls back to `localStorage`.
  */
 const isWeb = Platform.OS === 'web';
@@ -35,15 +35,50 @@ async function writeJson(name: string, value: unknown): Promise<void> {
 }
 
 const SESSION_FILE = 'google-session.json';
+const SESSION_KEY = 'google-session';
 const INDEX_FILE = 'sync-index.json';
 
+/**
+ * The phone's Keychain / Keystore, or null where it isn't there: the web preview, or an installed build from before it was added
+ * (an over-the-air update can't add native code, so the old file is used until the app is rebuilt).
+ */
+function secureStore(): typeof import('expo-secure-store') | null {
+  if (isWeb) return null;
+  try {
+    return require('expo-secure-store') as typeof import('expo-secure-store');
+  } catch {
+    return null;
+  }
+}
+
+function deleteSessionFile(): void {
+  if (isWeb) return localStorage.removeItem(SESSION_FILE);
+  const file = new File(configDir(), SESSION_FILE);
+  if (file.exists) file.delete();
+}
+
+/** The Google session (it holds the refresh token) lives in the Keychain / Keystore; a session in the old file is moved there. */
 export const sessionStore: SessionStore = {
-  load: () => readJson<StoredSession>(SESSION_FILE),
-  save: (session) => writeJson(SESSION_FILE, session),
+  async load() {
+    const secure = secureStore();
+    if (!secure) return readJson<StoredSession>(SESSION_FILE);
+    const raw = await secure.getItemAsync(SESSION_KEY);
+    if (raw) return JSON.parse(raw) as StoredSession;
+    const old = await readJson<StoredSession>(SESSION_FILE);
+    if (old) {
+      await secure.setItemAsync(SESSION_KEY, JSON.stringify(old));
+      deleteSessionFile();
+    }
+    return old;
+  },
+  async save(session) {
+    const secure = secureStore();
+    if (!secure) return writeJson(SESSION_FILE, session);
+    await secure.setItemAsync(SESSION_KEY, JSON.stringify(session));
+  },
   async clear() {
-    if (isWeb) return localStorage.removeItem(SESSION_FILE);
-    const file = new File(configDir(), SESSION_FILE);
-    if (file.exists) file.delete();
+    await secureStore()?.deleteItemAsync(SESSION_KEY);
+    deleteSessionFile();
   },
 };
 
@@ -53,12 +88,9 @@ export const indexStore: IndexStore = {
 };
 
 /**
- * Which plugins the user switched on, on this phone. Kept outside the vault on purpose: a plugin that
- * syncs in from another device must never start running without this device's owner saying so.
+ * Which plugins the user switched on, on this phone, and what each was allowed. Kept outside the vault on purpose: a plugin
+ * that syncs in from another device must never start running (or get more permissions) without this device's owner saying so.
  */
-export interface PluginSettings {
-  enabled: string[];
-}
 
 export const pluginStore = {
   load: () => readJson<PluginSettings>('plugins.json'),

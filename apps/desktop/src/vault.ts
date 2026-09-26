@@ -1,3 +1,4 @@
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { documentDir } from "@tauri-apps/api/path";
 import { join } from "@granite/core-notes";
 import type { VaultFileSystem } from "@granite/core-cloud";
@@ -18,8 +19,12 @@ export async function getStoredVaultDir(): Promise<string | null> {
   return config?.activeVaultDir ?? null;
 }
 
-/** Saves the active vault folder and remembers it in recent vaults. */
+/**
+ * Saves the active vault folder and remembers it in recent vaults. The app may only change files in a vault it was given
+ * this way (`allow_vault` in src-tauri/src/lib.rs, which refuses folders like ~/Library); it throws if the folder is refused.
+ */
 export async function setStoredVaultDir(newDir: string): Promise<void> {
+  if (isTauri()) await invoke("allow_vault", { dir: newDir });
   const current = await vaultStore.load();
   const recents = current?.recentVaults ? current.recentVaults.filter((p) => p !== newDir) : [];
   recents.unshift(newDir);

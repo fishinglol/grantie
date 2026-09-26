@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
-import { fetchInstallCounts, installsLabel, permissionLines, pluginHue, type InstalledPlugin } from '@granite/plugins';
+import { Image, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { BUILD_URL, fetchInstallCounts, installsLabel, permissionLines, pluginHue, type InstalledPlugin } from '@granite/plugins';
 import { colors } from '../theme';
 import type { CatalogPlugin } from '../catalog';
 
@@ -23,6 +23,9 @@ export default function PluginStoreView({ catalog, installed, onInstall }: Plugi
   const [openId, setOpenId] = useState<string | null>(null);
   const [zoom, setZoom] = useState<CatalogPlugin['screenshots'][number] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  /** Which page of the banner is showing (0: install, 1: build a plugin) and how wide the banner is. */
+  const [slide, setSlide] = useState(0);
+  const [bannerW, setBannerW] = useState(0);
   const { width } = useWindowDimensions();
   /** How many times each plugin has been installed (empty when the counter can't be reached). */
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -118,9 +121,33 @@ export default function PluginStoreView({ catalog, installed, onInstall }: Plugi
 
   return (
     <View>
-      <View style={styles.banner}>
-        <Text style={styles.bannerKicker}>GRANITE PLUGINS</Text>
-        <Text style={styles.bannerTitle}>Make your notes do more. Just install.</Text>
+      <View onLayout={(e) => setBannerW(e.nativeEvent.layout.width)}>
+        {bannerW > 0 && (
+          <ScrollView
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onMomentumScrollEnd={(e) => setSlide(Math.round(e.nativeEvent.contentOffset.x / bannerW))}
+          >
+            <View style={[styles.banner, { width: bannerW }]}>
+              <Text style={styles.bannerKicker}>GRANITE PLUGINS</Text>
+              <Text style={styles.bannerTitle}>Make your notes do more. Just install.</Text>
+            </View>
+            <View style={[styles.banner, { width: bannerW }]}>
+              <Text style={styles.bannerKicker}>FOR DEVELOPERS</Text>
+              <Text style={styles.bannerTitle}>Build a plugin for Granite</Text>
+              <Text style={styles.bannerText}>One JavaScript file. Runs on desktop and phone. Get your own page and see how many people install it.</Text>
+              <Pressable onPress={() => void Linking.openURL(BUILD_URL)} style={[styles.get, { alignSelf: 'flex-start', marginTop: 14 }]}>
+                <Text style={styles.getText}>READ THE GUIDE</Text>
+              </Pressable>
+            </View>
+          </ScrollView>
+        )}
+        <View style={styles.dots}>
+          {[0, 1].map((i) => (
+            <View key={i} style={[styles.dot, slide === i && styles.dotOn]} />
+          ))}
+        </View>
       </View>
       <Text style={styles.listTitle}>All Plugins</Text>
       {catalog.map((entry) => (
@@ -141,6 +168,10 @@ export default function PluginStoreView({ catalog, installed, onInstall }: Plugi
 const styles = StyleSheet.create({
   banner: { backgroundColor: colors.panel, borderRadius: 20, padding: 20, marginBottom: 6, borderWidth: 1, borderColor: colors.panelHover },
   bannerKicker: { color: colors.accent, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
+  bannerText: { color: colors.text, fontSize: 14, lineHeight: 20, marginTop: 8 },
+  dots: { flexDirection: 'row', justifyContent: 'center', gap: 7, marginTop: 8 },
+  dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.panelHover },
+  dotOn: { backgroundColor: colors.accent },
   bannerTitle: { color: colors.heading, fontSize: 24, fontWeight: '800', lineHeight: 28, marginTop: 6 },
   listTitle: { color: colors.heading, fontSize: 20, fontWeight: '700', marginTop: 16, marginBottom: 4, paddingHorizontal: 4 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, paddingHorizontal: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.panelHover, borderRadius: 12 },

@@ -8,7 +8,7 @@ export type Permission = (typeof PERMISSIONS)[number];
 export const PERMISSION_LABELS: Record<Permission, string> = {
   "editor.read": "Read the open note",
   "editor.write": "Change the open note",
-  "editor.style": "Change how the editor looks",
+  "editor.style": "Change how Granite looks (its styles apply to the whole window)",
   "editor.blocks": "Draw its own blocks inside your notes",
   "editor.input": "See what you type on an empty line and what you paste",
   "editor.links": "Show links to known sites as chips",
@@ -57,6 +57,46 @@ const CONNECT = /^wss?:\/\/[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d{1,5})?$/i;
 /** What the user is asked to allow, one line each: the permissions, then the servers. */
 export function permissionLines(manifest: PluginManifest): string[] {
   return [...manifest.permissions.map((p) => PERMISSION_LABELS[p]), ...(manifest.connect ?? []).map((h) => `Connect to ${h}`)];
+}
+
+/**
+ * Kept on each device, outside the vault: which plugins are switched on there, and what each was allowed (its `grantOf`) when the
+ * person switched it on or installed it. A plugin that syncs in asking for more than that is switched off until they allow it again.
+ */
+export interface PluginSettings {
+  enabled: string[];
+  approved?: Record<string, string[]>;
+}
+
+/** What switching a plugin on allows: its permissions and the servers it may reach. */
+export const grantOf = (manifest: PluginManifest): string[] => [...manifest.permissions, ...(manifest.connect ?? []).map((c) => `connect ${c}`)];
+
+/** The settings with the plugin switched on (allowing what it asks for now) or off. */
+export function withPlugin(settings: PluginSettings | null, manifest: PluginManifest, on: boolean): PluginSettings {
+  const enabled = (settings?.enabled ?? []).filter((id) => id !== manifest.id);
+  const approved = { ...settings?.approved };
+  if (on) approved[manifest.id] = grantOf(manifest);
+  return { enabled: on ? [...enabled, manifest.id] : enabled, approved };
+}
+
+/**
+ * Check every switched-on plugin against what it was allowed. One that now asks for more (an update, or a copy synced from another
+ * device) is switched off; `blocked` says why, by id. Settings saved before `approved` existed allow what is switched on as it is.
+ */
+export function reviewApprovals(manifests: PluginManifest[], settings: PluginSettings | null): { settings: PluginSettings; blocked: Record<string, string> } {
+  const byId = new Map(manifests.map((m) => [m.id, m]));
+  const enabled = settings?.enabled ?? [];
+  const approved = settings?.approved ?? Object.fromEntries(enabled.flatMap((id) => (byId.has(id) ? [[id, grantOf(byId.get(id)!)]] : [])));
+  const blocked: Record<string, string> = {};
+  for (const id of enabled) {
+    const m = byId.get(id);
+    if (!m) continue;
+    const allowed = new Set(approved[id] ?? []);
+    const grant = grantOf(m);
+    const extra = permissionLines(m).filter((_, i) => !allowed.has(grant[i]!)); // same order as `grant`
+    if (extra.length > 0) blocked[id] = `it now asks for more than you allowed (${extra.join("; ")}). Switch it on again to allow that.`;
+  }
+  return { settings: { enabled: enabled.filter((id) => !blocked[id]), approved }, blocked };
 }
 
 const ID = /^[a-z0-9][a-z0-9-]{0,39}$/;

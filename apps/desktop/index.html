@@ -2,6 +2,9 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Plugins run in sandboxed frames. A frame can't fetch without the network permission, but it could still navigate itself to
+         a web address with data in it; frame-src 'none' stops that (the plugin frames themselves are srcdoc, which it allows). -->
+    <meta http-equiv="Content-Security-Policy" content="frame-src 'none'; object-src 'none'; base-uri 'none'" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Granite</title>

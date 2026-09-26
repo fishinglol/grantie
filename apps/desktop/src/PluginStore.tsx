@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { fetchInstallCounts, installsLabel, permissionLines, pluginHue } from "@granite/plugins";
+import "./PluginStore.css";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { BUILD_URL, fetchInstallCounts, installsLabel, permissionLines, pluginHue } from "@granite/plugins";
 import type { CatalogPlugin } from "./pluginCatalog";
 import type { PluginsState } from "./usePlugins";
 
@@ -28,6 +30,8 @@ function Icon({ id, name, size }: { id: string; name: string; size: number }) {
 export default function PluginStore({ catalog, installed, busy, onInstall }: PluginStoreProps) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [zoom, setZoom] = useState<string | null>(null);
+  /** Which page of the banner is showing (0: install, 1: build a plugin). */
+  const [slide, setSlide] = useState(0);
   /** How many times each plugin has been installed (empty when the counter can't be reached). */
   const [counts, setCounts] = useState<Record<string, number>>({});
   useEffect(() => {
@@ -134,12 +138,39 @@ export default function PluginStore({ catalog, installed, busy, onInstall }: Plu
 
   return (
     <div className="store-home">
-      <div className="store-banner">
-        <span className="store-kicker">Granite Plugins</span>
-        <h3>Make your notes do more. Just install.</h3>
-        <div className="store-banner-icons">
-          {catalog.slice(0, 4).map((c) => (
-            <Icon key={c.manifest.id} id={c.manifest.id} name={c.manifest.name} size={56} />
+      <div className="store-carousel">
+        <div className="store-slides" style={{ transform: `translateX(-${slide * 100}%)` }}>
+          <div className="store-banner store-slide" inert={slide !== 0}>
+            <span className="store-kicker">Granite Plugins</span>
+            <h3>Make your notes do more. Just install.</h3>
+            <div className="store-banner-icons">
+              {catalog.slice(0, 4).map((c) => (
+                <Icon key={c.manifest.id} id={c.manifest.id} name={c.manifest.name} size={56} />
+              ))}
+            </div>
+          </div>
+          <div className="store-banner store-slide store-slide-build" inert={slide !== 1}>
+            <span className="store-kicker">For developers</span>
+            <h3>Build a plugin for Granite</h3>
+            <p>One JavaScript file. Runs on desktop and phone. Get your own page and see how many people install it.</p>
+            <button className="store-get" onClick={() => void openUrl(BUILD_URL)}>
+              READ THE GUIDE
+            </button>
+          </div>
+        </div>
+        {slide > 0 && (
+          <button className="store-arrow store-arrow-left" aria-label="Previous" onClick={() => setSlide(slide - 1)}>
+            ‹
+          </button>
+        )}
+        {slide < 1 && (
+          <button className="store-arrow store-arrow-right" aria-label="Next" onClick={() => setSlide(slide + 1)}>
+            ›
+          </button>
+        )}
+        <div className="store-dots" role="tablist" aria-label="Banner pages">
+          {[0, 1].map((i) => (
+            <button key={i} role="tab" aria-selected={slide === i} aria-label={`Page ${i + 1}`} className={slide === i ? "on" : ""} onClick={() => setSlide(i)} />
           ))}
         </div>
       </div>

@@ -102,3 +102,13 @@ test("two people in the same room hear each other's updates; a person in another
   b.server.emit("message", { data: Uint8Array.of(T.UPDATE, 1, 1).buffer });
   assert.equal(c.client.received.length, 2, "nobody is passed anything from a person who left");
 });
+
+test("an address that opens too many connections is turned away before a room is made", async () => {
+  const asked: string[] = [];
+  const upgradeFrom = (ip: string) => ({ url: `https://relay.example.com/${ROOM}`, headers: { get: (h: string) => (h === "Upgrade" ? "websocket" : h === "CF-Connecting-IP" ? ip : null) } });
+  const e = { ...env(), JOIN_LIMIT: { limit: async ({ key }: { key: string }) => (asked.push(key), { success: key !== "203.0.113.9" }) } };
+  assert.equal((await worker.fetch(upgradeFrom("203.0.113.9"), e)).status, 429);
+  assert.equal(e.rooms.size, 0);
+  assert.equal((await worker.fetch(upgradeFrom("198.51.100.1"), e)).status, 101);
+  assert.deepEqual(asked, ["203.0.113.9", "198.51.100.1"]);
+});

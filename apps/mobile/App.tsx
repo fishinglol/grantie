@@ -5,7 +5,7 @@ import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import * as Updates from 'expo-updates';
 import { IMAGE_FILE, basename, dirname, embedImage, join, moveFolder, noteTitle, relocateLinks, renamedNoteFile, retargetNoteRefs } from '@granite/core-notes';
-import { PLUGINS_DIR, discoverPlugins, readPluginCode, reportInstall, type CommandInfo, type HeaderButton, type InstalledPlugin } from '@granite/plugins';
+import { PLUGINS_DIR, discoverPlugins, readPluginCode, reportInstall, reviewApprovals, safeNotePath, safeVaultPath, withPlugin, type CommandInfo, type HeaderButton, type InstalledPlugin } from '@granite/plugins';
 import { GoogleDriveProvider, VaultSync, merge3, type DeviceCode, type GoogleSession, type PendingDeletion } from '@granite/core-cloud';
 import { emptyCanvas, serializeCanvas } from '@granite/canvas/format';
 
@@ -539,8 +539,12 @@ export default function App() {
   /** Look for plugins in the vault and load the code of the ones this phone has switched on. */
   const refreshPlugins = useCallback(async () => {
     try {
-      const [found, settings] = await Promise.all([discoverPlugins(fs, VAULT_DIR), pluginStore.load()]);
-      const on = settings?.enabled ?? [];
+      const [found, saved] = await Promise.all([discoverPlugins(fs, VAULT_DIR), pluginStore.load()]);
+      // A plugin that synced in asking for more than this phone allowed is switched off, with the reason shown on it.
+      const { settings, blocked } = reviewApprovals(found.flatMap((p) => (p.manifest ? [p.manifest] : [])), saved);
+      if (JSON.stringify(settings) !== JSON.stringify(saved)) await pluginStore.save(settings);
+      if (Object.keys(blocked).length > 0) setPluginErrors((prev) => ({ ...prev, ...blocked }));
+      const on = settings.enabled;
       const code: Record<string, string> = {};
       for (const p of found) {
         if (p.manifest && !p.manifest.desktopOnly && on.includes(p.manifest.id)) {
@@ -563,12 +567,16 @@ export default function App() {
 
   const togglePlugin = useCallback(
     async (id: string, on: boolean) => {
-      const next = on ? [...enabledPlugins, id] : enabledPlugins.filter((e) => e !== id);
-      setEnabledPlugins(next);
-      await pluginStore.save({ enabled: next });
+      const manifest = installed.find((p) => p.manifest?.id === id)?.manifest;
+      if (!manifest) return;
+      // Switching on allows what the plugin asks for now.
+      const next = withPlugin(await pluginStore.load(), manifest, on);
+      setEnabledPlugins(next.enabled);
+      setPluginErrors(({ [id]: _gone, ...rest }) => rest);
+      await pluginStore.save(next);
       await refreshPlugins();
     },
-    [enabledPlugins, refreshPlugins],
+    [installed, refreshPlugins],
   );
 
   /** Store: copy a bundled plugin into the vault (which syncs it to the desktop), switch it on here and pick it up. */
@@ -581,9 +589,10 @@ export default function App() {
         const dir = join(VAULT_DIR, PLUGINS_DIR, id);
         await fs.writeTextFile(join(dir, 'manifest.json'), entry.manifestText);
         await fs.writeTextFile(join(dir, 'main.js'), entry.code);
-        const next = enabledPlugins.includes(id) ? enabledPlugins : [...enabledPlugins, id];
-        setEnabledPlugins(next);
-        await pluginStore.save({ enabled: next });
+        // Installing (or updating) from the Store allows what its page listed.
+        const next = withPlugin(await pluginStore.load(), entry.manifest, true);
+        setEnabledPlugins(next.enabled);
+        await pluginStore.save(next);
         await refreshPlugins();
         if (fresh) reportInstall(id);
         say(`Installed ${entry.manifest.name}`);
@@ -592,7 +601,7 @@ export default function App() {
         say(`Couldn't install ${entry.manifest.name}: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
-    [installed, enabledPlugins, refreshPlugins, say, session, runSync],
+    [installed, refreshPlugins, say, session, runSync],
   );
 
   /** Switch a plugin off and delete its folder (sync then removes it from the desktop too). */
@@ -601,9 +610,10 @@ export default function App() {
       const name = installed.find((p) => p.folder === folder)?.manifest?.name ?? folder;
       try {
         const id = installed.find((p) => p.folder === folder)?.manifest?.id;
-        const next = enabledPlugins.filter((e) => e !== id);
-        setEnabledPlugins(next);
-        await pluginStore.save({ enabled: next });
+        const saved = await pluginStore.load();
+        const next = { ...saved, enabled: (saved?.enabled ?? []).filter((e) => e !== id) };
+        setEnabledPlugins(next.enabled);
+        await pluginStore.save(next);
         await fs.removeDir(join(VAULT_DIR, PLUGINS_DIR, folder));
         await refreshPlugins();
         say(`Uninstalled ${name}`);
@@ -612,7 +622,7 @@ export default function App() {
         say(`Couldn't uninstall ${name}: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
-    [installed, enabledPlugins, refreshPlugins, say, session, runSync],
+    [installed, refreshPlugins, say, session, runSync],
   );
 
   /** Plugins the editor page should be running right now. */
@@ -626,17 +636,22 @@ export default function App() {
     [installed, enabledPlugins, pluginCode],
   );
 
-  /** A plugin's request for the vault. The page already limited it to vault-relative Markdown paths. */
+  /**
+   * A plugin's (or the page's) request for the vault. The page limits plugins to vault-relative Markdown notes, and the path is
+   * checked again here: this app must not trust the page, which runs other people's plugins.
+   */
   const pluginVault = useCallback(
     async (request: PluginVaultRequest): Promise<unknown> => {
       if (request.op === 'list') return (await scanVault(fs)).notes.filter((n) => !isCanvas(n));
+      const rel = safeNotePath(request.path);
       if (request.op === 'open') {
-        await openNote(request.path);
+        await openNote(rel);
         return;
       }
-      if (request.op === 'rename') return renameFile(request.path, request.title); // the sheet's heading: the new path, or null
-      const abs = join(VAULT_DIR, request.path);
+      if (request.op === 'rename') return renameFile(rel, String(request.title)); // the sheet's heading: the new path, or null
+      const abs = join(VAULT_DIR, rel);
       if (request.op === 'read') return fs.readTextFile(abs);
+      if (typeof request.text !== 'string') throw new Error('write needs text');
       await fs.mkdirp(dirname(abs));
       await fs.writeTextFile(abs, request.text);
       if (!request.quiet) await refresh(); // the sheet saves as it goes and asks for the list to be refreshed once, when it closes
@@ -808,7 +823,7 @@ export default function App() {
           onSwipeRight={() => setSidebar(true)}
           plugins={runningPlugins}
           onNotice={say}
-          onOpenUrl={(url) => void Linking.openURL(url)}
+          onOpenUrl={(url) => /^https?:\/\//i.test(url) && void Linking.openURL(url)}
           onVault={pluginVault}
           onPluginCommands={setPluginCommands}
           onPluginButtons={setPluginButtons}
@@ -821,7 +836,13 @@ export default function App() {
             })
           }
           canvas={isCanvas(open.rel) ? canvasFiles : undefined}
-          onOpenFile={(file) => void openNote(file)}
+          onOpenFile={(file) => {
+            try {
+              void openNote(safeVaultPath(file));
+            } catch (err) {
+              say(`Error: ${String(err)}`);
+            }
+          }}
           onOpenSidebar={() => setSidebar(true)}
           onOpenMenu={() => setMenu(true)}
         />

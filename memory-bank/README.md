@@ -13,3 +13,4 @@ across sessions. Read these in order at the start of a session; update
 | `activeContext.md` | What we're working on right now, open decisions | every session |
 | `progress.md` | What's done, what's left, known issues | every session |
 | `pluginDesign.md` | Plugin system (TS/JS, desktop + phone): original design, what is built (API v1, v2 input hooks, v3 `vault.open`), risks, open decisions | when the plugin system changes |
+| `securityReport.md` | Security review before the beta: findings, fixes, what is still open, how each was verified | after security work |

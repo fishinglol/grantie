@@ -234,32 +234,63 @@ export interface CommandInfo {
   page?: boolean;
 }
 
-/** A vault path a plugin may read or write: relative, inside the vault, not hidden, a Markdown note. */
-export function safeNotePath(path: unknown): string {
+/** A vault-relative path to a file of the person's: inside the vault and not in a hidden folder (so never `.granite`, where plugins live). */
+export function safeVaultPath(path: unknown): string {
   if (typeof path !== "string" || path === "") throw new Error("path must be a non-empty string");
   if (path.startsWith("/") || path.includes("\\") || /^[a-z]+:/i.test(path)) throw new Error(`"${path}" is not a vault-relative path`);
   const parts = path.split("/");
   if (parts.some((p) => p === "" || p === "." || p === ".." || p.startsWith("."))) {
     throw new Error(`"${path}" is outside the vault's notes`);
   }
-  if (!/\.(md|markdown)$/i.test(path)) throw new Error(`"${path}" is not a Markdown note`);
   return path;
+}
+
+/** A vault path a plugin may read or write: relative, inside the vault, not hidden, a Markdown note. */
+export function safeNotePath(path: unknown): string {
+  const checked = safeVaultPath(path);
+  if (!/\.(md|markdown)$/i.test(checked)) throw new Error(`"${checked}" is not a Markdown note`);
+  return checked;
 }
 
 /** Largest stylesheet a plugin may apply. */
 export const MAX_PLUGIN_CSS = 20_000;
 
 /**
- * Plugin CSS must not load anything (`@import`, `url()`, `image-set`) and can't break out of its `<style>`:
+ * The CSS with its comments removed the way a browser reads it: `/*` inside a quoted string is text, not a comment. (Removing
+ * comments with a regex let `"/*"` ... `"*\/"` hide a `url(` from the check below.) Strings are kept, so a forbidden word inside
+ * one is still refused. Backslashes are refused before this runs, so a string always ends at its quote or a line break.
+ */
+function withoutComments(css: string): string {
+  let out = "";
+  let quote = "";
+  for (let i = 0; i < css.length; i++) {
+    const ch = css[i]!;
+    if (quote) {
+      if (ch === quote || ch === "\n" || ch === "\r" || ch === "\f") quote = "";
+    } else if (ch === "/" && css[i + 1] === "*") {
+      const end = css.indexOf("*/", i + 2);
+      if (end < 0) throw new Error("style has a comment that is never closed");
+      i = end + 1;
+      out += " ";
+      continue;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+/**
+ * Plugin CSS must not load anything (`@import`, `url()`, `image-set()`, ...) and can't break out of its `<style>`:
  * a stylesheet that can fetch a URL could be used to phone home. Throws with a readable message.
  */
 export function checkPluginCss(css: unknown): string {
   if (typeof css !== "string") throw new Error("style must be text");
   if (css.length > MAX_PLUGIN_CSS) throw new Error(`style is longer than ${MAX_PLUGIN_CSS} characters`);
-  // Strip comments first so `/* */` can't hide or split a forbidden token.
-  const plain = css.replace(/\/\*[\s\S]*?\*\//g, "");
-  if (/@import|url\s*\(|image-set\s*\(|expression\s*\(|<\/?style|<!--|behavior\s*:|\\/i.test(plain)) {
-    throw new Error("style may not use @import, url(), image-set() or backslash escapes");
+  if (css.includes("\\")) throw new Error("style may not use backslash escapes");
+  if (/@import|\b(url|src|image|image-set|cross-fade|element|expression)\s*\(|<\/?style|<!--|behavior\s*:/i.test(withoutComments(css))) {
+    throw new Error("style may not use @import, url(), image-set() or other ways of loading something");
   }
   return css;
 }

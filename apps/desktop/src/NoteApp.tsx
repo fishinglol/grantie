@@ -495,6 +495,12 @@ export default function NoteApp({
     },
   });
 
+  // Plugin styles reach the whole window, so they are off while a dialog shows what a plugin may do or confirms a deletion:
+  // a plugin's CSS must not be able to hide or disguise those.
+  const guarded = showPlugins || deleting !== null || deletePrompt !== null || deletingMany !== null;
+  const { pauseStyles } = plugins;
+  useEffect(() => pauseStyles(guarded), [guarded, pauseStyles]);
+
   rescanPlugins.current = plugins.refresh;
 
   const deleteNote = useCallback(

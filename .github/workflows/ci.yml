@@ -21,3 +21,14 @@ jobs:
         run: npm run typecheck -w @granite/plugins
       - name: Build the docs site
         run: npm run build -w @granite/docs
+      # A plugin that ships a bundled main.js must also ship its source: rebuild it and fail if the committed main.js differs,
+      # so what reviewers read is what people run.
+      - name: Live Collab main.js matches its source
+        working-directory: examples/plugins/live-collab
+        run: |
+          npm ci
+          npm run build
+          git diff --exit-code -- main.js
+      - name: Live Collab tests
+        working-directory: examples/plugins/live-collab
+        run: npm test

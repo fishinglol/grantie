@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { METHOD_PERMISSION, checkPluginCss, discoverPlugins, parseManifest, safeNotePath } from "../src/index.ts";
+import { METHOD_PERMISSION, checkPluginCss, discoverPlugins, parseManifest, reviewApprovals, safeNotePath, withPlugin } from "../src/index.ts";
 import { MemoryFs } from "../../core-cloud/test/memoryFs.ts";
 
 const good = { id: "hello-granite", name: "Hello", version: "1.0.0", permissions: ["editor.write"] };
@@ -70,11 +70,31 @@ test("plugin CSS may style but never fetch or escape", () => {
     "a { background: u\\72l(x) }",
     "</style><script>alert(1)</script>",
     "a { background: url/**/(x) }",
+    // A "/*" inside a string is not a comment, so it must not hide what follows it from the check.
+    'a { content: "/*" } b { background: url(https://evil.example/?x) } c { content: "*/" }',
+    "a { background: image('https://evil.example/x.png') }",
+    "a { color: red } /* never closed",
     "x".repeat(20_001),
     42,
   ]) {
     assert.throws(() => checkPluginCss(bad), Error, `should reject ${String(bad).slice(0, 30)}`);
   }
+});
+
+test("a plugin that now asks for more than it was allowed is switched off until allowed again", () => {
+  const v1 = parseManifest({ ...good, permissions: ["editor.read"] });
+  const v2 = parseManifest({ ...good, permissions: ["editor.read", "network"], connect: ["wss://relay.example"] });
+  const allowed = withPlugin(null, v1, true);
+  assert.deepEqual(reviewApprovals([v1], allowed), { settings: allowed, blocked: {} });
+  const { settings, blocked } = reviewApprovals([v2], allowed);
+  assert.deepEqual(settings.enabled, []);
+  assert.match(blocked["hello-granite"]!, /Use the internet; Connect to wss:\/\/relay\.example/);
+  // Switching it on again allows the new permissions; asking for less is fine.
+  assert.deepEqual(reviewApprovals([v2], withPlugin(settings, v2, true)).blocked, {});
+  assert.deepEqual(reviewApprovals([v1], withPlugin(settings, v2, true)).blocked, {});
+  // Settings saved before approvals existed allow what is switched on as it is (once), and a switched-off plugin is never blocked.
+  assert.deepEqual(reviewApprovals([v2], { enabled: ["hello-granite"] }).blocked, {});
+  assert.deepEqual(reviewApprovals([v2], { enabled: [], approved: {} }).blocked, {});
 });
 
 // Every folder in examples/plugins is a Store listing, so a new one (e.g. from a pull request) is checked automatically.

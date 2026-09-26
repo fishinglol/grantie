@@ -36,6 +36,10 @@ export default {
     // The room is the URL path: 32 letters and digits (a hash of the room's secret). Refuse anything else.
     const room = new URL(request.url).pathname.slice(1);
     if (!/^[a-z0-9]{32}$/.test(room)) return new Response("Bad room", { status: 400 });
+    // One address may only open so many connections a minute (wrangler.toml), so nobody can use up the relay everyone shares.
+    if (env.JOIN_LIMIT && !(await env.JOIN_LIMIT.limit({ key: request.headers.get("CF-Connecting-IP") ?? "" })).success) {
+      return new Response("Too many connections, try again in a minute", { status: 429 });
+    }
     return env.ROOMS.get(env.ROOMS.idFromName(room)).fetch(request);
   },
 };
