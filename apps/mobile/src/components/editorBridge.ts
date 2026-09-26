@@ -4,8 +4,10 @@ import type { NoteEditorProps, PluginVaultRequest } from './NoteEditor.types';
 /**
  * App side of the conversation with the editor page (`editor-web/main.tsx`, which lists the messages).
  * Shared by the WebView editor (phone) and the iframe editor (web preview); each supplies how to `post`.
+ * `key`: a secret the app wrote into the page; a message without it is ignored. The page runs plugins, and on a phone their
+ * frames may be able to reach the WebView's bridge directly, but they can't read the page's variables.
  */
-export function createEditorBridge(post: (message: object) => void, getProps: () => NoteEditorProps) {
+export function createEditorBridge(post: (message: object) => void, getProps: () => NoteEditorProps, key?: string) {
   let ready = false;
   let runSeq = 0;
   const runs = new Map<number, { resolve: () => void; reject: (e: Error) => void }>();
@@ -57,6 +59,7 @@ export function createEditorBridge(post: (message: object) => void, getProps: ()
       } catch {
         return;
       }
+      if (key !== undefined && msg.key !== key) return; // not from the editor page (a plugin's frame, or some other page)
       const props = getProps();
       switch (msg.type) {
         case 'ready':

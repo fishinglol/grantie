@@ -322,6 +322,8 @@ export class PluginHost {
   #syncToken: object | null = null;
   /** The plugin window that is open, and the dimmed layer behind it. */
   #panel: { plugin: Loaded; backdrop: HTMLElement } | null = null;
+  /** Plugin styles are switched off (`pauseStyles`). */
+  #stylesPaused = false;
 
   constructor(adapter: HostAdapter, onCommandsChanged: () => void = () => {}, onBlocksChanged: () => void = () => {}, onButtonsChanged: () => void = () => {}) {
     this.#adapter = adapter;
@@ -705,6 +707,15 @@ export class PluginHost {
     }
   };
 
+  /**
+   * Switch every plugin's styles off (or back on). Plugin CSS applies to the whole window, so the app pauses it while it shows
+   * something a stylesheet must not be able to hide or disguise: the permissions a plugin asks for, a delete confirmation.
+   */
+  pauseStyles(paused: boolean): void {
+    this.#stylesPaused = paused;
+    document.head.querySelectorAll("style[data-granite-plugin]").forEach((style) => style.setAttribute("media", paused ? "not all" : "all"));
+  }
+
   /** One `<style>` per plugin in the app's document (which is where the editor lives, on desktop and phone). */
   #setStyle(id: string, css: string): void {
     const existing = document.head.querySelector(`style[data-granite-plugin="${id}"]`);
@@ -714,6 +725,7 @@ export class PluginHost {
     }
     const style = existing ?? document.createElement("style");
     style.setAttribute("data-granite-plugin", id);
+    style.setAttribute("media", this.#stylesPaused ? "not all" : "all");
     style.textContent = css;
     if (!existing) document.head.append(style);
   }

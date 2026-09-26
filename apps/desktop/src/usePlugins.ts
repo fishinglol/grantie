@@ -2,7 +2,7 @@ import { type RefObject, useCallback, useEffect, useRef, useState } from "react"
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { join } from "@granite/core-notes";
 import type { LiveEditorHandle } from "@granite/live-editor";
-import { API_VERSION, PLUGINS_DIR, discoverPlugins, readPluginCode, reportInstall, type CommandInfo, type HeaderButton, type InstalledPlugin } from "@granite/plugins";
+import { API_VERSION, PLUGINS_DIR, discoverPlugins, readPluginCode, reportInstall, reviewApprovals, withPlugin, type CommandInfo, type HeaderButton, type InstalledPlugin } from "@granite/plugins";
 import { BlockBridge, PluginHost } from "@granite/plugins/host";
 import type { CatalogPlugin } from "./pluginCatalog";
 import { pluginStore } from "./stores";
@@ -113,10 +113,15 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
   const refresh = useCallback(async () => {
     if (!vaultDir) return;
     try {
-      const [plugins, settings] = await Promise.all([discoverPlugins(tauriFs, vaultDir), pluginStore.load()]);
-      const on = settings?.enabled ?? [];
+      const [plugins, saved] = await Promise.all([discoverPlugins(tauriFs, vaultDir), pluginStore.load()]);
+      // A plugin that synced in asking for more than this device allowed is switched off, with the reason shown on it.
+      const { settings, blocked } = reviewApprovals(plugins.flatMap((p) => (p.manifest ? [p.manifest] : [])), saved);
+      if (JSON.stringify(settings) !== JSON.stringify(saved)) await pluginStore.save(settings);
+      for (const id of Object.keys(blocked)) host.current?.unload(id);
+      const on = settings.enabled;
       setInstalled(plugins);
       setEnabled(on);
+      setFailed((f) => ({ ...f, ...blocked }));
       setLoadError(null);
       for (const plugin of plugins) if (plugin.manifest && on.includes(plugin.manifest.id)) await start(plugin);
     } catch (e) {
@@ -132,13 +137,15 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
   const toggle = useCallback(
     async (plugin: InstalledPlugin, on: boolean) => {
       const id = plugin.manifest!.id;
-      const next = on ? [...enabled, id] : enabled.filter((e) => e !== id);
-      setEnabled(next);
-      await pluginStore.save({ enabled: next });
+      // Switching on allows what the plugin asks for now.
+      const next = withPlugin(await pluginStore.load(), plugin.manifest!, on);
+      setEnabled(next.enabled);
+      setFailed(({ [id]: _gone, ...rest }) => rest);
+      await pluginStore.save(next);
       if (on) await start(plugin);
       else host.current?.unload(id);
     },
-    [enabled, start],
+    [start],
   );
 
   /** Copy a store plugin into the vault (which syncs it to the phone) and switch it on here. */
@@ -152,7 +159,8 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
         await tauriFs.mkdirp(dir);
         await tauriFs.writeTextFile(join(dir, "manifest.json"), entry.manifestText);
         await tauriFs.writeTextFile(join(dir, "main.js"), entry.code);
-        if (!enabled.includes(id)) await pluginStore.save({ enabled: [...enabled, id] });
+        // Installing (or updating) from the Store allows what its page listed.
+        await pluginStore.save(withPlugin(await pluginStore.load(), entry.manifest, true));
         await refresh();
         latest.current.onWroteNote(`${PLUGINS_DIR}/${id}/main.js`);
         if (fresh) reportInstall(id);
@@ -161,7 +169,7 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
         notify(`Couldn't install ${entry.manifest.name}: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
-    [vaultDir, installed, enabled, refresh, notify],
+    [vaultDir, installed, refresh, notify],
   );
 
   /** Switch a plugin off and delete its folder (which also removes it from the phone through sync). Its blocks in notes turn back into plain text. */
@@ -172,9 +180,10 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
       if (!vaultDir) return;
       try {
         host.current?.unload(plugin.manifest?.id ?? id);
-        const next = enabled.filter((e) => e !== plugin.manifest?.id);
-        setEnabled(next);
-        await pluginStore.save({ enabled: next });
+        const saved = await pluginStore.load();
+        const next = { ...saved, enabled: (saved?.enabled ?? []).filter((e) => e !== plugin.manifest?.id) };
+        setEnabled(next.enabled);
+        await pluginStore.save(next);
         await tauriFs.removeDir(join(vaultDir, PLUGINS_DIR, id));
         await refresh();
         latest.current.onWroteNote(`${PLUGINS_DIR}/${id}`);
@@ -183,7 +192,7 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
         notify(`Couldn't uninstall ${name}: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
-    [vaultDir, enabled, refresh, notify],
+    [vaultDir, refresh, notify],
   );
 
   const run = useCallback(
@@ -198,8 +207,10 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
   );
 
   const openPanel = useCallback((pluginId: string) => host.current?.openPanel(pluginId), []);
+  /** Plugin styles apply to the whole window: the app switches them off while it asks for consent or confirms a deletion. */
+  const pauseStyles = useCallback((paused: boolean) => host.current?.pauseStyles(paused), []);
 
-  return { installed, enabled, failed, commands, buttons, openPanel, loadError, blocks, refresh, toggle, install, uninstall, run };
+  return { installed, enabled, failed, commands, buttons, openPanel, pauseStyles, loadError, blocks, refresh, toggle, install, uninstall, run };
 }
 
 export type PluginsState = ReturnType<typeof usePlugins>;

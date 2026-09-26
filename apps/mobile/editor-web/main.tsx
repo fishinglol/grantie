@@ -62,10 +62,12 @@ type CanvasInfo = { vaultDir: string; notes: string[]; images: string[] };
 declare global {
   interface Window {
     ReactNativeWebView?: { postMessage(message: string): void };
+    /** Written into the page by the app (`NoteEditor.tsx`) and sent with every message, so the app knows it came from this page. */
+    graniteBridgeKey?: string;
   }
 }
 
-const send = (message: object) => window.ReactNativeWebView?.postMessage(JSON.stringify(message));
+const send = (message: object) => window.ReactNativeWebView?.postMessage(JSON.stringify({ ...message, key: window.graniteBridgeKey }));
 
 /** A tap on a link chip: the app opens the address in the phone's browser. */
 const openLink = (url: string) => send({ type: "open-link", url });
@@ -388,6 +390,10 @@ function Page() {
 
   useEffect(() => {
     const onMessage = (event: Event) => {
+      // Only the app talks to this page: the native WebView delivers its messages with no source, the web preview's page is our
+      // parent. Plugin frames post here too (with themselves as the source); they speak to the plugin host, never to this.
+      const source = (event as MessageEvent).source;
+      if (source !== null && source !== window.parent) return;
       let msg: Inbound;
       try {
         msg = JSON.parse((event as MessageEvent<string>).data) as Inbound;

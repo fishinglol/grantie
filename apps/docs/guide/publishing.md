@@ -54,6 +54,16 @@ Since the sandbox already constrains what a plugin's code *can* do, review mostl
   *why* — see how [Smart Chips](https://github.com/fishinglol/grantie/tree/main/examples/plugins/smart-chips)
   and [Live Collab](https://github.com/fishinglol/grantie/tree/main/examples/plugins/live-collab) describe
   theirs.
+- **Readable code.** A hand-written `main.js` is reviewed as is. A bundled or minified one must come with its
+  source and a build script (like Live Collab's `src/` and `build.mjs`), and CI rebuilds it and fails if the
+  committed `main.js` differs — what reviewers read is what people run.
+- **Note content is data, never markup.** Your block's text can come from someone else (a shared note, an import,
+  a live session). Put it on the page with `textContent` / DOM nodes, or escape it before `innerHTML`; otherwise a
+  crafted note runs code with *your* plugin's permissions.
+- **The pull request only touches `examples/plugins/<id>/`.**
+
+Asking for more permissions (or servers) in an update is fine, but each device switches the plugin off until its
+owner allows the new ones, so say in the description why they are needed.
 
 ## Not-yet-installable plugins
 

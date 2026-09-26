@@ -11,3 +11,12 @@ class_name = "LiveRoom"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["LiveRoom"]
+
+# At most 30 new connections a minute from one address (a reconnecting person makes ~6). Needs wrangler 4.36 or later.
+[[ratelimits]]
+name = "JOIN_LIMIT"
+namespace_id = "1001"
+
+  [ratelimits.simple]
+  limit = 30
+  period = 60

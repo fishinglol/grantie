@@ -9,9 +9,14 @@ that list, in plain language, before switching it on. Nothing is granted implici
 Every plugin runs inside a hidden `<iframe sandbox="allow-scripts">` — no `allow-same-origin`, so the frame
 has an **opaque origin**: it cannot read the app's DOM, `localStorage`, cookies, or reach anything on the
 network by default. Its Content-Security-Policy blocks every request unless `network` is declared (which
-then allows `connect-src https: wss:`). The only way out of the frame is `postMessage` to the host, which
-answers RPC calls one at a time and refuses any call whose method needs a permission the manifest doesn't
-list.
+then allows `connect-src https: wss:`). The app's own page forbids frames from navigating anywhere
+(`frame-src 'none'`), so a plugin can't send data out by pointing its frame at a web address either. The only
+way out of the frame is `postMessage` to the host, which answers RPC calls one at a time and refuses any call
+whose method needs a permission the manifest doesn't list.
+
+Switching a plugin on is per device, and the device remembers which permissions (and `connect` servers) it
+allowed. If an update, or a copy synced from another device, asks for more, that device switches the plugin
+off and says what is new; switching it on again allows it.
 
 A plugin command also has a **15 second timeout** before the host kills it, so a hang or infinite loop in a
 command can't freeze the app (an infinite loop *inside* one call can still stall that plugin's own frame —
@@ -23,7 +28,7 @@ see Known limits below).
 | --- | --- | --- |
 | `editor.read` | `editor.getText`, `editor.getSelection` | "Read the open note" |
 | `editor.write` | `editor.replaceSelection`, `editor.setText` | "Change the open note" |
-| `editor.style` | `editor.setStyle` | "Change how the editor looks" |
+| `editor.style` | `editor.setStyle` | "Change how Granite looks (its styles apply to the whole window)" |
 | `editor.blocks` | `blocks.register` | "Draw its own blocks inside your notes" |
 | `editor.input` | `input.trigger`, `input.onPaste`, `input.addItem` | "See what you type on an empty line and what you paste" |
 | `editor.links` | `links.register`, `links.chip`, `links.title`, `links.open` | "Show links to known sites as chips" |

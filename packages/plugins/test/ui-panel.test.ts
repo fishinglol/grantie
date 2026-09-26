@@ -11,7 +11,12 @@ function fakeDom() {
   const listeners: Listener[] = [];
   const frames: any[] = [];
   const body = { children: [] as any[], append(el: any) { this.children.push(el); } };
-  const head = { children: [] as any[], querySelector: () => head.children.find((c) => c.tag === "style") ?? null, append(el: any) { this.children.push(el); } };
+  const head = {
+    children: [] as any[],
+    querySelector: () => head.children.find((c) => c.tag === "style") ?? null,
+    querySelectorAll: () => head.children.filter((c) => c.tag === "style"), // arrays have forEach, like a NodeList
+    append(el: any) { this.children.push(el); },
+  };
   const element = (tag: string) => ({
     tag,
     className: "",
@@ -210,4 +215,19 @@ test("a block frame can't add a button or set the badge", async () => {
   assert.equal((await call(block, "ui.button", "Sneaky", ICON)).ok, false);
   assert.equal((await call(block, "ui.badge", "#ff0000")).ok, false);
   assert.deepEqual(host.headerButtons(), []);
+});
+
+test("the app can switch plugin styles off while it shows something they must not hide", async () => {
+  const { dom, start, call, host } = setup(["editor.style"]);
+  const frame = start("look");
+  assert.equal((await call(frame, "editor.setStyle", ".live-editor { --bg: #fff }")).ok, true);
+  const style = dom.head.children.find((c: any) => c.tag === "style");
+  assert.equal(style.attrs.media, "all");
+  host.pauseStyles(true);
+  assert.equal(style.attrs.media, "not all");
+  // A style set while paused stays off until the app resumes them.
+  await call(frame, "editor.setStyle", ".live-editor { --bg: #000 }");
+  assert.equal(style.attrs.media, "not all");
+  host.pauseStyles(false);
+  assert.equal(style.attrs.media, "all");
 });

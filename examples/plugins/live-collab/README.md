@@ -32,7 +32,7 @@ A Cloudflare Worker with one Durable Object per room. It needs no computer of yo
 3. It prints `https://granite-live.<your-name>.workers.dev`. The relay's address is that with `wss://` instead of `https://`.
 4. Put it in `DEFAULT_SERVER` in `src/invite.ts`, run `npm run build`, raise `version` in `manifest.json` and `package.json`, and ship the plugin. People who update get the built-in relay.
 
-The Worker keeps nothing on disk and forgets a room when the last person leaves. A room takes at most 20 people and about 4 MB of edits in one session (a very long session with a lot of typing can fill it: the window then says so and you start a new one). There is no rate limiting: Cloudflare's own limits apply.
+The Worker keeps nothing on disk and forgets a room when the last person leaves. A room takes at most 20 people and about 4 MB of edits in one session (a very long session with a lot of typing can fill it: the window then says so and you start a new one). One address may open at most 30 connections a minute (the `JOIN_LIMIT` rate limit in `wrangler.toml`, which needs wrangler 4.36 or later), so nobody can use up the relay everyone shares. The Node relay (`npm run server`) takes at most 1000 rooms and 20 connections from one address.
 
 ## Run your own relay on your computer
 

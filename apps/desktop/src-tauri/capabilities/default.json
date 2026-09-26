@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
+  "description": "Capability for the main window. Reading is allowed across the home folder (imports, pictures to insert); changing files only in the default vault and the app config, plus vaults the person picks, which the app allows at run time (allow_vault in src/lib.rs).",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -13,7 +13,7 @@
     },
     {
       "identifier": "fs:allow-write-text-file",
-      "allow": [{ "path": "$HOME/**" }, { "path": "$DOCUMENT/**" }, { "path": "$APPCONFIG/**" }, { "path": "$HOME/**/.granite" }, { "path": "$HOME/**/.granite/**" }, { "path": "$DOCUMENT/**/.granite" }, { "path": "$DOCUMENT/**/.granite/**" } ]
+      "allow": [{ "path": "$APPCONFIG/**" }, { "path": "$DOCUMENT/GraniteVault" }, { "path": "$DOCUMENT/GraniteVault/**" }, { "path": "$DOCUMENT/GraniteVault/.granite" }, { "path": "$DOCUMENT/GraniteVault/.granite/**" } ]
     },
     {
       "identifier": "fs:allow-read-file",
@@ -21,11 +21,11 @@
     },
     {
       "identifier": "fs:allow-write-file",
-      "allow": [{ "path": "$HOME/**" }, { "path": "$DOCUMENT/**" }, { "path": "$APPCONFIG/**" }, { "path": "$HOME/**/.granite" }, { "path": "$HOME/**/.granite/**" }, { "path": "$DOCUMENT/**/.granite" }, { "path": "$DOCUMENT/**/.granite/**" } ]
+      "allow": [{ "path": "$APPCONFIG/**" }, { "path": "$DOCUMENT/GraniteVault" }, { "path": "$DOCUMENT/GraniteVault/**" }, { "path": "$DOCUMENT/GraniteVault/.granite" }, { "path": "$DOCUMENT/GraniteVault/.granite/**" } ]
     },
     {
       "identifier": "fs:allow-mkdir",
-      "allow": [{ "path": "$HOME/**" }, { "path": "$DOCUMENT/**" }, { "path": "$APPCONFIG/**" }, { "path": "$HOME/**/.granite" }, { "path": "$HOME/**/.granite/**" }, { "path": "$DOCUMENT/**/.granite" }, { "path": "$DOCUMENT/**/.granite/**" } ]
+      "allow": [{ "path": "$APPCONFIG/**" }, { "path": "$DOCUMENT/GraniteVault" }, { "path": "$DOCUMENT/GraniteVault/**" }, { "path": "$DOCUMENT/GraniteVault/.granite" }, { "path": "$DOCUMENT/GraniteVault/.granite/**" } ]
     },
     {
       "identifier": "fs:allow-exists",
@@ -41,11 +41,11 @@
     },
     {
       "identifier": "fs:allow-rename",
-      "allow": [{ "path": "$HOME/**" }, { "path": "$DOCUMENT/**" }, { "path": "$HOME/**/.granite" }, { "path": "$HOME/**/.granite/**" }, { "path": "$DOCUMENT/**/.granite" }, { "path": "$DOCUMENT/**/.granite/**" } ]
+      "allow": [{ "path": "$APPCONFIG/**" }, { "path": "$DOCUMENT/GraniteVault" }, { "path": "$DOCUMENT/GraniteVault/**" }, { "path": "$DOCUMENT/GraniteVault/.granite" }, { "path": "$DOCUMENT/GraniteVault/.granite/**" } ]
     },
     {
       "identifier": "fs:allow-remove",
-      "allow": [{ "path": "$HOME/**" }, { "path": "$DOCUMENT/**" }, { "path": "$APPCONFIG/**" }, { "path": "$HOME/**/.granite" }, { "path": "$HOME/**/.granite/**" }, { "path": "$DOCUMENT/**/.granite" }, { "path": "$DOCUMENT/**/.granite/**" } ]
+      "allow": [{ "path": "$APPCONFIG/**" }, { "path": "$DOCUMENT/GraniteVault" }, { "path": "$DOCUMENT/GraniteVault/**" }, { "path": "$DOCUMENT/GraniteVault/.granite" }, { "path": "$DOCUMENT/GraniteVault/.granite/**" } ]
     },
     {
       "identifier": "http:default",
