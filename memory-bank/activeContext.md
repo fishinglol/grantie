@@ -112,6 +112,11 @@ User: the Popup card should be able to create a new note, and when the note is r
 ## Session 2026-09-26 (night, later) — toast that never went away
 Desktop `NoteApp` toast: its hide timer was the effect's cleanup, and the effect early-returns for "Saved …" / "Read + parsed …"; a "Saved" arriving after "Moved …" ran the cleanup (timer cancelled) and left the toast up forever. The timer is now a ref (`toastTimer`). Durations shortened on desktop and phone: 2 s normal, 4 s for errors (was 3 / 6). Phone `say()` already used a ref, only the durations changed.
 
+## Session 2026-09-26 (night, later still) — Cards 1.3.0: bold / italic / strike / underline
+User (screenshot of the phone's B I U bar): the Cards plugin should have the same formatting, with Cmd+Shift+X too, on phone and desktop (shortcuts on desktop). Done in `examples/plugins/cards/main.js`: `formatEdit` (a port of `toggleFormat`, kept equal by a parity test in `cards.test.ts`), a B I S U bar under the card editor's text
+(buttons keep the selection; used on the last focused field: title, body or a checklist item), shortcuts Ctrl/Cmd+B, +I, +U, +Shift+X in those fields, and `inline()` draws `**bold**`, `*italic*`, `~~strike~~`, `<u>underline</u>` (also `***both***`) on the board cards (title, body, checklist items) with DOM nodes, no innerHTML. Text stays Markdown.
+Checked in a same-origin harness iframe (shortcuts + button + render); a real click test in the preview frame is unreliable in this browser pane. Needs UPDATE in the Store (Cards 1.3.0) and `npm run ship` for the phone.
+
 ## Session 2026-09-25 (latest) — the Live Collab plugin itself (stage 2 of live collaboration)
 The user asked where the "share with a friend" plugin was: **it did not exist yet** (only plugin API 6 had been built; my earlier wording hid that). Built now, with no more questions (defaults chosen, all changeable):
 `examples/plugins/live-collab/` (id `live-collab`, v1.0.0, needs API 6). Yjs + `y-websocket` client + `@codemirror/state`, bundled by esbuild into `main.js` (`npm run build` in that folder; it has its own `package.json`/`node_modules`).

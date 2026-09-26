@@ -97,6 +97,96 @@ function h(tag, props, ...kids) {
   return el;
 }
 
+
+// ── text formatting: bold, italic, strike, underline (Markdown markers, so a card's text stays readable as plain text) ──
+// `formatEdit` is a port of `toggleFormat` in packages/core-notes/src/formatMarkdown.ts (the note editors' version); keep the two alike.
+const TOKENS = { bold: ["**", "**"], italic: ["*", "*"], strike: ["~~", "~~"], underline: ["<u>", "</u>"] };
+const WORD = /[\p{L}\p{M}\p{N}_]/u;
+const SPACE = /\s/;
+const MARKER = /[*~]/;
+function formatEdit(text, from, to, format) {
+  const [open, close] = TOKENS[format];
+  const cursor = to;
+  let a = Math.min(from, to);
+  let b = Math.max(from, to);
+  while (a < b && SPACE.test(text[a])) a++;
+  while (b > a && SPACE.test(text[b - 1])) b--;
+  const collapsed = a === b;
+  if (collapsed) {
+    a = b = cursor;
+    while (a > 0 && WORD.test(text[a - 1])) a--;
+    while (b < text.length && WORD.test(text[b])) b++;
+  }
+  let l = a;
+  while (l > 0 && (MARKER.test(text[l - 1]) || (l >= 3 && text.slice(l - 3, l) === "<u>"))) l -= MARKER.test(text[l - 1]) ? 1 : 3;
+  let r = b;
+  while (r < text.length && (MARKER.test(text[r]) || text.startsWith("</u>", r))) r += MARKER.test(text[r]) ? 1 : 4;
+  const before = text.slice(l, a);
+  const after = text.slice(b, r);
+  const count = (str, ch) => [...str].filter((c) => c === ch).length;
+  let on;
+  if (format === "underline") on = before.includes(open) && after.includes(close);
+  else {
+    const around = Math.min(count(before, open[0]), count(after, open[0]));
+    on = format === "italic" ? around % 2 === 1 : around >= open.length;
+  }
+  if (!on) {
+    const shift = open.length;
+    return {
+      changes: [{ from: l, to: l, insert: open }, { from: r, to: r, insert: close }],
+      selection: collapsed ? { anchor: cursor + shift, head: cursor + shift } : { anchor: a + shift, head: b + shift },
+    };
+  }
+  const removals = [];
+  if (format === "underline") {
+    const openAt = text.indexOf(open, l);
+    const closeAt = text.lastIndexOf(close, r - close.length);
+    removals.push({ from: openAt, to: openAt + open.length, insert: "" }, { from: closeAt, to: closeAt + close.length, insert: "" });
+  } else {
+    const ch = open[0];
+    for (let i = l, n = 0; i < a && n < open.length; i++) if (text[i] === ch) (removals.push({ from: i, to: i + 1, insert: "" }), n++);
+    for (let i = r - 1, n = 0; i >= b && n < close.length; i--) if (text[i] === ch) (removals.push({ from: i, to: i + 1, insert: "" }), n++);
+    removals.sort((x, y) => x.from - y.from);
+  }
+  const leftRemoved = removals.filter((c) => c.to <= a).reduce((n, c) => n + (c.to - c.from), 0);
+  return {
+    changes: removals,
+    selection: collapsed ? { anchor: cursor - leftRemoved, head: cursor - leftRemoved } : { anchor: a - leftRemoved, head: b - leftRemoved },
+  };
+}
+/** Toggle `format` on what is selected in a text field, and tell the card (the field's own `input` handler saves it). */
+function applyFormat(field, format) {
+  if (!field || field.readOnly) return;
+  const edit = formatEdit(field.value, field.selectionStart, field.selectionEnd, format);
+  let v = field.value;
+  for (const c of [...edit.changes].reverse()) v = v.slice(0, c.from) + c.insert + v.slice(c.to);
+  field.value = v;
+  field.setSelectionRange(edit.selection.anchor, edit.selection.head);
+  field.focus();
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+}
+/** A card's text with the markers drawn: **bold**, *italic*, ~~strike~~, <u>underline</u>. Unpaired markers stay as typed. */
+const INLINE = /\*\*\*([\s\S]+?)\*\*\*|\*\*([\s\S]+?)\*\*|~~([\s\S]+?)~~|<u>([\s\S]+?)<\/u>|\*([^*\s][^*]*?)\*/g;
+function inline(text) {
+  const frag = document.createDocumentFragment();
+  let last = 0;
+  for (const m of text.matchAll(INLINE)) {
+    if (m.index > last) frag.append(text.slice(last, m.index));
+    const [, bi, b, s, u, i] = m;
+    const el = document.createElement(bi !== undefined ? "strong" : b !== undefined ? "strong" : s !== undefined ? "s" : u !== undefined ? "u" : "em");
+    const inner = inline(bi ?? b ?? s ?? u ?? i);
+    if (bi !== undefined) {
+      const em = document.createElement("em");
+      em.append(inner);
+      el.append(em);
+    } else el.append(inner);
+    frag.append(el);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) frag.append(text.slice(last));
+  return frag;
+}
+
 // Material Design icon paths (Apache-2.0)
 const ICON = {
   palette: "M12 3a9 9 0 0 0 0 18c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z",
@@ -212,6 +302,10 @@ button{font:inherit;color:inherit}
 .eadd{display:flex;align-items:center;gap:8px;padding:5px 0;color:var(--text-dim,#5f6368);cursor:pointer;border:0;background:none;width:100%;text-align:left}
 .eadd svg{width:18px;height:18px;fill:currentColor;margin:0 3px}
 .edone{border:0;background:none;padding:6px 0;color:var(--text-dim,#5f6368);cursor:pointer;display:block}
+.efmt{display:flex;gap:2px;padding:0 10px 2px}
+.fb{border:0;background:none;color:inherit;font:inherit;font-size:15px;width:32px;height:32px;border-radius:8px;cursor:pointer;opacity:.72}
+.fb:hover{opacity:1;background:rgba(127,127,127,.18)}
+.fb.bold{font-weight:700}.fb.italic{font-style:italic}.fb.strike{text-decoration:line-through}.fb.underline{text-decoration:underline}
 .efoot{display:flex;align-items:center;gap:2px;padding:6px 8px 8px}
 .efoot .sp{flex:1}
 .stamp{font-size:11px;color:var(--text-dim,#5f6368);padding:0 10px;text-align:right}
@@ -469,7 +563,25 @@ function startBoard(root, model, source, block) {
 
     paintImgs();
     paintBody();
-    el.append(pinBtn, imgHost, title, bodyHost, h("div", { class: "efoot" }, palette, add, arch, more, h("span", { class: "sp" }), stamp, h("button", { class: "close", type: "button", onclick: () => o.onClose() }, "Close")));
+    // Format bar (B I S U) and the shortcuts Ctrl/Cmd+B, +I, +U and +Shift+X, on whichever text field was used last.
+    let field = null;
+    el.addEventListener("focusin", (e) => { if (e.target.matches(".etitle,.ebodyta,.eit input[type=text]")) field = e.target; });
+    const FORMATS = [["bold", "B", "Bold (Ctrl/Cmd+B)"], ["italic", "I", "Italic (Ctrl/Cmd+I)"], ["strike", "S", "Strikethrough (Ctrl/Cmd+Shift+X)"], ["underline", "U", "Underline (Ctrl/Cmd+U)"]];
+    const fmtBar = h("div", { class: "efmt" }, FORMATS.map(([kind, label, tip]) => {
+      const b = h("button", { class: "fb " + kind, type: "button", title: tip, "aria-label": tip }, label);
+      b.addEventListener("mousedown", (e) => e.preventDefault()); // the text stays selected and focused
+      b.addEventListener("click", () => applyFormat(field && el.contains(field) ? field : el.querySelector(".ebodyta,.eit input[type=text]") || title, kind));
+      return b;
+    }));
+    el.addEventListener("keydown", (e) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || !e.target.matches(".etitle,.ebodyta,.eit input[type=text]")) return;
+      const key = e.key.toLowerCase();
+      const kind = key === "b" && !e.shiftKey ? "bold" : key === "i" && !e.shiftKey ? "italic" : key === "u" && !e.shiftKey ? "underline" : key === "x" && e.shiftKey ? "strike" : null;
+      if (!kind) return;
+      e.preventDefault();
+      applyFormat(e.target, kind);
+    });
+    el.append(pinBtn, imgHost, title, bodyHost, fmtBar, h("div", { class: "efoot" }, palette, add, arch, more, h("span", { class: "sp" }), stamp, h("button", { class: "close", type: "button", onclick: () => o.onClose() }, "Close")));
     return { el, focus: () => focusBody(), title, addImage: () => add.click() };
   }
 
@@ -516,18 +628,18 @@ function startBoard(root, model, source, block) {
     else el.addEventListener("click", () => granite.notice("Restore this note before editing it"));
     if (c.imgs.length) el.append(h("div", { class: "cimgs" }, c.imgs.map((src) => h("img", { src, alt: "" }))));
     const body = h("div", { class: "cbody" });
-    if (c.t) body.append(h("div", { class: "ctitle" }, c.t));
+    if (c.t) body.append(h("div", { class: "ctitle" }, inline(c.t)));
     if (c.list) {
       const open = c.list.filter((i) => !i.d);
       const done = c.list.filter((i) => i.d);
       for (const item of open.slice(0, 12)) {
         const box = h("input", { type: "checkbox" });
         box.addEventListener("change", act(() => { item.d = 1; c.ts = Date.now(); }));
-        body.append(h("div", { class: "cit" }, box, h("span", {}, item.x)));
+        body.append(h("div", { class: "cit" }, box, h("span", {}, inline(item.x))));
       }
       if (open.length > 12) body.append(h("div", { class: "cmore" }, "+ " + (open.length - 12) + " more"));
       if (done.length) body.append(h("div", { class: "cmore" }, "+ " + done.length + (done.length === 1 ? " completed item" : " completed items")));
-    } else if (c.b) body.append(h("div", { class: "ctext" }, c.b));
+    } else if (c.b) body.append(h("div", { class: "ctext" }, inline(c.b)));
     if (!c.t && !c.b && !c.list) body.append(h("div", { class: "ctext" }, ""));
     el.append(body);
     if (inBin) {
@@ -728,4 +840,4 @@ if (typeof granite !== "undefined") {
   });
 }
 
-if (typeof __cardsTest !== "undefined") Object.assign(__cardsTest, { parseBoard, serializeBoard, newCard, isEmpty, purgeBin, cardText, COLORS });
+if (typeof __cardsTest !== "undefined") Object.assign(__cardsTest, { formatEdit, parseBoard, serializeBoard, newCard, isEmpty, purgeBin, cardText, COLORS });
