@@ -118,8 +118,19 @@ test("the cell menu's Date and Time entries write plain text", () => {
 
 test("a popup cell is a Markdown link to a note and reads back", () => {
   const cell = hooks.noteCell("Projects/My plan (v2).md");
-  assert.equal(cell, "[My plan (v2)](Projects/My%20plan%20%28v2%29.md)");
+  assert.equal(cell, "[My plan (v2)](note:Projects/My%20plan%20%28v2%29.md)");
   assert.deepEqual(plain(hooks.parseNoteCell(cell)), { title: "My plan (v2)", path: "Projects/My plan (v2).md" });
   assert.equal(hooks.parseNoteCell("[Docs](https://example.com/a.md)"), null);
   assert.equal(hooks.parseNoteCell("plain text"), null);
+});
+
+test("popup cells made before the note: scheme are still read", () => {
+  assert.deepEqual(plain(hooks.parseNoteCell("[Plan](Projects/Plan.md)")), { title: "Plan", path: "Projects/Plan.md" });
+});
+
+test("a new note's name becomes a vault path", () => {
+  assert.equal(hooks.newNotePath("  My: plan? "), "My plan.md");
+  assert.equal(hooks.newNotePath("Projects/Big idea.md"), "Projects/Big idea.md");
+  assert.equal(hooks.newNotePath("../x"), "x.md");
+  assert.equal(hooks.newNotePath("///"), "");
 });

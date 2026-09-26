@@ -1,8 +1,8 @@
 {
   "id": "simple-table",
   "name": "Simple Table",
-  "version": "1.6.1",
-  "description": "A plain table you can type straight into: add rows and columns, Tab and Enter to move around. Type // on an empty line and choose Table, or paste cells copied from Excel or Google Sheets and they become a table. Type // in a cell for a menu: a coloured dropdown like Google Sheets, a link chip (paste a link into a cell with Smart Chips on), a note that opens as a popup, today's date, the time, or a checkbox. Stored as an ordinary Markdown table.",
+  "version": "1.7.0",
+  "description": "A plain table you can type straight into: add rows and columns, Tab and Enter to move around. Type // on an empty line and choose Table, or paste cells copied from Excel or Google Sheets and they become a table. Type // in a cell for a menu: a coloured dropdown like Google Sheets, a link chip (paste a link into a cell with Smart Chips on), a note that opens as a popup (pick one or type a name to create it; it follows the note when it is renamed), today's date, the time, or a checkbox. Stored as an ordinary Markdown table.",
   "tagline": "Type // for a table, paste from Excel",
   "author": "Granite",
   "minApiVersion": 5,
@@ -11,6 +11,7 @@
     "editor.input",
     "editor.links",
     "editor.write",
-    "vault.read"
+    "vault.read",
+    "vault.write"
   ]
 }

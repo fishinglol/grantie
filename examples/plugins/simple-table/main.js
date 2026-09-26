@@ -35,14 +35,26 @@ const parseLinkCell = (text) => {
   return m ? { title: m[1].replace(/\\(.)/g, "$1"), url: m[2] } : null;
 };
 const linkCell = (title, url) => `[${oneLine(title).replace(/[[\]\\]/g, "\\$&")}](${url.replace(/ /g, "%20").replace(/\(/g, "%28").replace(/\)/g, "%29")})`;
-// A popup cell holds a Markdown link to a note, `[Title](Folder/Note.md)`; clicking it opens that note as a popup (as the Popup plugin's card does).
-const NOTE_CELL = /^\[((?:[^\]\\]|\\.)*)\]\(((?!https?:)[^\s)]+\.(?:md|markdown))\)$/i;
+// A popup cell holds a Markdown link to a note, `[Title](note:Folder/Note.md)`; clicking it opens that note as a popup (as the Popup plugin's card does).
+// The `note:` scheme keeps the app's link fixing (which reads plain links as relative to the note's folder) away from it, and lets the app
+// rewrite it when that note is renamed or moved. Cells made before that (no `note:`) are still read.
+const NOTE_CELL = /^\[((?:[^\]\\]|\\.)*)\]\((?:note:)?((?!https?:)[^\s)]+\.(?:md|markdown))\)$/i;
 const parseNoteCell = (text) => {
   const m = NOTE_CELL.exec(text.trim());
   return m ? { title: m[1].replace(/\\(.)/g, "$1"), path: m[2].replace(/%20/g, " ").replace(/%28/g, "(").replace(/%29/g, ")") } : null;
 };
 const noteTitle = (path) => path.slice(path.lastIndexOf("/") + 1).replace(/\.(md|markdown)$/i, "");
-const noteCell = (path) => `[${oneLine(noteTitle(path)).replace(/[[\]\\]/g, "\\$&")}](${path.replace(/ /g, "%20").replace(/\(/g, "%28").replace(/\)/g, "%29")})`;
+const noteCell = (path) => `[${oneLine(noteTitle(path)).replace(/[[\]\\]/g, "\\$&")}](note:${path.replace(/ /g, "%20").replace(/\(/g, "%28").replace(/\)/g, "%29")})`;
+/** What the user typed as a new note's name -> a vault path ending in .md ("" when nothing usable is left). Folders are written with "/". */
+function newNotePath(name) {
+  const parts = name
+    .split("/")
+    .map((p) => p.replace(/[\\:*?"<>|`]/g, "").replace(/\s+/g, " ").trim().replace(/^\.+/, ""))
+    .filter(Boolean);
+  if (parts.length === 0) return "";
+  const last = parts.pop().replace(/\.(md|markdown)$/i, "").trim();
+  return last ? [...parts, `${last}.md`].join("/") : "";
+}
 const hasVault = () => typeof granite !== "undefined" && !!granite.vault && typeof granite.vault.open === "function" && typeof granite.vault.list === "function";
 const isUrl = (t) => /^https?:\/\/[^\s<>"]+$/i.test(t.trim());
 const hasLinks = () => typeof granite !== "undefined" && !!granite.links && !!granite.links.chip;
@@ -539,6 +551,17 @@ function startTable(root, model, source, block) {
     );
   };
 
+  /** Make an empty note at `path` (never over an existing one) and put a link to it in the cell. */
+  const createNote = async (path) => {
+    const at = pop;
+    try {
+      if (!(await granite.vault.list()).some((p) => p.toLowerCase() === path.toLowerCase())) await granite.vault.write(path, "");
+      if (pop === at) chooseNote(path);
+    } catch (e) {
+      granite.notice(String(e.message || e));
+    }
+  };
+
   const chooseNote = (path) => {
     const { r, c } = pop;
     model.rows[r][c] = noteCell(path);
@@ -653,7 +676,15 @@ function startTable(root, model, source, block) {
         if (!pop.notes) return list.append(h("div", { class: "none" }, "Looking for notes…"));
         const q = pop.query.toLowerCase();
         const hits = pop.notes.filter((p) => p.toLowerCase().includes(q));
-        if (hits.length === 0) list.append(h("div", { class: "none" }, "No note matches"));
+        const fresh = newNotePath(pop.query);
+        if (fresh && !pop.notes.some((p) => p.toLowerCase() === fresh.toLowerCase())) {
+          const make = h("button", { class: "opt pick", type: "button", tabindex: "-1", style: "color:var(--accent,#e8935f)" }, `+ Create “${noteTitle(fresh)}”`, h("small", {}, fresh.includes("/") ? fresh.slice(0, fresh.lastIndexOf("/")) : "A new empty note"));
+          make.addEventListener("click", () => createNote(fresh));
+          list.append(make);
+        } else if (!pop.query.trim()) {
+          list.append(h("div", { class: "none" }, "Type a name to make a new note, or pick one:"));
+        }
+        if (hits.length === 0 && !fresh) list.append(h("div", { class: "none" }, "No note matches"));
         for (const path of hits.slice(0, 60)) {
           const dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
           const row = h("button", { class: "opt pick", type: "button", tabindex: "-1" }, noteTitle(path), dir ? h("small", {}, dir) : null);
@@ -966,4 +997,4 @@ if (typeof granite !== "undefined") {
   });
 }
 
-if (typeof __tableTest !== "undefined") Object.assign(__tableTest, { parseTable, serializeTable, parseTsv, tableFromTsv, blankTable, fence, parseLinkCell, linkCell, stamp, parseNoteCell, noteCell });
+if (typeof __tableTest !== "undefined") Object.assign(__tableTest, { parseTable, serializeTable, parseTsv, tableFromTsv, blankTable, fence, parseLinkCell, linkCell, stamp, parseNoteCell, noteCell, newNotePath });

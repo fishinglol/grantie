@@ -2,7 +2,7 @@ import { Fragment, type ReactNode, type RefObject, useCallback, useEffect, useMe
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { readFile } from "@tauri-apps/plugin-fs";
-import { basename, dirname, embedImage, join, moveFolder, noteTitle, NoteRepository, relocateLinks, renamedNoteFile } from "@granite/core-notes";
+import { basename, dirname, embedImage, join, moveFolder, noteTitle, NoteRepository, relocateLinks, renamedNoteFile, retargetNoteRefs } from "@granite/core-notes";
 import { GoogleDriveProvider, VaultSync, merge3, type GoogleSession, type PendingDeletion, type SyncResult } from "@granite/core-cloud";
 
 import { REMOTE_FOLDER_NAME, SYNC_INTERVAL_MS } from "./config";
@@ -223,6 +223,35 @@ export default function NoteApp({
       setDocs(next);
     },
     [setPaneList],
+  );
+
+  const vaultFilesRef = useRef(vaultFiles);
+  vaultFilesRef.current = vaultFiles;
+
+  /**
+   * A note (or, with `folder`, a folder) was renamed or moved from `from` to `to` (vault paths): Popup cards and Simple Table note
+   * cells in the other notes that point at it are rewritten to follow. `files` is the vault's note list from before the move.
+   */
+  const fixNoteRefs = useCallback(
+    async (from: string, to: string, folder: boolean, files: string[]) => {
+      if (!dir) return;
+      const now = (p: string) => (folder ? (p.startsWith(`${from}/`) ? `${to}${p.slice(from.length)}` : p) : p === from ? to : p);
+      for (const rel of files) {
+        if (!/\.(md|markdown)$/.test(rel)) continue;
+        const abs = join(dir, now(rel));
+        try {
+          const doc = docsRef.current[abs];
+          const text = doc ? doc.text : await tauriFs.readTextFile(abs);
+          const fixed = retargetNoteRefs(text, from, to, folder);
+          if (fixed === text) continue;
+          await tauriFs.writeTextFile(abs, fixed);
+          if (doc) putDoc(abs, { text: fixed, dirty: false, saved: fixed });
+        } catch {
+          // Unreadable right now: leave that note as it is.
+        }
+      }
+    },
+    [dir, putDoc],
   );
 
   /** Write out unsaved edits to notes matching `match`, before they are moved. */
@@ -500,6 +529,7 @@ export default function NoteApp({
         }
         // Flush pending edits so the move doesn't lose them or let auto-save recreate the old file.
         await flushDocs((p) => p === from);
+        const before = vaultFilesRef.current;
         const isOpen = panesRef.current.includes(from);
         const text = await tauriFs.readTextFile(from);
         const fixed = relocateLinks(text, dirname(from), dirname(to));
@@ -515,13 +545,14 @@ export default function NoteApp({
         await refreshVaultFiles(dir);
         if (isOpen) await reloadDoc(to);
         retarget((p) => (p === from ? to : undefined));
+        await fixNoteRefs(file, targetFolder ? `${targetFolder}/${name}` : name, false, before);
         setStatus(`Moved ${name} → ${where}`);
         void runSync();
       } catch (e) {
         setStatus(`Error moving ${name}: ${String(e)}`);
       }
     },
-    [dir, flushDocs, reloadDoc, retarget, refreshVaultFiles, runSync],
+    [dir, flushDocs, reloadDoc, retarget, refreshVaultFiles, runSync, fixNoteRefs],
   );
 
   /** Rename a note's file (it stays in its folder). Returns whether it happened. */
@@ -539,10 +570,13 @@ export default function NoteApp({
         }
         // Flush pending edits so they land in the renamed file and auto-save can't recreate the old one.
         await flushDocs((p) => p === target);
+        const before = vaultFilesRef.current;
         await moveFile(target, to);
         await reloadDoc(to);
         retarget((p) => (p === target ? to : undefined));
         await refreshVaultFiles(dir);
+        const vaultPath = (abs: string) => abs.slice(dir.length).replace(/^[\\/]/, "");
+        await fixNoteRefs(vaultPath(target), vaultPath(to), false, before);
         setStatus(`Renamed to ${noteTitle(next)}`);
         void runSync();
         return true;
@@ -551,7 +585,7 @@ export default function NoteApp({
         return false;
       }
     },
-    [dir, flushDocs, reloadDoc, retarget, refreshVaultFiles, runSync],
+    [dir, flushDocs, reloadDoc, retarget, refreshVaultFiles, runSync, fixNoteRefs],
   );
 
   /** Delete a folder with everything in it; sync then trashes its files on Drive and removes them from other devices. */
@@ -623,6 +657,7 @@ export default function NoteApp({
         const inside = (p: string) => p.startsWith(`${from}/`);
         // Flush pending edits so the move doesn't lose them or let auto-save recreate the old files.
         await flushDocs(inside);
+        const before = vaultFilesRef.current;
         const openInside = panesRef.current.filter((p): p is string => p !== null && inside(p));
         await moveFolder(folderFs, from, join(dir, to));
         setActiveFolder(to);
@@ -636,13 +671,14 @@ export default function NoteApp({
         const moved = (p: string) => join(dir, to, p.slice(from.length + 1));
         for (const p of openInside) await reloadDoc(moved(p));
         retarget((p) => (inside(p) ? moved(p) : undefined));
+        await fixNoteRefs(folder, to, true, before);
         setStatus(`Moved ${name} → ${where}`);
         void runSync();
       } catch (e) {
         setStatus(`Error moving ${name}: ${String(e)}`);
       }
     },
-    [dir, flushDocs, reloadDoc, retarget, refreshVaultFiles, runSync],
+    [dir, flushDocs, reloadDoc, retarget, refreshVaultFiles, runSync, fixNoteRefs],
   );
 
   /** Mouse-based drag (not HTML5 DnD, which Tauri's window-level file-drop handling can swallow). */

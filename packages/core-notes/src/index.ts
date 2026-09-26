@@ -4,6 +4,7 @@ export { NoteRepository } from "./noteRepository.ts";
 export { dirname, basename, extname, join } from "./path.ts";
 export { IMAGE_FILE } from "./files.ts";
 export { relocateLinks } from "./relocateLinks.ts";
+export { retargetNoteRefs } from "./retargetRefs.ts";
 export { moveFolder } from "./folders.ts";
 export { noteTitle, renamedNoteFile } from "./noteName.ts";
 export { toggleFormat } from "./formatMarkdown.ts";

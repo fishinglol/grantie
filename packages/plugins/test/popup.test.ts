@@ -37,3 +37,9 @@ test("the preview skips the front matter and Markdown markers", () => {
   assert.equal(previewOf("# Title\n\nSome text"), "Title · Some text");
   assert.equal(previewOf(""), "");
 });
+
+test("a new note's name becomes a vault path", () => {
+  assert.equal(hooks.newNotePath("  My: plan? "), "My plan.md");
+  assert.equal(hooks.newNotePath("Projects/Big idea.md"), "Projects/Big idea.md");
+  assert.equal(hooks.newNotePath("///"), "");
+});

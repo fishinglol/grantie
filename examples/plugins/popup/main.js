@@ -19,6 +19,17 @@ function parsePopup(text) {
 const serializePopup = (m) => `note: ${cleanPath(m.note)}`;
 const fence = (m) => "```" + LANG + "\n" + serializePopup(m) + "\n```";
 
+/** What the user typed as a new note's name -> a vault path ending in .md ("" when nothing usable is left). Folders are written with "/". */
+function newNotePath(name) {
+  const parts = name
+    .split("/")
+    .map((p) => p.replace(/[\\:*?"<>|`]/g, "").replace(/\s+/g, " ").trim().replace(/^\.+/, ""))
+    .filter(Boolean);
+  if (parts.length === 0) return "";
+  const last = parts.pop().replace(/\.(md|markdown)$/i, "").trim();
+  return last ? [...parts, `${last}.md`].join("/") : "";
+}
+
 const titleOf = (path) => path.slice(path.lastIndexOf("/") + 1).replace(/\.(md|markdown)$/i, "");
 const folderOf = (path) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
 
@@ -50,6 +61,7 @@ const ICONS = {
   note: '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zm-1 7V3.5L18.5 9H13zM8 13h8v2H8v-2zm0 4h8v2H8v-2z"/>',
   pencil: '<path d="M3 17.25V21h3.75L17.8 9.94l-3.75-3.75L3 17.25zM20.7 7.05a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>',
   trash: '<path d="M6 19a2 2 0 002 2h8a2 2 0 002-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>',
+  plus: '<path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>',
   open: '<path d="M19 19H5V5h7V3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/>',
 };
 
@@ -72,6 +84,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent, #42
 .search { width: 100%; height: 34px; padding: 0 10px; font: inherit; color: inherit; background: transparent; border: 1px solid var(--border, rgba(127,127,127,.4)); border-radius: 8px; }
 .list { margin-top: 6px; max-height: 240px; overflow-y: auto; }
 .row { display: flex; flex-direction: column; width: 100%; padding: 6px 8px; border-radius: 8px; }
+.row.make .name { color: var(--accent, #4285f4); }
 .row:hover, .row.on { background: color-mix(in srgb, var(--text, #202124) 9%, transparent); }
 .empty { padding: 10px 8px; color: var(--text-dim, #6b7280); }
 .foot { display: flex; justify-content: flex-end; margin-top: 6px; }
@@ -104,6 +117,18 @@ function mountPopup(root, source, block) {
       if (path !== model.note) return;
       preview = "";
       missing = true;
+      // The note was moved or renamed outside this card's reach: if exactly one note has the same name somewhere else, follow it.
+      try {
+        const same = (await granite.vault.list()).filter((p) => /\.(md|markdown)$/i.test(p) && p.slice(p.lastIndexOf("/") + 1).toLowerCase() === path.slice(path.lastIndexOf("/") + 1).toLowerCase());
+        if (path === model.note && same.length === 1) {
+          model = { note: same[0] };
+          missing = false;
+          save();
+          return loadPreview();
+        }
+      } catch {
+        // No list: the card just says the note is missing.
+      }
     }
     if (mode === "view") render();
   }
@@ -112,6 +137,18 @@ function mountPopup(root, source, block) {
     if (typeof granite.vault.open !== "function") return granite.notice("Update the Granite app to open notes as a popup");
     granite.vault.open(model.note, { beside: true }).catch((e) => granite.notice(String(e.message || e)));
   };
+
+  /** Make an empty note at `path` (never over an existing one) and point the card at it. */
+  async function create(path) {
+    try {
+      if ((await granite.vault.list()).some((p) => p.toLowerCase() === path.toLowerCase())) return choose(path);
+      await granite.vault.write(path, "");
+      if (notes) notes = [...notes, path].sort((a, b) => a.localeCompare(b));
+      choose(path);
+    } catch (e) {
+      granite.notice(String(e.message || e));
+    }
+  }
 
   function choose(path) {
     model = { note: path };
@@ -145,7 +182,15 @@ function mountPopup(root, source, block) {
       if (!notes) return list.append(h("div", { class: "empty" }, "Looking for notes…"));
       const q = query.toLowerCase();
       const hits = notes.filter((p) => p.toLowerCase().includes(q));
-      if (hits.length === 0) list.append(h("div", { class: "empty" }, "No note matches"));
+      const fresh = newNotePath(query);
+      if (fresh && !notes.some((p) => p.toLowerCase() === fresh.toLowerCase())) {
+        const make = h("button", { class: "row make", type: "button", role: "option" }, h("span", { class: "name" }, svg(ICONS.plus, 16), ` Create “${titleOf(fresh)}”`), folderOf(fresh) ? h("span", { class: "dim" }, folderOf(fresh)) : h("span", { class: "dim" }, "A new empty note"));
+        make.addEventListener("click", () => create(fresh));
+        list.append(make);
+      } else if (!query.trim()) {
+        list.append(h("div", { class: "empty" }, "Type a name to make a new note, or pick one:"));
+      }
+      if (hits.length === 0 && !fresh) list.append(h("div", { class: "empty" }, "No note matches"));
       for (const path of hits.slice(0, MAX_ROWS)) {
         const row = h("button", { class: path === model.note ? "row on" : "row", type: "button", role: "option" },
           h("span", { class: "name" }, titleOf(path)), folderOf(path) ? h("span", { class: "dim" }, folderOf(path)) : null);
@@ -223,4 +268,4 @@ if (typeof granite !== "undefined") {
   granite.input.addItem({ id: "popup", name: "Popup", description: "A card that opens another note as a popup", insert: () => fence({ note: "" }) });
 }
 
-if (typeof __popupTest !== "undefined") Object.assign(__popupTest, { parsePopup, serializePopup, fence, previewOf, titleOf, folderOf });
+if (typeof __popupTest !== "undefined") Object.assign(__popupTest, { parsePopup, serializePopup, fence, previewOf, titleOf, folderOf, newNotePath });

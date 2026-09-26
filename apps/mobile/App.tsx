@@ -4,7 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import * as Updates from 'expo-updates';
-import { IMAGE_FILE, basename, dirname, embedImage, join, moveFolder, noteTitle, relocateLinks, renamedNoteFile } from '@granite/core-notes';
+import { IMAGE_FILE, basename, dirname, embedImage, join, moveFolder, noteTitle, relocateLinks, renamedNoteFile, retargetNoteRefs } from '@granite/core-notes';
 import { PLUGINS_DIR, discoverPlugins, readPluginCode, type CommandInfo, type InstalledPlugin } from '@granite/plugins';
 import { GoogleDriveProvider, VaultSync, merge3, type DeviceCode, type GoogleSession, type PendingDeletion } from '@granite/core-cloud';
 import { emptyCanvas, serializeCanvas } from '@granite/canvas/format';
@@ -141,6 +141,36 @@ export default function App() {
       say(`Error: ${String(err)}`);
     }
   }, [say]);
+
+  const scanRef = useRef(scan);
+  scanRef.current = scan;
+
+  /**
+   * A note (or, with `folder`, a folder) was renamed or moved from `from` to `to` (vault paths): Popup cards and Simple Table note cells
+   * in the other notes that point at it are rewritten to follow. `notes` is the note list from before the move.
+   */
+  const fixNoteRefs = useCallback(async (from: string, to: string, folder: boolean, notes: string[]) => {
+    const now = (p: string) => (folder ? (p.startsWith(`${from}/`) ? `${to}${p.slice(from.length)}` : p) : p === from ? to : p);
+    for (const rel of notes) {
+      if (!/\.(md|markdown)$/i.test(rel)) continue;
+      const path = now(rel);
+      try {
+        const file = join(VAULT_DIR, path);
+        const text = await fs.readTextFile(file);
+        const fixed = retargetNoteRefs(text, from, to, folder);
+        if (fixed === text) continue;
+        await fs.writeTextFile(file, fixed);
+        if (openRel.current === path) {
+          latest.current = fixed;
+          savedText.current = fixed;
+          setOpen({ rel: path, text: fixed });
+          setDocId((d) => d + 1);
+        }
+      } catch {
+        // Unreadable right now: leave that note as it is.
+      }
+    }
+  }, []);
 
   /** Write the pending edit to disk now. */
   const flush = useCallback(async () => {
@@ -415,12 +445,14 @@ export default function App() {
           return null;
         }
         await flush(); // the pending edit is written to the old name before it moves
+        const before = scanRef.current.notes;
         await fs.moveFile(from, dest);
         if (openRel.current === rel) {
           openRel.current = to;
           setOpen((o) => o && { ...o, rel: to });
         }
         await refresh();
+        await fixNoteRefs(rel, to, false, before);
         say(`Renamed to ${noteTitle(next)}`);
         void runSync();
         return to;
@@ -429,7 +461,7 @@ export default function App() {
         return null;
       }
     },
-    [flush, refresh, runSync, say],
+    [flush, refresh, runSync, say, fixNoteRefs],
   );
 
   /** Rename the open note's file from its title. Returns whether it happened. */
@@ -596,6 +628,7 @@ export default function App() {
       try {
         if (await fs.exists(dest)) return say(`"${name}" already exists in ${folder ? basename(folder) : 'the vault'}`);
         if (openRel.current === rel) await flush();
+        const before = scanRef.current.notes;
         const text = await fs.readTextFile(from);
         await fs.moveFile(from, dest);
         const fixed = relocateLinks(text, dirname(from), dirname(dest));
@@ -607,12 +640,13 @@ export default function App() {
           setDocId((d) => d + 1);
         }
         await refresh();
+        await fixNoteRefs(rel, to, false, before);
         say(`Moved to ${folder ? basename(folder) : 'the vault'}`);
       } catch (err) {
         say(`Error: ${String(err)}`);
       }
     },
-    [flush, refresh, say],
+    [flush, refresh, say, fixNoteRefs],
   );
 
   /** Move a folder into `target` ("" = vault root), keeping links from its notes to things outside it working. */
@@ -626,6 +660,7 @@ export default function App() {
         if (await fs.exists(join(VAULT_DIR, to))) return say(`"${name}" already exists in ${where}`);
         const inside = openRel.current?.startsWith(`${rel}/`) ? openRel.current : null;
         if (inside) await flush();
+        const before = scanRef.current.notes;
         await moveFolder(fs, join(VAULT_DIR, rel), join(VAULT_DIR, to));
         if (inside) {
           const moved = `${to}/${inside.slice(rel.length + 1)}`;
@@ -636,12 +671,13 @@ export default function App() {
           setDocId((d) => d + 1);
         }
         await refresh();
+        await fixNoteRefs(rel, to, true, before);
         say(`Moved ${name} to ${where}`);
       } catch (err) {
         say(`Error: ${String(err)}`);
       }
     },
-    [flush, refresh, say],
+    [flush, refresh, say, fixNoteRefs],
   );
 
   const create = useCallback(
