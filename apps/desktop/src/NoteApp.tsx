@@ -128,12 +128,15 @@ export default function NoteApp({
   const [showPlugins, setShowPlugins] = useState(false);
 
   // Status messages surface as a short-lived toast; routine load/auto-save chatter is skipped.
+  // The timer lives in a ref, not in the effect's cleanup: a skipped "Saved …" arriving right after a message must not cancel its hiding.
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (/^(Starting|Saved |Read \+ parsed )/.test(status)) return;
     setToast(status);
-    const timer = setTimeout(() => setToast(null), /error|failed|already exists/i.test(status) ? 6000 : 3000);
-    return () => clearTimeout(timer);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), /error|failed|already exists/i.test(status) ? 4000 : 2000);
   }, [status]);
+  useEffect(() => () => void (toastTimer.current && clearTimeout(toastTimer.current)), []);
 
   const refreshVaultFiles = useCallback(async (vaultDirectory: string) => {
     try {

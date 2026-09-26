@@ -109,6 +109,9 @@ User: the Popup card should be able to create a new note, and when the note is r
 - **Rename / move follows** (`core-notes` `retargetNoteRefs`, tested): after a note rename / move or a folder move, both apps rewrite `note:` lines of ```popup fences and `[Title](note:Path.md)` cells in table rows across the vault (desktop `fixNoteRefs` in `NoteApp.tsx`, phone `fixNoteRefs` in `App.tsx`; note list taken from before the move). Simple Table note cells now use the `note:` scheme so `relocateLinks` (which treats plain links as relative) leaves them alone; old plain cells are still read.
 - Checked in the desktop preview: created "Brand new" from the card, renamed the note, the card followed. Phone not checked.
 
+## Session 2026-09-26 (night, later) — toast that never went away
+Desktop `NoteApp` toast: its hide timer was the effect's cleanup, and the effect early-returns for "Saved …" / "Read + parsed …"; a "Saved" arriving after "Moved …" ran the cleanup (timer cancelled) and left the toast up forever. The timer is now a ref (`toastTimer`). Durations shortened on desktop and phone: 2 s normal, 4 s for errors (was 3 / 6). Phone `say()` already used a ref, only the durations changed.
+
 ## Session 2026-09-25 (latest) — the Live Collab plugin itself (stage 2 of live collaboration)
 The user asked where the "share with a friend" plugin was: **it did not exist yet** (only plugin API 6 had been built; my earlier wording hid that). Built now, with no more questions (defaults chosen, all changeable):
 `examples/plugins/live-collab/` (id `live-collab`, v1.0.0, needs API 6). Yjs + `y-websocket` client + `@codemirror/state`, bundled by esbuild into `main.js` (`npm run build` in that folder; it has its own `package.json`/`node_modules`).

@@ -131,7 +131,7 @@ export default function App() {
   const say = useCallback((message: string) => {
     setToast(message);
     if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), /error|failed|already exists/i.test(message) ? 6000 : 3000);
+    toastTimer.current = setTimeout(() => setToast(null), /error|failed|already exists/i.test(message) ? 4000 : 2000);
   }, []);
 
   const refresh = useCallback(async () => {
