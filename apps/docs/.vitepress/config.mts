@@ -27,6 +27,7 @@ export default defineConfig({
       { text: "API reference", link: "/api/" },
       { text: "Examples", link: "/guide/examples" },
       { text: "Plugins", link: "/plugins/" },
+      { text: "Build a plugin", link: "/build" },
     ],
     sidebar: [
       {
