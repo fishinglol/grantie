@@ -6,4 +6,4 @@ export { checkLinkProvider, checkSvgIcon, findLinkProvider, svgDataUri } from ".
 export type { GraniteApi, CommandInfo, BlockContext, BlockHandle, HeaderButton, PanelContext, LinkProviderInfo, SyncCursor, SyncEvent } from "./api.ts";
 export type { LinkChip, LinkProvider } from "./links.ts";
 export type { InstalledPlugin } from "./discover.ts";
-export { INSTALLS_URL, fetchInstallCounts, installsLabel, reportInstall } from "./stats.ts";
+export { BUILD_URL, INSTALLS_URL, fetchInstallCounts, installsLabel, reportInstall } from "./stats.ts";

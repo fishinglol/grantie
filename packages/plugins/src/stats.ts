@@ -1,5 +1,10 @@
+const SITE = "https://granite-docs-phi.vercel.app";
+
 /** Where installs are counted: the docs site's Vercel Functions (`apps/docs/api/installs*.ts`). */
-export const INSTALLS_URL = "https://granite-docs-phi.vercel.app/api/installs";
+export const INSTALLS_URL = `${SITE}/api/installs`;
+
+/** The docs site's page that invites people to build a plugin (opened from the Store). */
+export const BUILD_URL = `${SITE}/build`;
 
 /** Fetch with a time limit, so a slow or unreachable counter never holds the app up. */
 async function limited(url: string, init?: RequestInit): Promise<Response> {

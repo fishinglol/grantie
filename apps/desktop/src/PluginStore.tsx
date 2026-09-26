@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { fetchInstallCounts, installsLabel, permissionLines, pluginHue } from "@granite/plugins";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { BUILD_URL, fetchInstallCounts, installsLabel, permissionLines, pluginHue } from "@granite/plugins";
 import type { CatalogPlugin } from "./pluginCatalog";
 import type { PluginsState } from "./usePlugins";
 
@@ -28,6 +29,8 @@ function Icon({ id, name, size }: { id: string; name: string; size: number }) {
 export default function PluginStore({ catalog, installed, busy, onInstall }: PluginStoreProps) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [zoom, setZoom] = useState<string | null>(null);
+  /** The "Build a plugin" page that invites people to write one. */
+  const [buildOpen, setBuildOpen] = useState(false);
   /** How many times each plugin has been installed (empty when the counter can't be reached). */
   const [counts, setCounts] = useState<Record<string, number>>({});
   useEffect(() => {
@@ -51,6 +54,43 @@ export default function PluginStore({ catalog, installed, busy, onInstall }: Plu
       </button>
     );
   };
+
+  if (buildOpen) {
+    return (
+      <div className="store-detail">
+        <button className="store-back" aria-label="Back to the Store" onClick={() => setBuildOpen(false)}>
+          ‹
+        </button>
+        <header className="store-head">
+          <Icon id="build" name="+" size={132} />
+          <div className="store-head-text">
+            <span className="store-kicker">For developers</span>
+            <h3>Build a plugin</h3>
+            <p>One JavaScript file. The same on desktop and phone.</p>
+          </div>
+          <button className="store-get" onClick={() => void openUrl(BUILD_URL)}>
+            READ THE GUIDE
+          </button>
+        </header>
+        <section className="store-section">
+          <h4>Why build one</h4>
+          <ul className="store-perms">
+            <li>Write plain JavaScript once. It runs in the desktop app and the phone app.</li>
+            <li>A small API: commands, your own blocks inside a note, typing and paste hooks, link chips, a header button and vault access.</li>
+            <li>It runs in a sandbox and asks for permission, so people can trust it before turning it on.</li>
+            <li>Your plugin gets its own public page with your screenshots and a link to you, and the Store counts how many people install it.</li>
+          </ul>
+          <h4>How it works</h4>
+          <ol className="store-setup">
+            <li>Write a folder with a manifest.json and a main.js.</li>
+            <li>Try it in your own vault, no build step.</li>
+            <li>Send a pull request with three screenshots and a README.</li>
+            <li>Once it is reviewed and merged, it shows up here.</li>
+          </ol>
+        </section>
+      </div>
+    );
+  }
 
   const open = catalog.find((c) => c.manifest.id === openId);
   if (open) {
@@ -142,6 +182,9 @@ export default function PluginStore({ catalog, installed, busy, onInstall }: Plu
             <Icon key={c.manifest.id} id={c.manifest.id} name={c.manifest.name} size={56} />
           ))}
         </div>
+        <button className="store-get" style={{ marginTop: 6 }} onClick={() => setBuildOpen(true)}>
+          Build your own plugin
+        </button>
       </div>
       <h4 className="store-title">All Plugins</h4>
       <ol className="store-grid">
