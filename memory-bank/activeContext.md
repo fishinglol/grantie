@@ -1,6 +1,6 @@
 # Active Context
 
-_Last updated: 2026-09-25 (Popup plugin added; see `progress.md` "Popup plugin")_
+_Last updated: 2026-09-26 (built-in `//` list, `//` in plugin fields, Popup / Simple Table / Cards updates, sync delete confirm; see `progress.md` "2026-09-26")_
 
 ## Current focus
 **Phone app + sync** (branch `feat/mobile-live-editor`, pushed; PR into `main` not opened yet) — see
@@ -112,12 +112,12 @@ User: the Popup card should be able to create a new note, and when the note is r
 ## Session 2026-09-26 (night, later) — toast that never went away
 Desktop `NoteApp` toast: its hide timer was the effect's cleanup, and the effect early-returns for "Saved …" / "Read + parsed …"; a "Saved" arriving after "Moved …" ran the cleanup (timer cancelled) and left the toast up forever. The timer is now a ref (`toastTimer`). Durations shortened on desktop and phone: 2 s normal, 4 s for errors (was 3 / 6). Phone `say()` already used a ref, only the durations changed.
 
-## Session 2026-09-26 (night, later still) — Cards 1.3.0: bold / italic / strike / underline
+## Session 2026-09-26 (night, later still) — Cards 1.3.0 -> 1.4.0: bold / italic / strike / underline (1.3.0's textarea + `formatEdit` version was replaced by 1.4.0 below)
 User (screenshot of the phone's B I U bar): the Cards plugin should have the same formatting, with Cmd+Shift+X too, on phone and desktop (shortcuts on desktop). Done in `examples/plugins/cards/main.js`: `formatEdit` (a port of `toggleFormat`, kept equal by a parity test in `cards.test.ts`), a B I S U bar under the card editor's text
 (buttons keep the selection; used on the last focused field: title, body or a checklist item), shortcuts Ctrl/Cmd+B, +I, +U, +Shift+X in those fields, and `inline()` draws `**bold**`, `*italic*`, `~~strike~~`, `<u>underline</u>` (also `***both***`) on the board cards (title, body, checklist items) with DOM nodes, no innerHTML. Text stays Markdown.
 Checked in a same-origin harness iframe (shortcuts + button + render); a real click test in the preview frame is unreliable in this browser pane. Needs UPDATE in the Store (Cards 1.3.0) and `npm run ship` for the phone.
 
-- **Cards 1.4.0 — the editor shows the formatting while typing** (user saw raw `**~~Hello~~**` in the card editor): title, text and checklist items are now `contenteditable` rich fields (`richField`, `mdToDom`, `domToMd` in `cards/main.js`); Markdown is still what is stored (literal `* ~ \ <` typed by the user are stored escaped, `inline()` reads `\*`).
+### Cards 1.4.0 — the editor shows the formatting while typing** (user saw raw `**~~Hello~~**` in the card editor): title, text and checklist items are now `contenteditable` rich fields (`richField`, `mdToDom`, `domToMd` in `cards/main.js`); Markdown is still what is stored (literal `* ~ \ <` typed by the user are stored escaped, `inline()` reads `\*`).
   Formatting uses `document.execCommand` (bold / italic / strikeThrough / underline), the B I S U buttons light up for the text at the caret, paste is plain text, Enter = line break (single-line fields: `onEnter`). The frame `//` menu (`slash.ts`) now also works in contenteditable fields (selection ranges + `execCommand`).
   The earlier textarea `formatEdit` port and its parity test were removed. Checked in the same-origin harness (real Cards code + `slash.ts`): shortcuts, button, Enter, `//head` -> Heading 1, save as Markdown, card render. Needs UPDATE in the Store + `npm run ship`. Not checked with the phone's Thai keyboard.
 

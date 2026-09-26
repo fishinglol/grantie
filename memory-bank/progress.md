@@ -718,3 +718,17 @@ Asked which meaning; chosen: **a note-link block**. `examples/plugins/popup` (id
 bin removes, a missing note says so. No new API or dependency; it reuses what Calendar uses. Tests: `packages/plugins/test/popup.test.ts` (+ entry in `menu-items.test.ts`; 97 pass).
 Store pictures are real captures (headless Chrome over CDP against the desktop dev server, 4 x 1440x900) with Calendar, Cards, Dropdown and Popup installed together, so the `//` list shows them side by side.
 **Not verified**: the phone (bottom sheet from a Popup card, touch, keyboard) and the real Tauri window. The picker also lists the note it is in (opening it does nothing). Moving/renaming the target note breaks the card (path, not `[[link]]`).
+
+## 2026-09-26 — `//` everywhere, Popup / Simple Table / Cards, safer sync (branch `feat/mobile-live-editor`, commits 476b964 … 5e38892)
+Everything below is pushed and was shipped to the phone with `npm run ship` (EAS Update, channel `preview`). **Checked in the desktop preview and unit tests only** (not on the phone, not in a rebuilt Tauri window);
+the desktop app needs `npm run tauri build` (`/Applications/Granite.app` is an old build), and plugins need UPDATE in the Store.
+- **Built-in `//` list** (`LiveEditor.tsx`, `CORE_ITEMS`): headings, bulleted / numbered list, quote, code block, divider, Markdown table always appear, plugin entries follow. It opens when the line first becomes `//…` (also when several characters arrive as one input);
+  Escape keeps it closed. Entries are chosen on `click`, not `pointerdown` (a finger scrolling the list on a phone chose an entry).
+- **`//` in plugin text fields** (`packages/plugins/src/slash.ts`, injected into every block frame by `bootstrapHtml`): the same list (Date / Time / Checkbox + Markdown blocks + every running plugin's entries via `slash-list` / `slash-run`), for textareas, text inputs and contenteditable fields.
+  `data-slash="off"` opts a field out (Simple Table's cells have their own menu).
+- **Simple Table 1.7.0**: cell menu adds Popup (note link: pick or create; `[Title](note:Path.md)`), Date, Time, Checkbox. **Popup 1.1.0**: `+ Create "name"`, self-heals by file name. Rename / move of a note or folder rewrites both formats across the vault (`core-notes` `retargetNoteRefs`; desktop + phone `fixNoteRefs`).
+- **Cards 1.4.0**: title / text / checklist items are rich fields showing bold / italic / strike / underline while typing (B I S U bar, Ctrl/Cmd+B / I / U / Shift+X); stored as Markdown.
+- **Sync**: `VaultSyncOptions.confirmDeletes` replaces the hard stop on mass deletions (desktop `DeletionsDialog`, phone Alert); a "no" is not asked again for 10 minutes.
+- **Toast** (desktop): the hide timer is a ref (a later "Saved …" no longer leaves it up); 2 s normal, 4 s errors on desktop and phone.
+- Tests: plugins 102, core-cloud 79, core-notes 44, live-editor 4. Not checked: Thai keyboard in the Cards rich fields on the phone, the delete-confirm dialog on screen, real Drive.
+

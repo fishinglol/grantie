@@ -253,3 +253,18 @@ restart. Not exercised in dev; needs a real `npm run ship`.
   `connectAttempt` counter makes Cancel safe: a late sign-in result is ignored. The Rust
   loopback listener can't be cancelled; it just times out (5 min).
 - The login/skip paths use `enter()`: stored vault → straight to `ready`; otherwise `setup`.
+
+## Pattern: the `//` list is built in, plugins add to it; plugin fields get it from the host
+`slashMenu()` in `LiveEditor.tsx` always lists `CORE_ITEMS` (choosing one inserts text directly, no plugin frame) and appends `blocks.menuItems()`. Inside a plugin's visible block frame, `slash.ts` (`SLASH_SCRIPT`, injected by `bootstrapHtml` when `block`) gives every textarea / text input / contenteditable the same list:
+the frame asks the host (`slash-list`), the host answers with `menuItems()`, and a chosen plugin entry goes through `slash-run` -> `runInput("item")`. Choose on `click`, never on `pointerdown` (touch scrolling). A plugin with its own menu sets `data-slash="off"` on its fields.
+
+## Pattern: notes that point at other notes by vault path follow renames
+Popup cards (`note: Path.md` in a ```popup fence) and Simple Table cells (`[Title](note:Path.md)`) store vault paths, not relative links (the `note:` scheme keeps `relocateLinks` away). After a note rename / move or a folder move, both apps call `retargetNoteRefs` (`core-notes`) on the notes listed **before** the move (`fixNoteRefs`).
+A new plugin that stores note paths should use one of these two formats so it is covered.
+
+## Pattern: big sync deletions need a yes
+`VaultSync` stops (throws) when a plan would delete more than `MAX_UNATTENDED_DELETES` files and more than 30% of the tracked ones, unless `confirmDeletes(files)` resolves true. Apps show the file list (`DeletionsDialog` / `Alert`). A declined batch is not asked again for 10 minutes.
+
+## Pattern: rich text in a plugin = contenteditable + Markdown
+Cards' editor fields (`richField`) are contenteditable showing the formatting; `mdToDom` / `domToMd` convert to / from the stored Markdown (literal `* ~ \ <` escaped), formatting uses `document.execCommand`, paste is plain text. A hidden `<br>` is the browser's placeholder at the end, not a line.
+
