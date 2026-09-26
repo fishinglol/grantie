@@ -109,3 +109,20 @@ test("connect lists the servers a plugin may reach, and only ws:// or wss:// hos
   }
   assert.throws(() => parseManifest({ ...base, connect: "wss://x.com" }), /connect/);
 });
+
+test("setup lists the steps to take before a plugin works (up to 8, each plain text)", () => {
+  const base = { id: "x", name: "X", version: "1" };
+  assert.deepEqual(parseManifest({ ...base, setup: ["Do this", "Then that"] }).setup, ["Do this", "Then that"]);
+  assert.equal(parseManifest(base).setup, undefined);
+  assert.equal(parseManifest({ ...base, setup: [] }).setup, undefined);
+  for (const bad of ["Do this", [""], [5], ["x".repeat(301)], Array(9).fill("step")]) {
+    assert.throws(() => parseManifest({ ...base, setup: bad }), /setup/, String(bad));
+  }
+});
+
+test("soon marks a plugin the Store shows but does not let anyone install", () => {
+  const base = { id: "x", name: "X", version: "1" };
+  assert.equal(parseManifest({ ...base, soon: true }).soon, true);
+  assert.equal(parseManifest(base).soon, undefined);
+  assert.equal(parseManifest({ ...base, soon: "yes" }).soon, undefined);
+});

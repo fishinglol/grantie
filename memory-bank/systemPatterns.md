@@ -268,3 +268,12 @@ A new plugin that stores note paths should use one of these two formats so it is
 ## Pattern: rich text in a plugin = contenteditable + Markdown
 Cards' editor fields (`richField`) are contenteditable showing the formatting; `mdToDom` / `domToMd` convert to / from the stored Markdown (literal `* ~ \ <` escaped), formatting uses `document.execCommand`, paste is plain text. A hidden `<br>` is the browser's placeholder at the end, not a line.
 
+## Pattern: a plugin's own button + window (plugin API 7, `ui.panel`)
+The plugin's hidden main iframe is *shown* as the window (CSS class `.granite-panel-frame` on the same element; never reparented, that would reload it), with a dimmed backdrop `div`. So the window shares all state with the plugin's code and no message relay is needed. Host side (`packages/plugins/src/host.ts`): `ui.button` (title + checked svg icon, `xmlns` added), `ui.badge`, `ui.copy`, `headerButtons()`, `openPanel(id)` / `closePanel()`, `panel-open` / `panel-close` / `panel-resize` messages; a block frame may not add a button. Apps only draw the button: desktop `PageMenu` (icon as a CSS mask so it takes the button colour), phone top bar = a **text pill** (no `react-native-svg`); phone messages `plugin-buttons` (page -> app) and `plugin-button` (app -> page). The window is drawn inside the editor page, a bottom sheet under 600 px wide. Frame quirk: screenshots of the cross-process frame lag ~1 s behind the real paint.
+
+## Pattern: end-to-end encrypted relay (Live Collab)
+The relay never has the key. The invite's secret gives (via SHA-256 with two labels) the room name the relay sees and the AES-GCM key (room name = AAD). The relay (`server/room.mjs`, shared by the Node server and the Cloudflare Worker) only keeps an ordered list of opaque blobs and replays it to newcomers; first byte of each message = type. Client: `src/relay.ts` `RelayProvider` (replaced y-websocket). Status: built and tested, **not reviewed by anyone and the plugin is "SOON" in the Store** (`manifest.soon`).
+
+## Pattern: manifest `setup` and `soon`
+`setup` = numbered "Before you start" steps on a plugin's Store page; `soon: true` = listed but not installable (SOON button, install refused on both apps).
+

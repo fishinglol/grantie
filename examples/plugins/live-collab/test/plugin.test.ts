@@ -12,6 +12,7 @@ function load() {
   const commands: { id: string; name: string; page?: boolean; run: () => unknown }[] = [];
   const items: { id: string; name: string; insert: () => Promise<string> }[] = [];
   const blocks: Record<string, unknown> = {};
+  const buttons: { title: string; icon: string; open: unknown }[] = [];
   const notices: string[] = [];
   const vault = new Map<string, string>();
   const granite = {
@@ -19,6 +20,7 @@ function load() {
     input: { addItem: async (i: (typeof items)[number]) => void items.push(i) },
     blocks: { register: (lang: string, fn: unknown) => void (blocks[lang] = fn) },
     editor: { getText: async () => "" },
+    ui: { headerButton: (b: (typeof buttons)[number]) => void buttons.push(b), setBadge: async () => {}, copy: async () => {} },
     vault: {
       read: async (p: string) => {
         if (!vault.has(p)) throw new Error("no such note");
@@ -29,17 +31,20 @@ function load() {
     notice: (m: string) => notices.push(m),
   };
   vm.runInNewContext(code, { granite, console, setTimeout, clearTimeout, setInterval, clearInterval, crypto, TextEncoder, TextDecoder, URL, queueMicrotask, Uint8Array });
-  return { commands, items, blocks, notices, vault };
+  return { commands, items, blocks, buttons, notices, vault };
 }
 
-test("the plugin asks for what it uses and needs API 6", () => {
+test("the plugin asks for what it uses and needs API 7", () => {
   assert.equal(manifest.id, "live-collab");
-  assert.ok((manifest.minApiVersion ?? 0) >= 6);
-  for (const p of ["editor.sync", "editor.read", "editor.blocks", "editor.input", "vault.read", "vault.write", "network"]) assert.ok(manifest.permissions.includes(p as never), p);
+  assert.ok((manifest.minApiVersion ?? 0) >= 7);
+  for (const p of ["editor.sync", "editor.read", "editor.write", "editor.blocks", "editor.input", "ui.panel", "vault.read", "vault.write", "network"]) assert.ok(manifest.permissions.includes(p as never), p);
 });
 
 test("the built main.js loads and registers its commands, its // entry and its block", () => {
-  const { commands, items, blocks } = load();
+  const { commands, items, blocks, buttons } = load();
+  assert.equal(buttons.length, 1);
+  assert.equal(buttons[0]!.title, "Share");
+  assert.match(buttons[0]!.icon, /^<svg/);
   assert.deepEqual(commands.map((c) => c.id).sort(), ["go-live", "leave"]);
   assert.ok(commands.every((c) => c.page));
   assert.equal(items.length, 1);

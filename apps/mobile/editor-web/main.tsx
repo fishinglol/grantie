@@ -54,6 +54,7 @@ type Inbound =
   | { type: "insert"; text: string }
   | { type: "plugins"; plugins: { manifest: PluginManifest; code: string }[] }
   | { type: "plugin-run"; n: number; pluginId: string; commandId: string }
+  | { type: "plugin-button"; pluginId: string }
   | { type: "vault-result"; id: number; ok: boolean; value?: unknown; error?: string };
 
 type CanvasInfo = { vaultDir: string; notes: string[]; images: string[] };
@@ -375,6 +376,7 @@ function Page() {
       },
       () => send({ type: "plugin-commands", commands: h.commands() }),
       blocks.changed,
+      () => send({ type: "plugin-buttons", buttons: h.headerButtons() }),
     );
     host.current = h;
     blocks.host = h;
@@ -416,7 +418,8 @@ function Page() {
           () => send({ type: "plugin-result", n }),
           (e: unknown) => send({ type: "plugin-result", n, error: e instanceof Error ? e.message : String(e) }),
         );
-      } else if (msg.type === "vault-result") {
+      } else if (msg.type === "plugin-button") host.current?.openPanel(msg.pluginId);
+      else if (msg.type === "vault-result") {
         const call = vaultCalls.get(msg.id);
         vaultCalls.delete(msg.id);
         if (call) (msg.ok ? call.resolve(msg.value) : call.reject(new Error(msg.error)));

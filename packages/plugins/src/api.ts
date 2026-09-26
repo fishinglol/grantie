@@ -58,6 +58,23 @@ export interface SyncCursor {
   head: number;
 }
 
+/** What the plugin's window gets to talk back to the app with (`ui.headerButton`). */
+export interface PanelContext {
+  /** Close the window. The Escape key and a tap outside it close it too. */
+  close(): void;
+  /** How tall the window is, in pixels (kept between 120 and the screen height). */
+  resize(height: number): void;
+}
+
+/** A plugin's button at the top of the open note, as the apps list it. `icon` is a `data:image/svg+xml` URI (draw it as a mask so it takes the button's colour). */
+export interface HeaderButton {
+  pluginId: string;
+  title: string;
+  icon: string;
+  /** `#rrggbb` of a small dot on the button, or null. */
+  badge: string | null;
+}
+
 export interface GraniteApi {
   commands: {
     /**
@@ -102,6 +119,24 @@ export interface GraniteApi {
       /** At most 50 carets; `name` up to 40 characters. Pass `[]` to remove them all. */
       setCursors(cursors: SyncCursor[]): Promise<void>;
     };
+  };
+  ui: {
+    /**
+     * ui.panel (API 7): put a button (one per plugin) next to the reading-mode / split / ⋯ buttons at the top of a note. Pressing it shows
+     * the plugin's own frame as a window (a sheet from the bottom on a phone) and calls `open(el, panel)` with `el` = the frame's `<body>`
+     * (fill it; the frame gets the editor's colour variables like a block). `open` runs every time the window is opened; the
+     * body keeps what it had. The plugin's code keeps running while the window is closed, so it can hold state. `open` may return `{ close() }`
+     * to be told when the window closes. `icon` is a plain `<svg>` (stroke only; it is drawn in the button's colour), `title` up to 40 characters.
+     */
+    headerButton(button: {
+      title: string;
+      icon: string;
+      open: (el: HTMLElement, panel: PanelContext) => void | { close?(): void };
+    }): Promise<void>;
+    /** ui.panel: a small dot (`#rrggbb`) on the button, or `null` to remove it (e.g. "you are live"). */
+    setBadge(color: string | null): Promise<void>;
+    /** ui.panel: put text on the clipboard (at most 10 000 characters). Rejects when the system refuses. */
+    copy(text: string): Promise<void>;
   };
   blocks: {
     /**
@@ -175,6 +210,9 @@ export const METHOD_PERMISSION: Record<string, Permission | null> = {
   "sync.remote": "editor.sync",
   "sync.ack": "editor.sync",
   "sync.setCursors": "editor.sync",
+  "ui.button": "ui.panel",
+  "ui.badge": "ui.panel",
+  "ui.copy": "ui.panel",
   "blocks.register": "editor.blocks",
   "input.register": "editor.input",
   "links.register": "editor.links",

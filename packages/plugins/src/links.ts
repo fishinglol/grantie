@@ -58,6 +58,14 @@ export function checkLinkProvider(raw: unknown): LinkProvider {
   return { id, name, label, hosts: (hosts as string[]).map((h) => h.toLowerCase()), color: color.toLowerCase(), icon };
 }
 
+/** A small plain `<svg>` from a plugin (a button icon). Throws with a message fit to show the user. */
+export function checkSvgIcon(value: unknown, what: string): string {
+  if (typeof value !== "string" || value.length > MAX_ICON || !/^<svg[\s>]/i.test(value) || BAD_SVG.test(value)) {
+    throw new Error(`${what}: the icon must be a plain <svg> (up to ${MAX_ICON} characters) with no scripts, links or styles`);
+  }
+  return value;
+}
+
 export const svgDataUri = (svg: string): string => `data:image/svg+xml,${encodeURIComponent(svg)}`;
 
 /** The most specific provider whose site the URL belongs to, or null. */

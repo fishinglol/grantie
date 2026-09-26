@@ -115,6 +115,7 @@
   (CLAUDE.md requires asking). It brings d3-drag/zoom/selection etc. transitively. `packages/canvas` declares `react` **and `react-dom`** as peers,
   otherwise `npm install` fails to resolve (root `overrides` pin react 19.2.3). The phone loads it only inside the editor WebView page
   (`apps/mobile/editor-web`, ~200 KB more inlined into `editorHtml.ts`); the RN side imports only the pure `@granite/canvas/format`.
+- **Live Collab deps (2026-09-26):** `yjs`, `y-protocols`, `ws`, `@codemirror/state` (+ `esbuild` dev) in `examples/plugins/live-collab` only; `y-websocket` was **removed** (own encrypted transport, `src/relay.ts`). The Cloudflare Worker (`worker/`, `wrangler.toml`) needs `wrangler` only to deploy: it is run with `npx`, not a dependency, and has never been run (needs the user's Cloudflare login). Live Collab tests: `cd examples/plugins/live-collab && npm test` (35; the e2e spawns the real Node relay). Its Node tests run TS in strip-only mode: no constructor parameter properties.
 - **Tests:** `npm test` inside `packages/{core-notes,core-cloud,plugins,canvas}` (`node --test` runs the TS directly; no enums / private params).
   Plugin example code is loaded with `node:vm` in `packages/plugins/test/*.test.ts` (cards, excel, simple-table, calendar).
 - **Which desktop app is the user running? Check first** (`ps aux | grep -i granite`). Since 2026-09-24 afternoon they run **`/Applications/Granite.app`**, a *release build* with the

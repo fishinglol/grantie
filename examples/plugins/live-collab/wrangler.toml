@@ -1,0 +1,13 @@
+# Cloudflare Worker for Live Collab's relay (see README, "Run the relay on Cloudflare").
+name = "granite-live"
+main = "worker/index.js"
+compatibility_date = "2025-01-01"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "LiveRoom"
+
+# Durable Objects on Cloudflare's free plan must use SQLite storage (this relay stores nothing, it only needs the object).
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LiveRoom"]

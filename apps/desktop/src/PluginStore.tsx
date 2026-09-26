@@ -32,11 +32,11 @@ export default function PluginStore({ catalog, installed, busy, onInstall }: Plu
   const GetButton = ({ entry }: { entry: CatalogPlugin }) => {
     const m = entry.manifest;
     const have = installed?.find((p) => p.manifest?.id === m.id)?.manifest;
-    const label = !have ? "GET" : have.version !== m.version ? "UPDATE" : "INSTALLED";
+    const label = m.soon ? "SOON" : !have ? "GET" : have.version !== m.version ? "UPDATE" : "INSTALLED";
     return (
       <button
-        className={label === "INSTALLED" ? "store-get done" : "store-get"}
-        disabled={label === "INSTALLED" || busy !== null}
+        className={label === "INSTALLED" || label === "SOON" ? "store-get done" : "store-get"}
+        disabled={label === "INSTALLED" || label === "SOON" || busy !== null}
         onClick={(e) => {
           e.stopPropagation();
           onInstall(entry);
@@ -95,6 +95,17 @@ export default function PluginStore({ catalog, installed, busy, onInstall }: Plu
         <section className="store-section">
           <h4>About</h4>
           {m.description && <p className="store-desc">{m.description}</p>}
+          {m.soon && <p className="store-desc"><strong>Coming soon.</strong> We are still working on it, so it can&apos;t be installed yet.</p>}
+          {m.setup && !m.soon && (
+            <>
+              <h4>Before you start</h4>
+              <ol className="store-setup">
+                {m.setup.map((step) => (
+                  <li key={step}>{step}</li>
+                ))}
+              </ol>
+            </>
+          )}
           <h4>Needs your permission to</h4>
           <ul className="store-perms">
             {permissionLines(m).length === 0 ? <li>Nothing. It needs no permissions.</li> : permissionLines(m).map((line) => <li key={line}>{line}</li>)}

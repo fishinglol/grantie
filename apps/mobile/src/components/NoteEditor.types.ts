@@ -1,4 +1,4 @@
-import type { CommandInfo, PluginManifest } from '@granite/plugins';
+import type { CommandInfo, HeaderButton, PluginManifest } from '@granite/plugins';
 
 export interface NoteEditorHandle {
   /** Add a block of Markdown (e.g. an image link) at the cursor. */
@@ -7,6 +7,8 @@ export interface NoteEditorHandle {
   setText(text: string): void;
   /** Run a command a plugin registered inside the editor page. */
   runPluginCommand(pluginId: string, commandId: string): Promise<void>;
+  /** A plugin's button in the top bar was pressed: the page opens that plugin's window. */
+  openPluginButton(pluginId: string): void;
   /** On a canvas: put a vault file (vault-relative path) on it as a card. */
   addFile(file: string): void;
 }
@@ -45,6 +47,8 @@ export interface NoteEditorProps {
   onOpenUrl: (url: string) => void;
   onVault: (request: PluginVaultRequest) => Promise<unknown>;
   onPluginCommands: (commands: CommandInfo[]) => void;
+  /** The buttons plugins want in the top bar (plugin API 7). */
+  onPluginButtons: (buttons: HeaderButton[]) => void;
   /** A plugin failed to start (`error` set) or started fine (`null`). */
   onPluginStatus: (id: string, error: string | null) => void;
   /** Set when the file is a `.canvas`: the page shows the canvas, offering these vault-relative notes and images. */

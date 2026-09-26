@@ -1,6 +1,6 @@
 import { SLASH_SCRIPT } from "./slash.ts";
-import { METHOD_PERMISSION, checkPluginCss, safeNotePath, type CommandInfo, type SyncCursor, type SyncEvent } from "./api.ts";
-import { checkLinkProvider, findLinkProvider, svgDataUri, type LinkChip, type LinkProvider } from "./links.ts";
+import { METHOD_PERMISSION, checkPluginCss, safeNotePath, type CommandInfo, type HeaderButton, type SyncCursor, type SyncEvent } from "./api.ts";
+import { checkLinkProvider, checkSvgIcon, findLinkProvider, svgDataUri, type LinkChip, type LinkProvider } from "./links.ts";
 import type { PluginManifest } from "./manifest.ts";
 
 /**
@@ -54,6 +54,8 @@ export interface HostAdapter {
   openUrl?(url: string): void;
   /** The open note's live-session port; absent where the app can't do it. */
   sync?: SyncPort;
+  /** Put text on the clipboard. Absent: the host tries the web view's own clipboard. */
+  copyText?(text: string): Promise<void>;
 }
 
 /** A command that hasn't finished after this long is assumed stuck; its plugin is shut down. */
@@ -66,12 +68,13 @@ const INPUT_TIMEOUT_MS = 5_000;
  * cannot touch the app's DOM, storage or native bridge, and a CSP that blocks every network request
  * unless the manifest asked for `network`. Its only way out is `postMessage` to the host.
  */
-function bootstrapHtml(network: boolean, block: boolean, connect: string[] = []): string {
-  // A block frame is visible (it is drawn inside the note), so it may style itself and show inline images.
-  const csp = `default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'${block ? "; style-src 'unsafe-inline'; img-src data:" : ""}${network || connect.length > 0 ? `; connect-src ${[...(network ? ["https:", "wss:"] : []), ...connect].join(" ")}` : ""}`;
-  return `<!doctype html><meta http-equiv="Content-Security-Policy" content="${csp}">${block ? "<style>html,body{margin:0;background:transparent}</style>" : ""}<script>
+function bootstrapHtml(network: boolean, block: boolean, connect: string[] = [], ui = false): string {
+  // A block frame is visible (it is drawn inside the note), so it may style itself and show inline images. So may a plugin's window (`ui.panel`).
+  const styled = block || ui;
+  const csp = `default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'${styled ? "; style-src 'unsafe-inline'; img-src data:" : ""}${network || connect.length > 0 ? `; connect-src ${[...(network ? ["https:", "wss:"] : []), ...connect].join(" ")}` : ""}`;
+  return `<!doctype html><meta http-equiv="Content-Security-Policy" content="${csp}">${block ? "<style>html,body{margin:0;background:transparent}</style>" : ui ? "<style>html,body{margin:0;background:var(--panel);color:var(--text);font:14px system-ui,sans-serif}</style>" : ""}<script>
 (function () {
-  var host = window.parent, pending = {}, seq = 0, commands = {}, isBlock = false, blockFns = {}, blockHandle = null, triggers = {}, pasteFn = null, items = {}, linkTitles = {}, syncHandler = null;
+  var host = window.parent, pending = {}, seq = 0, commands = {}, isBlock = false, blockFns = {}, blockHandle = null, triggers = {}, pasteFn = null, items = {}, linkTitles = {}, syncHandler = null, panelFn = null, panelHandle = null;
   function applyVars(vars) { for (var k in vars) document.documentElement.style.setProperty(k, vars[k]); }
   function send(m) { host.postMessage(m, "*"); }
   function call(method, args) {
@@ -104,6 +107,15 @@ function bootstrapHtml(network: boolean, block: boolean, connect: string[] = [])
         ack: function () { return call("sync.ack", []); },
         setCursors: function (list) { return call("sync.setCursors", [list]); }
       })
+    }),
+    ui: Object.freeze({
+      headerButton: function (d) {
+        if (!d || typeof d.title !== "string" || typeof d.icon !== "string" || typeof d.open !== "function") throw new Error("ui.headerButton needs { title, icon, open }");
+        panelFn = d.open;
+        if (!isBlock) return call("ui.button", [d.title, d.icon]);
+      },
+      setBadge: function (color) { if (!isBlock) return call("ui.badge", [color == null ? null : String(color)]); },
+      copy: function (t) { return call("ui.copy", [String(t)]); }
     }),
     blocks: Object.freeze({ register: function (lang, fn) {
       if (typeof lang !== "string" || typeof fn !== "function") throw new Error("blocks.register needs (lang, render)");
@@ -149,6 +161,7 @@ function bootstrapHtml(network: boolean, block: boolean, connect: string[] = [])
     }),
     notice: function (m) { send({ k: "call", n: 0, method: "notice", args: [String(m)] }); }
   });
+  window.addEventListener("keydown", function (e) { if (e.key === "Escape") send({ k: "panel-close" }); });
   window.addEventListener("error", function (e) { send({ k: "error", message: String(e.message) }); });
   window.addEventListener("unhandledrejection", function (e) { send({ k: "error", message: String(e.reason && e.reason.message || e.reason) }); });
   window.addEventListener("message", function (e) {
@@ -171,6 +184,20 @@ function bootstrapHtml(network: boolean, block: boolean, connect: string[] = [])
         send({ k: "ready" });
       }
       catch (err) { send({ k: "error", message: String(err && err.message || err), fatal: true }); }
+    } else if (m.k === "panel-open") {
+      applyVars(m.vars);
+      try {
+        if (!panelFn) throw new Error("this plugin has no window");
+        panelHandle = panelFn(document.body, Object.freeze({
+          close: function () { send({ k: "panel-close" }); },
+          resize: function (h) { send({ k: "panel-resize", height: Number(h) }); }
+        })) || null;
+      }
+      catch (err) { send({ k: "error", message: String(err && err.message || err) }); send({ k: "panel-close" }); }
+    } else if (m.k === "panel-close") {
+      try { if (panelHandle && panelHandle.close) panelHandle.close(); }
+      catch (err) { send({ k: "error", message: String(err && err.message || err) }); }
+      panelHandle = null;
     } else if (m.k === "block-update") {
       applyVars(m.vars);
       try { if (blockHandle && blockHandle.update) blockHandle.update(m.source); }
@@ -218,6 +245,13 @@ export interface BlockActions {
   edit(): void;
 }
 
+const MAX_COPY = 10_000;
+/** The plugin's window: a centred card on a wide screen, a sheet from the bottom on a narrow one. */
+const PANEL_CSS =
+  ".granite-panel-backdrop{position:fixed;inset:0;z-index:2147482999;background:rgba(0,0,0,.45)}" +
+  ".granite-panel-frame{position:fixed;z-index:2147483000;left:50%;top:50%;transform:translate(-50%,-50%);width:min(480px,calc(100vw - 24px));max-height:calc(100vh - 24px);border:0;border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.5);background:transparent}" +
+  "@media (max-width:600px){.granite-panel-frame{left:0;right:0;top:auto;bottom:0;transform:none;width:100%;max-height:90vh;border-radius:16px 16px 0 0}}";
+
 /** Blocks may not grow taller than this (px); the block scrolls inside itself past it. */
 const MAX_BLOCK_HEIGHT = 1200;
 const MAX_BLOCK_SOURCE = 2_000_000;
@@ -257,6 +291,9 @@ interface Loaded {
   /** Languages this plugin draws (```lang fences). */
   blockLangs: Set<string>;
   commands: Map<string, { name: string; page: boolean }>;
+  /** Its button at the top of the note (`ui.headerButton`) and the dot on it. */
+  button?: { title: string; icon: string };
+  badge: string | null;
   /** Texts the user may type alone on a line to trigger it, and whether it takes over pasted spreadsheet text. */
   triggers: Set<string>;
   paste: boolean;
@@ -275,6 +312,7 @@ export class PluginHost {
   readonly #adapter: HostAdapter;
   readonly #onCommands: () => void;
   readonly #onBlocks: () => void;
+  readonly #onButtons: () => void;
   readonly #plugins = new Map<string, Loaded>();
   readonly #blocks = new Set<BlockFrame>();
   #runSeq = 0;
@@ -282,11 +320,14 @@ export class PluginHost {
   #syncOwner: string | null = null;
   /** Identifies that session, so a late "ended" from an earlier one (the plugin restarting its own) can't end this one. */
   #syncToken: object | null = null;
+  /** The plugin window that is open, and the dimmed layer behind it. */
+  #panel: { plugin: Loaded; backdrop: HTMLElement } | null = null;
 
-  constructor(adapter: HostAdapter, onCommandsChanged: () => void = () => {}, onBlocksChanged: () => void = () => {}) {
+  constructor(adapter: HostAdapter, onCommandsChanged: () => void = () => {}, onBlocksChanged: () => void = () => {}, onButtonsChanged: () => void = () => {}) {
     this.#adapter = adapter;
     this.#onCommands = onCommandsChanged;
     this.#onBlocks = onBlocksChanged;
+    this.#onButtons = onButtonsChanged;
     window.addEventListener("message", this.#onMessage);
   }
 
@@ -297,8 +338,8 @@ export class PluginHost {
     frame.setAttribute("sandbox", "allow-scripts");
     frame.setAttribute("aria-hidden", "true");
     frame.style.cssText = "display:none;width:0;height:0;border:0";
-    frame.srcdoc = bootstrapHtml(manifest.permissions.includes("network"), false, manifest.connect);
-    const entry: Loaded = { manifest, frame, blockLangs: new Set(), commands: new Map(), triggers: new Set(), paste: false, items: new Map(), links: new Map(), inputs: new Map(), runs: new Map(), code };
+    frame.srcdoc = bootstrapHtml(manifest.permissions.includes("network"), false, manifest.connect, manifest.permissions.includes("ui.panel"));
+    const entry: Loaded = { manifest, frame, blockLangs: new Set(), commands: new Map(), badge: null, triggers: new Set(), paste: false, items: new Map(), links: new Map(), inputs: new Map(), runs: new Map(), code };
     this.#plugins.set(manifest.id, entry);
     const started = new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -316,6 +357,8 @@ export class PluginHost {
     if (!entry) return;
     this.#plugins.delete(id);
     if (this.#syncOwner === id) this.#endSync();
+    if (this.#panel?.plugin === entry) this.closePanel();
+    if (entry.button) this.#onButtons();
     entry.frame.remove();
     this.#setStyle(id, ""); // a plugin's look goes away with it
     for (const b of [...this.#blocks]) {
@@ -452,6 +495,65 @@ export class PluginHost {
     });
   }
 
+  /** The buttons running plugins put at the top of a note (`ui.headerButton`). */
+  headerButtons(): HeaderButton[] {
+    return [...this.#plugins.values()].flatMap((p) => (p.button ? [{ pluginId: p.manifest.id, title: p.button.title, icon: svgDataUri(p.button.icon), badge: p.badge }] : []));
+  }
+
+  /** Show the window of the plugin whose button was pressed (closing any other). No-op when it has none. */
+  openPanel(pluginId: string): void {
+    const entry = this.#plugins.get(pluginId);
+    if (!entry?.button) return;
+    this.closePanel();
+    if (!document.head.querySelector("style[data-granite-panel]")) {
+      const style = document.createElement("style");
+      style.setAttribute("data-granite-panel", "");
+      style.textContent = PANEL_CSS;
+      document.head.append(style);
+    }
+    const backdrop = document.createElement("div");
+    backdrop.className = "granite-panel-backdrop";
+    backdrop.addEventListener("pointerdown", () => this.closePanel());
+    document.body.append(backdrop);
+    entry.frame.className = "granite-panel-frame";
+    entry.frame.style.cssText = "height:420px";
+    entry.frame.setAttribute("aria-hidden", "false");
+    entry.frame.title = entry.button.title;
+    this.#panel = { plugin: entry, backdrop };
+    // Vars come from the editor (that is where the theme is defined), as they do for a block.
+    entry.frame.contentWindow?.postMessage({ k: "panel-open", vars: themeVars((document.querySelector(".live-editor") as HTMLElement | null) ?? document.documentElement) }, "*");
+  }
+
+  closePanel(): void {
+    const panel = this.#panel;
+    if (!panel) return;
+    this.#panel = null;
+    panel.backdrop.remove();
+    panel.plugin.frame.className = "";
+    panel.plugin.frame.style.cssText = "display:none;width:0;height:0;border:0";
+    panel.plugin.frame.setAttribute("aria-hidden", "true");
+    panel.plugin.frame.contentWindow?.postMessage({ k: "panel-close" }, "*");
+  }
+
+  async #copy(text: string): Promise<void> {
+    if (text.length > MAX_COPY) throw new Error(`copy takes at most ${MAX_COPY} characters`);
+    if (this.#adapter.copyText) return this.#adapter.copyText(text);
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // not allowed from here; try the older way below
+    }
+    const box = document.createElement("textarea");
+    box.value = text;
+    box.style.cssText = "position:fixed;opacity:0";
+    document.body.append(box);
+    box.select();
+    const ok = document.execCommand("copy");
+    box.remove();
+    if (!ok) throw new Error("could not copy; select the text and copy it yourself");
+  }
+
   commands(): CommandInfo[] {
     return [...this.#plugins.values()].flatMap((p) =>
       [...p.commands].map(([id, c]) => ({ pluginId: p.manifest.id, id, name: c.name, page: c.page })),
@@ -560,6 +662,14 @@ export class PluginHost {
         } else {
           this.#adapter.notice(`${entry.manifest.name}: ${message}`);
         }
+        break;
+      }
+      case "panel-close":
+        if (this.#panel?.plugin === entry) this.closePanel();
+        break;
+      case "panel-resize": {
+        const h = Number(d.height);
+        if (this.#panel?.plugin === entry && Number.isFinite(h)) entry.frame.style.height = `${Math.round(Math.min(Math.max(h, 120), window.innerHeight * 0.9 || 800))}px`;
         break;
       }
       case "cmd":
@@ -716,6 +826,28 @@ export class PluginHost {
         if (!/^https?:\/\//i.test(text(0))) throw new Error("only http and https addresses can be opened");
         return this.#adapter.openUrl?.(text(0));
       }
+      case "ui.button": {
+        if (origin) throw new Error("a block can't add a button");
+        const title = text(0).trim();
+        if (title === "" || title.length > 40) throw new Error("a button's title must be 1–40 characters");
+        const entry = this.#plugins.get(manifest.id);
+        // An <svg> drawn as an image needs its namespace; a plugin author should not have to know that.
+        const icon = checkSvgIcon(args[1], "ui.headerButton").replace(/^<svg(?![^>]*\sxmlns=)/i, '<svg xmlns="http://www.w3.org/2000/svg"');
+        if (entry) entry.button = { title, icon };
+        this.#onButtons();
+        return;
+      }
+      case "ui.badge": {
+        if (origin) throw new Error("a block can't change the button");
+        const color = args[0];
+        if (color !== null && (typeof color !== "string" || !/^#[0-9a-f]{6}$/i.test(color))) throw new Error("the badge colour must look like #rrggbb, or be null");
+        const entry = this.#plugins.get(manifest.id);
+        if (entry) entry.badge = color === null ? null : (color as string).toLowerCase();
+        this.#onButtons();
+        return;
+      }
+      case "ui.copy":
+        return this.#copy(text(0));
       case "notice":
         return this.#adapter.notice(text(0));
     }

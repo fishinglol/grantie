@@ -2,7 +2,7 @@
  * What a plugin may ask for. Nothing is granted implicitly: the user enables a plugin on each
  * device after seeing this list, and the host refuses any call outside it.
  */
-export const PERMISSIONS = ["editor.read", "editor.write", "editor.style", "editor.blocks", "editor.input", "editor.links", "editor.sync", "vault.read", "vault.write", "network"] as const;
+export const PERMISSIONS = ["editor.read", "editor.write", "editor.style", "editor.blocks", "editor.input", "editor.links", "editor.sync", "ui.panel", "vault.read", "vault.write", "network"] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
 export const PERMISSION_LABELS: Record<Permission, string> = {
@@ -13,13 +13,14 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   "editor.input": "See what you type on an empty line and what you paste",
   "editor.links": "Show links to known sites as chips",
   "editor.sync": "Follow what you type and your cursor as you type, and change the note live (for working together)",
+  "ui.panel": "Add a button at the top of a note and open a window of its own",
   "vault.read": "Read your notes",
   "vault.write": "Create and change notes",
   network: "Use the internet",
 };
 
 /** Version of the plugin API this app implements. A plugin can require a minimum. */
-export const API_VERSION = 6;
+export const API_VERSION = 7;
 
 export interface PluginManifest {
   /** Lower-case letters, digits and dashes; also the plugin's folder name. */
@@ -40,6 +41,13 @@ export interface PluginManifest {
    * network). `network` already allows any `https` / `wss` address; this is how a plugin gets a plain `ws` one, and it is shown to the user.
    */
   connect?: string[];
+  /**
+   * What to do before the plugin works, one step per line (the Store shows them as "Before you start", numbered). Plain text, at most
+   * 8 steps of 300 characters. For anything the person must set up first (an account, a server); leave it out when there is nothing.
+   */
+  setup?: string[];
+  /** Listed in the Store as "SOON": it can be looked at but not installed. */
+  soon?: boolean;
 }
 
 const CONNECT = /^wss?:\/\/[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d{1,5})?$/i;
@@ -77,6 +85,11 @@ export function parseManifest(raw: unknown): PluginManifest {
   for (const c of connect) {
     if (typeof c !== "string" || !CONNECT.test(c)) throw new Error(`manifest.json: "connect" entries look like wss://host or ws://host:1234 (got "${String(c)}")`);
   }
+  const setup = m.setup ?? [];
+  if (!Array.isArray(setup) || setup.length > 8) throw new Error('manifest.json: "setup" must be a list of up to 8 steps');
+  for (const step of setup) {
+    if (typeof step !== "string" || step.trim() === "" || step.length > 300) throw new Error('manifest.json: each "setup" step must be text of 1–300 characters');
+  }
   return {
     id,
     name: text("name", true)!,
@@ -88,6 +101,8 @@ export function parseManifest(raw: unknown): PluginManifest {
     minApiVersion: minApiVersion as number | undefined,
     desktopOnly: m.desktopOnly === true,
     ...(connect.length > 0 && { connect: [...new Set(connect as string[])] }),
+    ...(setup.length > 0 && { setup: setup as string[] }),
+    ...(m.soon === true && { soon: true }),
   };
 }
 

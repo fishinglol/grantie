@@ -2,7 +2,7 @@ import { type RefObject, useCallback, useEffect, useRef, useState } from "react"
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { join } from "@granite/core-notes";
 import type { LiveEditorHandle } from "@granite/live-editor";
-import { API_VERSION, PLUGINS_DIR, discoverPlugins, readPluginCode, type CommandInfo, type InstalledPlugin } from "@granite/plugins";
+import { API_VERSION, PLUGINS_DIR, discoverPlugins, readPluginCode, type CommandInfo, type HeaderButton, type InstalledPlugin } from "@granite/plugins";
 import { BlockBridge, PluginHost } from "@granite/plugins/host";
 import type { CatalogPlugin } from "./pluginCatalog";
 import { pluginStore } from "./stores";
@@ -31,6 +31,8 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
   const [enabled, setEnabled] = useState<string[]>([]);
   const [failed, setFailed] = useState<Record<string, string>>({});
   const [commands, setCommands] = useState<CommandInfo[]>([]);
+  /** Buttons plugins put at the top of a note (plugin API 7, `ui.headerButton`). */
+  const [buttons, setButtons] = useState<HeaderButton[]>([]);
   /** Why the plugin list could not be read (shown instead of an endless "Looking for plugins…"). */
   const [loadError, setLoadError] = useState<string | null>(null);
   const host = useRef<PluginHost | null>(null);
@@ -77,6 +79,7 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
       },
       () => setCommands(h.commands()),
       blocks.changed,
+      () => setButtons(h.headerButtons()),
     );
     host.current = h;
     blocks.host = h;
@@ -141,7 +144,7 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
   /** Copy a store plugin into the vault (which syncs it to the phone) and switch it on here. */
   const install = useCallback(
     async (entry: CatalogPlugin) => {
-      if (!vaultDir) return;
+      if (!vaultDir || entry.manifest.soon) return;
       const id = entry.manifest.id;
       try {
         const dir = join(vaultDir, PLUGINS_DIR, id);
@@ -192,7 +195,9 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
     [notify],
   );
 
-  return { installed, enabled, failed, commands, loadError, blocks, refresh, toggle, install, uninstall, run };
+  const openPanel = useCallback((pluginId: string) => host.current?.openPanel(pluginId), []);
+
+  return { installed, enabled, failed, commands, buttons, openPanel, loadError, blocks, refresh, toggle, install, uninstall, run };
 }
 
 export type PluginsState = ReturnType<typeof usePlugins>;

@@ -1,5 +1,6 @@
 import { forwardRef } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import type { HeaderButton } from '@granite/plugins';
 import { colors } from '../theme';
 import Icon from './Icon';
 import NoteEditor from './NoteEditor';
@@ -10,11 +11,14 @@ export interface NoteScreenProps extends NoteEditorProps {
   onOpenSidebar: () => void;
   onOpenMenu: () => void;
   onToggleReading: () => void;
+  /** Buttons plugins put in the top bar (a text pill each: the phone has no room for an unknown icon). */
+  buttons: HeaderButton[];
+  onPressButton: (pluginId: string) => void;
 }
 
 /** One note, full screen: round sidebar and ⋮ buttons, then the live editor (which shows the note's editable title). */
 const NoteScreen = forwardRef<NoteEditorHandle, NoteScreenProps>(function NoteScreen(
-  { dirty, onOpenSidebar, onOpenMenu, onToggleReading, ...editor },
+  { dirty, onOpenSidebar, onOpenMenu, onToggleReading, buttons, onPressButton, ...editor },
   ref,
 ) {
   return (
@@ -25,6 +29,12 @@ const NoteScreen = forwardRef<NoteEditorHandle, NoteScreenProps>(function NoteSc
         </Pressable>
         <View style={styles.right}>
           {dirty && <View style={styles.dirty} />}
+          {buttons.map((b) => (
+            <Pressable key={b.pluginId} onPress={() => onPressButton(b.pluginId)} style={styles.pill} accessibilityLabel={b.title}>
+              <Text style={styles.pillText}>{b.title}</Text>
+              {b.badge && <View style={[styles.badge, { backgroundColor: b.badge }]} />}
+            </Pressable>
+          ))}
           <Pressable
             onPress={onToggleReading}
             style={[styles.round, editor.reading && styles.roundOn]}
@@ -65,6 +75,9 @@ const styles = StyleSheet.create({
   round: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.panel, alignItems: 'center', justifyContent: 'center' },
   roundOn: { borderWidth: 1, borderColor: colors.accent },
   right: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  pill: { height: 48, paddingHorizontal: 18, borderRadius: 24, backgroundColor: colors.panel, alignItems: 'center', justifyContent: 'center' },
+  pillText: { color: colors.text, fontSize: 15, fontWeight: '600' },
+  badge: { position: 'absolute', top: 8, right: 10, width: 9, height: 9, borderRadius: 5 },
   dirty: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.accent },
   empty: { color: colors.textFaint, fontSize: 16, padding: 18 },
 });

@@ -32,6 +32,29 @@ export function newInvite(server: string, room = newRoom()): string {
   return "```collab\nserver: " + server + "\nroom: " + room + "\n```";
 }
 
+const LINK = /^granite-live:\/\/([a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d{1,5})?)\/([a-z0-9]{32})\/?$/i;
+
+/** The short link to send someone: `granite-live://host/room`. Only for a `wss://` server; a plain `ws://` one is shared as the invite block. */
+export function inviteLink(invite: Invite): string | null {
+  const m = /^wss:\/\/(.+)$/i.exec(invite.server);
+  return m ? `granite-live://${m[1]}/${invite.room}` : null;
+}
+
+/** What someone pastes to join: the short link, or the whole invite block. */
+export function parseInviteInput(text: string): Invite | null {
+  const t = text.trim();
+  const m = LINK.exec(t);
+  if (m && ROOM.test(m[4]!)) return { server: `wss://${m[1]!.toLowerCase()}`, room: m[4]! };
+  return parseInvite(t);
+}
+
+/** The note's text with the invite block near the top: after the note's properties (`---` … `---`) when it has them, so they stay properties. */
+export function withInvite(text: string, block: string): string {
+  const props = /^---[ \t]*\n[\s\S]*?\n---[ \t]*(?:\n|$)/.exec(text);
+  const head = props ? props[0] : "";
+  return `${head}${head && !head.endsWith("\n") ? "\n" : ""}${block}\n\n${text.slice(head.length)}`;
+}
+
 /** True when the note holds nothing but the invite (and blank lines): a note somebody made to join a session. */
 export function onlyInvite(text: string): boolean {
   return text.replace(BLOCK, "").trim() === "";
@@ -44,6 +67,26 @@ export function parseSettings(text: string): { name?: string; server?: string } 
   const name = field("name")?.slice(0, 40);
   return { ...(name && { name }), ...(server && SERVER.test(server) && { server }) };
 }
+
+/** The settings note's text with `name:` and `server:` set to these, keeping whatever else the person wrote there. */
+export function withSettings(text: string, values: { name: string; server: string }): string {
+  let out = text.trim() === "" ? SETTINGS_TEMPLATE : text;
+  for (const key of ["name", "server"] as const) {
+    const line = new RegExp(`^${key}:.*$`, "im");
+    out = line.test(out) ? out.replace(line, () => `${key}: ${values[key]}`) : out.replace(/\n*$/, `\n${key}: ${values[key]}\n`);
+  }
+  return out;
+}
+
+/**
+ * The relay Granite runs for everyone (a Cloudflare Worker, see the README: "Run the relay on Cloudflare"), as `wss://…`. People who don't set
+ * a server of their own use it, so sharing needs no setup. Empty until the Worker is deployed: then the Share window asks for a server.
+ * It only ever holds encrypted data, so putting it in the open source is fine.
+ */
+export const DEFAULT_SERVER = "";
+
+/** The server to put in an invite: the person's own, else Granite's (empty when there is neither). */
+export const serverFor = (settings: { server?: string }, fallback: string = DEFAULT_SERVER): string | undefined => settings.server || fallback || undefined;
 
 export const SETTINGS_NOTE = "Live Collab.md";
 export const SETTINGS_TEMPLATE = `# Live Collab

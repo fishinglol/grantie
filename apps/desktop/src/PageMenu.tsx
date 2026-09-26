@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import type { CommandInfo } from "@granite/plugins";
+import type { CommandInfo, HeaderButton } from "@granite/plugins";
 
 export interface PageMenuProps {
   /** Plugin commands that act on the whole page (`page: true`). */
   commands: CommandInfo[];
   onRun: (command: CommandInfo) => void;
   onOpenPlugins: () => void;
+  /** Buttons plugins put here (API 7), left of the built-in ones, e.g. Share. */
+  buttons: HeaderButton[];
+  onButton: (button: HeaderButton) => void;
   /** Reading mode: this pane can be read but not edited. */
   reading: boolean;
   onToggleReading: () => void;
@@ -19,7 +22,7 @@ export interface PageMenuProps {
  * The buttons at the top right of a note pane: the book (reading mode), split, and ⋯ (page-level actions from
  * plugins, e.g. "Turn this page into a sheet").
  */
-export default function PageMenu({ commands, onRun, onOpenPlugins, reading, onToggleReading, split, onSplit, onClosePane }: PageMenuProps) {
+export default function PageMenu({ commands, onRun, onOpenPlugins, buttons, onButton, reading, onToggleReading, split, onSplit, onClosePane }: PageMenuProps) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
 
@@ -37,6 +40,12 @@ export default function PageMenu({ commands, onRun, onOpenPlugins, reading, onTo
 
   return (
     <div className="page-menu" ref={box}>
+      {buttons.map((b) => (
+        <button key={b.pluginId} className="page-menu-btn" title={b.title} aria-label={b.title} onClick={() => onButton(b)}>
+          <span className="page-menu-icon" style={{ WebkitMaskImage: `url("${b.icon}")`, maskImage: `url("${b.icon}")` }} />
+          {b.badge && <span className="page-menu-badge" style={{ background: b.badge }} />}
+        </button>
+      ))}
       <button
         className={reading ? "page-menu-btn on" : "page-menu-btn"}
         title={reading ? "Reading mode: click to edit" : "Switch to reading mode"}

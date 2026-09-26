@@ -27,11 +27,11 @@ export default function PluginStoreView({ catalog, installed, onInstall }: Plugi
 
   const label = (entry: CatalogPlugin) => {
     const have = installed.find((p) => p.manifest?.id === entry.manifest.id)?.manifest;
-    return !have ? 'GET' : have.version !== entry.manifest.version ? 'UPDATE' : 'INSTALLED';
+    return entry.manifest.soon ? 'SOON' : !have ? 'GET' : have.version !== entry.manifest.version ? 'UPDATE' : 'INSTALLED';
   };
   const getButton = (entry: CatalogPlugin) => {
     const text = label(entry);
-    const done = text === 'INSTALLED';
+    const done = text === 'INSTALLED' || text === 'SOON';
     return (
       <Pressable
         disabled={done || busy !== null}
@@ -84,6 +84,15 @@ export default function PluginStoreView({ catalog, installed, onInstall }: Plugi
           ))}
         </ScrollView>
         {m.description ? <Text style={styles.desc}>{m.description}</Text> : null}
+        {m.soon ? <Text style={styles.desc}>Coming soon. We are still working on it, so it can't be installed yet.</Text> : null}
+        {m.setup && !m.soon ? (
+          <>
+            <Text style={styles.section}>Before you start</Text>
+            {m.setup.map((step, i) => (
+              <Text key={step} style={styles.step}>{i + 1}. {step}</Text>
+            ))}
+          </>
+        ) : null}
         <Text style={styles.section}>Needs your permission to</Text>
         {permissionLines(m).length === 0 ? (
           <Text style={styles.perm}>Nothing. It needs no permissions.</Text>
@@ -153,6 +162,7 @@ const styles = StyleSheet.create({
   shots: { gap: 10, paddingVertical: 4, paddingRight: 8 },
   desc: { color: colors.text, fontSize: 15, lineHeight: 22, marginTop: 14 },
   section: { color: colors.heading, fontSize: 17, fontWeight: '700', marginTop: 18, marginBottom: 6 },
+  step: { color: colors.text, fontSize: 15, lineHeight: 22, marginBottom: 6 },
   perm: { color: colors.textDim, fontSize: 14, lineHeight: 24 },
   zoom: { flex: 1, backgroundColor: 'rgba(4,5,8,0.92)', alignItems: 'center', justifyContent: 'center' },
 });

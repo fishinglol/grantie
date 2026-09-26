@@ -1196,6 +1196,11 @@ export default function NoteApp({
                         commands={isCanvas(p) ? [] : plugins.commands.filter((c) => c.page)}
                         onRun={(c) => void plugins.run(c)}
                         onOpenPlugins={() => setShowPlugins(true)}
+                        buttons={isCanvas(p) ? [] : plugins.buttons}
+                        onButton={(b) => {
+                          setActive(i); // the plugin works on the active pane's note
+                          plugins.openPanel(b.pluginId);
+                        }}
                         reading={reading[i]!}
                         onToggleReading={() => setReading((r) => r.map((on, j) => (j === i ? !on : on)))}
                         split={panes.length > 1}

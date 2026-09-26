@@ -40,6 +40,7 @@ export function createEditorBridge(post: (message: object) => void, getProps: ()
     insert: (text: string) => post({ type: 'insert', text }),
     setText: (text: string) => ready && post({ type: 'value', value: text }),
     addFile: (file: string) => post({ type: 'add-file', file }),
+    openPluginButton: (pluginId: string) => post({ type: 'plugin-button', pluginId }),
     runPluginCommand(pluginId: string, commandId: string): Promise<void> {
       const n = ++runSeq;
       return new Promise((resolve, reject) => {
@@ -86,6 +87,9 @@ export function createEditorBridge(post: (message: object) => void, getProps: ()
           break;
         case 'plugin-commands':
           props.onPluginCommands(msg.commands as never);
+          break;
+        case 'plugin-buttons':
+          props.onPluginButtons(msg.buttons as never);
           break;
         case 'plugin-status':
           props.onPluginStatus(String(msg.id), (msg.error as string | null) ?? null);

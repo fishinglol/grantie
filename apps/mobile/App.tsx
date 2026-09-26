@@ -5,7 +5,7 @@ import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import * as Updates from 'expo-updates';
 import { IMAGE_FILE, basename, dirname, embedImage, join, moveFolder, noteTitle, relocateLinks, renamedNoteFile, retargetNoteRefs } from '@granite/core-notes';
-import { PLUGINS_DIR, discoverPlugins, readPluginCode, type CommandInfo, type InstalledPlugin } from '@granite/plugins';
+import { PLUGINS_DIR, discoverPlugins, readPluginCode, type CommandInfo, type HeaderButton, type InstalledPlugin } from '@granite/plugins';
 import { GoogleDriveProvider, VaultSync, merge3, type DeviceCode, type GoogleSession, type PendingDeletion } from '@granite/core-cloud';
 import { emptyCanvas, serializeCanvas } from '@granite/canvas/format';
 
@@ -104,6 +104,7 @@ export default function App() {
   /** Code of the enabled plugins, by id, read from the vault. */
   const [pluginCode, setPluginCode] = useState<Record<string, string>>({});
   const [pluginCommands, setPluginCommands] = useState<CommandInfo[]>([]);
+  const [pluginButtons, setPluginButtons] = useState<HeaderButton[]>([]);
   const [pluginErrors, setPluginErrors] = useState<Record<string, string>>({});
   const [toast, setToast] = useState<string | null>(null);
   const [session, setSession] = useState<GoogleSession | null>(null);
@@ -548,6 +549,7 @@ export default function App() {
   /** Store: copy a bundled plugin into the vault (which syncs it to the desktop), switch it on here and pick it up. */
   const installPlugin = useCallback(
     async (entry: CatalogPlugin) => {
+      if (entry.manifest.soon) return;
       const id = entry.manifest.id;
       try {
         const dir = join(VAULT_DIR, PLUGINS_DIR, id);
@@ -782,6 +784,9 @@ export default function App() {
           onOpenUrl={(url) => void Linking.openURL(url)}
           onVault={pluginVault}
           onPluginCommands={setPluginCommands}
+          onPluginButtons={setPluginButtons}
+          buttons={isCanvas(open.rel) ? [] : pluginButtons}
+          onPressButton={(pluginId) => editor.current?.openPluginButton(pluginId)}
           onPluginStatus={(id, error) =>
             setPluginErrors((prev) => {
               const { [id]: _gone, ...rest } = prev;

@@ -732,3 +732,9 @@ the desktop app needs `npm run tauri build` (`/Applications/Granite.app` is an o
 - **Toast** (desktop): the hide timer is a ref (a later "Saved …" no longer leaves it up); 2 s normal, 4 s errors on desktop and phone.
 - Tests: plugins 102, core-cloud 79, core-notes 44, live-editor 4. Not checked: Thai keyboard in the Cards rich fields on the phone, the delete-confirm dialog on screen, real Drive.
 
+## 2026-09-26 — Share button (plugin API 7) and Live Collab 1.1.0
+See `activeContext.md` "Session 2026-09-26 (Share button)". Built: `ui.panel` API (host, desktop `PageMenu`, phone top-bar pill + editor page), Live Collab Share window (start sharing, copy link, join with a link, people list, settings). Tests: plugins 114, Live Collab 24. Not verified on a real phone / Tauri window / with two real people.
+
+## 2026-09-26 (later) — Live Collab 1.2.0
+End-to-end encrypted transport (`src/relay.ts`, `server/room.mjs`), Cloudflare Worker relay (`worker/`, `wrangler.toml`, **not deployed yet**: `DEFAULT_SERVER` empty), manifest `setup` steps shown in both Stores. See `activeContext.md` "Session 2026-09-26 (later)". Tests: plugins 115, Live Collab 35.
+
