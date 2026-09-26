@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { permissionLines, pluginHue } from "@granite/plugins";
+import { useEffect, useState } from "react";
+import { fetchInstallCounts, installsLabel, permissionLines, pluginHue } from "@granite/plugins";
 import type { CatalogPlugin } from "./pluginCatalog";
 import type { PluginsState } from "./usePlugins";
 
@@ -28,6 +28,11 @@ function Icon({ id, name, size }: { id: string; name: string; size: number }) {
 export default function PluginStore({ catalog, installed, busy, onInstall }: PluginStoreProps) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [zoom, setZoom] = useState<string | null>(null);
+  /** How many times each plugin has been installed (empty when the counter can't be reached). */
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    void fetchInstallCounts().then(setCounts);
+  }, []);
 
   const GetButton = ({ entry }: { entry: CatalogPlugin }) => {
     const m = entry.manifest;
@@ -74,6 +79,12 @@ export default function PluginStore({ catalog, installed, busy, onInstall }: Plu
             <span>DEVELOPER</span>
             <strong className="store-dev">{m.author ?? "—"}</strong>
           </div>
+          {counts[m.id] > 0 && (
+            <div>
+              <span>INSTALLS</span>
+              <strong>{counts[m.id].toLocaleString("en-US")}</strong>
+            </div>
+          )}
           <div>
             <span>PERMISSIONS</span>
             <strong>{m.permissions.length}</strong>
@@ -141,7 +152,7 @@ export default function PluginStore({ catalog, installed, busy, onInstall }: Plu
               <div className="store-row" role="button" tabIndex={0} onClick={() => setOpenId(m.id)} onKeyDown={(e) => e.key === "Enter" && setOpenId(m.id)}>
                 <Icon id={m.id} name={m.name} size={72} />
                 <span className="store-row-text">
-                  <span className="store-row-author">{m.author ?? "Community"}</span>
+                  <span className="store-row-author">{[m.author ?? "Community", installsLabel(counts[m.id])].filter(Boolean).join(" · ")}</span>
                   <span className="store-row-name">{m.name}</span>
                   <span className="store-row-tag">{m.tagline ?? m.description}</span>
                 </span>

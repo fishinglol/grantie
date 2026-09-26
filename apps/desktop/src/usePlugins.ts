@@ -2,7 +2,7 @@ import { type RefObject, useCallback, useEffect, useRef, useState } from "react"
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { join } from "@granite/core-notes";
 import type { LiveEditorHandle } from "@granite/live-editor";
-import { API_VERSION, PLUGINS_DIR, discoverPlugins, readPluginCode, type CommandInfo, type HeaderButton, type InstalledPlugin } from "@granite/plugins";
+import { API_VERSION, PLUGINS_DIR, discoverPlugins, readPluginCode, reportInstall, type CommandInfo, type HeaderButton, type InstalledPlugin } from "@granite/plugins";
 import { BlockBridge, PluginHost } from "@granite/plugins/host";
 import type { CatalogPlugin } from "./pluginCatalog";
 import { pluginStore } from "./stores";
@@ -146,6 +146,7 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
     async (entry: CatalogPlugin) => {
       if (!vaultDir || entry.manifest.soon) return;
       const id = entry.manifest.id;
+      const fresh = !installed?.some((p) => p.manifest?.id === id);
       try {
         const dir = join(vaultDir, PLUGINS_DIR, id);
         await tauriFs.mkdirp(dir);
@@ -154,12 +155,13 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
         if (!enabled.includes(id)) await pluginStore.save({ enabled: [...enabled, id] });
         await refresh();
         latest.current.onWroteNote(`${PLUGINS_DIR}/${id}/main.js`);
+        if (fresh) reportInstall(id);
         notify(`Installed ${entry.manifest.name}`);
       } catch (e) {
         notify(`Couldn't install ${entry.manifest.name}: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
-    [vaultDir, enabled, refresh, notify],
+    [vaultDir, installed, enabled, refresh, notify],
   );
 
   /** Switch a plugin off and delete its folder (which also removes it from the phone through sync). Its blocks in notes turn back into plain text. */

@@ -31,6 +31,8 @@ export interface PluginManifest {
   /** One short line for the store's list (the description is for the detail page). */
   tagline?: string;
   author?: string;
+  /** An `https://` page of the author's (their site or repo), linked from the plugin's public page. */
+  homepage?: string;
   permissions: Permission[];
   /** Lowest API version the plugin needs. */
   minApiVersion?: number;
@@ -71,6 +73,8 @@ export function parseManifest(raw: unknown): PluginManifest {
   };
   const id = text("id", true)!;
   if (!ID.test(id)) throw new Error(`manifest.json: "id" must be lower-case letters, digits and dashes (got "${id}")`);
+  const homepage = text("homepage", false);
+  if (homepage !== undefined && !/^https:\/\/[^\s<>"']{1,200}$/i.test(homepage)) throw new Error('manifest.json: "homepage" must be an https:// address');
   const permissions = m.permissions ?? [];
   if (!Array.isArray(permissions)) throw new Error('manifest.json: "permissions" must be a list');
   for (const p of permissions) {
@@ -97,6 +101,7 @@ export function parseManifest(raw: unknown): PluginManifest {
     description: text("description", false),
     tagline: text("tagline", false),
     author: text("author", false),
+    homepage,
     permissions: [...new Set(permissions as Permission[])],
     minApiVersion: minApiVersion as number | undefined,
     desktopOnly: m.desktopOnly === true,

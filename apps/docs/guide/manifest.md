@@ -12,6 +12,7 @@ invalid manifest fails to install with a readable error instead of silently misb
 | `description` | `string` | no | The Store's detail page. |
 | `tagline` | `string` | no | One short line for the Store's list view. |
 | `author` | `string` | no | Shown in the Store. |
+| `homepage` | `string` | no | An `https://` address (your site or repo). Your name on the plugin's [public page](/plugins/) links to it. |
 | `permissions` | `Permission[]` | yes (may be empty) | See [Permissions & the sandbox](/guide/permissions). Nothing is granted that isn't listed here. |
 | `minApiVersion` | `integer` | no | The lowest [API version](/api/) the plugin needs. The current version is **7**. |
 | `desktopOnly` | `boolean` | no | Hides the plugin on the phone — for something that genuinely needs a large screen. |

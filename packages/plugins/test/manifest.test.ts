@@ -120,6 +120,15 @@ test("setup lists the steps to take before a plugin works (up to 8, each plain t
   }
 });
 
+test("homepage is an https:// address or nothing", () => {
+  const base = { id: "x", name: "X", version: "1" };
+  assert.equal(parseManifest({ ...base, homepage: "https://example.com/me" }).homepage, "https://example.com/me");
+  assert.equal(parseManifest(base).homepage, undefined);
+  for (const bad of ["http://example.com", "javascript:alert(1)", "https://a b.com", "https://x.com/\"><script>", 5]) {
+    assert.throws(() => parseManifest({ ...base, homepage: bad }), /homepage/, String(bad));
+  }
+});
+
 test("soon marks a plugin the Store shows but does not let anyone install", () => {
   const base = { id: "x", name: "X", version: "1" };
   assert.equal(parseManifest({ ...base, soon: true }).soon, true);

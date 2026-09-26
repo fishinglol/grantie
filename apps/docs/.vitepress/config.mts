@@ -5,12 +5,28 @@ export default defineConfig({
   description: "Build plugins for Granite — one JavaScript file, sandboxed, running the same on desktop and phone.",
   head: [["link", { rel: "icon", href: "/favicon.png" }]],
   cleanUrls: true,
+  // A plugin's own page: its name and tagline as the title and description, and the first screenshot as the picture a shared link shows.
+  transformPageData(pageData) {
+    const plugin = pageData.params as { name?: string; tagline?: string; description?: string; screenshots?: string[] } | undefined;
+    if (!plugin?.name) return;
+    const site = `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL ?? "granite-docs-phi.vercel.app"}`;
+    const description = plugin.tagline || plugin.description || "";
+    pageData.title = plugin.name;
+    pageData.description = description;
+    pageData.frontmatter.head = [
+      ["meta", { property: "og:title", content: `${plugin.name} — Granite plugin` }],
+      ["meta", { property: "og:description", content: description }],
+      ["meta", { property: "og:image", content: `${site}${plugin.screenshots?.[0] ?? ""}` }],
+      ["meta", { name: "twitter:card", content: "summary_large_image" }],
+    ];
+  },
   themeConfig: {
     logo: "/logo.png",
     nav: [
       { text: "Guide", link: "/guide/getting-started" },
       { text: "API reference", link: "/api/" },
       { text: "Examples", link: "/guide/examples" },
+      { text: "Plugins", link: "/plugins/" },
     ],
     sidebar: [
       {

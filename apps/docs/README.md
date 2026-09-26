@@ -12,14 +12,22 @@ npm run build -w @granite/docs   # outputs apps/docs/.vitepress/dist
 
 ## Deploying (Vercel)
 
-This is one app inside an npm-workspaces monorepo, so the Vercel project needs:
+Its own Vercel project, `granite-docs` (never the project behind `grantie.vercel.app`, which is the marketing site).
+The site is built from the whole repository — `scripts/build-registry.mjs` reads `examples/plugins/` and
+`packages/plugins/` — so deploy a *prebuilt* output from this folder:
 
-- **Root Directory**: `apps/docs`
-- **Framework preset**: VitePress (or, if not offered, Build command `npm run build`, Output directory
-  `.vitepress/dist`, Install command `npm install` — run from the monorepo root so workspace linking works)
+```bash
+cd apps/docs && npm run deploy   # vercel build --prod && vercel deploy --prebuilt --prod
+```
 
-Set this once in the Vercel project's Settings → General → Root Directory (or `vercel.json` at the repo
-root); it isn't something a code change here can configure by itself.
+A plain `vercel deploy` from here would upload only `apps/docs` and fail. (Connecting the GitHub repo to the project
+with Root Directory `apps/docs` also works, since Vercel then includes files outside the root.)
+
+### Install counter (one-time setup)
+
+`api/installs*.ts` count installs in Upstash Redis. In the Vercel dashboard: `granite-docs` → Storage → Create →
+Upstash Redis, and connect it to the project (it adds `KV_REST_API_URL` / `KV_REST_API_TOKEN`). Until then the
+endpoints answer 503 and the site simply shows no numbers.
 
 ## Updating content
 
