@@ -1,90 +1,52 @@
-# conflict-cleaner
+# Granite
 
-## The problem
+A local-first Markdown note-taking app. Your notes are plain `.md` files that live
+on your own device — Granite works fully offline — and sync in the background to
+your own Google Drive, so the same vault stays up to date on your computer and
+your phone.
 
-When a notes vault (Obsidian, Joplin, or a plain Markdown folder) is synced across
-devices with Syncthing, Google Drive, or OneDrive, and two devices edit the same
-file before syncing, the sync tool gives up on merging and leaves a duplicate file
-with a mangled name instead — things like:
+- **You own the files.** A Granite vault is just a folder of `.md` files and
+  images. No Granite account, no proprietary format.
+- **Works offline.** Syncing to Drive is optional ("Continue without syncing").
+- **Extensible.** Community plugins (tables, spreadsheets, cards, canvas, and
+  more) — see [the plugin docs](https://granite-docs-phi.vercel.app/).
 
-```
-daily-note.sync-conflict-20260815-093012-ABCDEFG.md
-daily-note (Conflicted copy 2026-08-15).md
-daily-note (DESKTOP-AB12CD3's conflicted copy 2026-08-15).md
-```
+## Download
 
-Over months of syncing across a few devices, these pile up — a dozen, then
-fifty, scattered through nested folders. You don't know which copy is current,
-and you're afraid to delete any of them in case it's the one with the edits
-you actually want.
+Granite is in early beta. Builds are unsigned, so your OS will warn you the
+first time you open one — that's expected, not a sign anything is wrong.
 
-## What this tool does
+**[⬇ Latest release](https://github.com/fishinglol/grantie/releases/latest)**
 
-`conflict-cleaner` scans a folder for these conflict files, shows you exactly
-what differs between each one and its original, and lets you decide what to
-keep — one file at a time.
+| Platform | What to get | First-launch note |
+| --- | --- | --- |
+| **macOS** | the `.dmg` | Gatekeeper blocks unsigned apps: right-click the app → **Open** → confirm **Open**. Only needed once. |
+| **Android** | the `.apk` | Not on Google Play yet, so Android will warn about "unknown sources" — enable **Install unknown apps** for your browser/file manager when prompted. |
+| **iPhone / iPad** | not yet available | iOS needs an Apple Developer account we haven't set up. |
+| **Windows / Linux** | not yet available | Desktop builds currently only target macOS. |
 
-**What it does not do:**
+## What you can do with it
 
-- It does not merge conflicting content automatically. You decide.
-- It does not sync anything, or talk to Syncthing, Google Drive, or OneDrive.
-- It does not watch your folder in real time — you run it, it reports, you act.
-- It has no plugins, no config file, no GUI.
+- Write and organize notes in folders, with a live Markdown preview (headings,
+  bold/italic, tables, images) — no separate "preview mode".
+- Drag in images, move notes between folders, and use "Canvas" for a freeform
+  Obsidian-style board.
+- Import an existing vault from Obsidian, Joplin, Notion, Evernote, or OneNote —
+  Granite detects the format and converts it automatically.
+- Turn on Google Drive sync to keep your notes current across devices, or skip
+  it and stay fully local.
+- Add plugins for things like spreadsheets, custom tables, and drawing tools.
 
-## Safety
+## For developers
 
-- **Dry run by default.** Just running `conflict-cleaner <path>` scans and
-  shows you diffs. Nothing is written until you pass `--apply`.
-- **Every file is backed up** before it's modified or deleted, into
-  `.conflict-cleaner-backup/` (or wherever `--backup-dir` points), preserving
-  the folder structure and original timestamps.
-- **Nothing happens without your say-so.** Each conflict is resolved one at a
-  time, interactively. There is no batch or auto mode.
-- It will refuse to delete the last remaining copy of a note.
+Building from source, running the dev server, or writing a plugin:
 
-That said: **back up your vault yourself before running this with `--apply`**,
-the same way you would before any tool that touches years of notes. This tool
-is careful, but a second, independent backup costs you nothing.
+- [apps/desktop](apps/desktop/README.md) — the Tauri desktop app
+- [apps/mobile](apps/mobile/README.md) — the Expo/React Native phone app
+- [Plugin development guide](https://granite-docs-phi.vercel.app/guide/getting-started)
 
-## Install and usage
+## Also in this repo
 
-No dependencies — standard library only. Clone and run:
-
-```bash
-git clone https://github.com/fishinglol/grantie.git && cd grantie && python3 -m conflict_cleaner ~/path/to/your/vault
-```
-
-Or install it as a command:
-
-```bash
-pip install git+https://github.com/fishinglol/grantie.git
-conflict-cleaner ~/path/to/your/vault
-```
-
-Once you've reviewed the diffs and are ready to resolve them:
-
-```bash
-conflict-cleaner ~/path/to/your/vault --apply
-```
-
-Other flags:
-
-| Flag | Behavior |
-|---|---|
-| `--apply` | Enable interactive resolution and actual file writes |
-| `--backup-dir <path>` | Where backups go (default: `.conflict-cleaner-backup/`) |
-| `--include-hidden` | Also scan dotfolders (off by default) |
-| `--json` | Machine-readable scan output (implies dry run) |
-
-## Who made this and why
-
-I hit this exact problem in my own vault — a folder synced across a laptop and
-a phone that had quietly accumulated `sync-conflict` files for over a year. I
-didn't trust myself to `rm` them without reading each one first, and there
-wasn't a small, trustworthy tool that just showed me the diffs and got out of
-the way. So I wrote one.
-
----
-
-I'm also building a notes app designed around this problem from the ground up.
-If that's interesting, there's a waitlist here: TODO-add-waitlist-link.
+[`conflict_cleaner/`](conflict_cleaner/README.md) is a small, unrelated Python
+CLI for cleaning up `sync-conflict` files left behind by Syncthing/Drive/OneDrive
+— useful on its own, independent of the Granite app.
