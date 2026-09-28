@@ -15,6 +15,9 @@ shared surfaces). Built instead:
    in the real Mac app.
 Installed: `/Applications/Granite.app` built 14:29 (old builds in `~/Granite-backups/`). Not done: phone (`npm run ship`, ask first).
 Plugins tests 169. Then committed on a new branch and PR'd (after merging PR #10).
+5. **Page margins** (user screenshot vs Obsidian): after opening a note with a whole-page sheet, every note lost its margins (`:has` saw a hidden
+   editor). Fixed by scoping to `.cm-editor`. **Math** (`$…$`, `$$…$$`, KaTeX, desktop + phone; user chose KaTeX over MathJax). Both checked in the
+   desktop preview; math also in the phone web preview. Both in PR #12 (`feat/plugins-coexist`). Mac app: install only after the user tries it.
 
 ## Session 2026-09-27 (scroll chaining) — a plugin block trapped scrolling
 User (Thai, screenshot of the Calendar block in Weeks view) reported that scrolling down inside a plugin block "gets stuck" — not just the calendar, other plugins too — while normal note scrolling works. Diagnosis: a block frame is a sandboxed iframe (`sandbox="allow-scripts"`, opaque origin); once its own scrollable content (Calendar's week/year view, a tall Cards board, ...) hits its edge, whether the leftover wheel/touch scroll "falls through" to the note's own scroll container is up to the browser engine's cross-iframe scroll chaining — verified in the Chromium preview that it already works there, but this is a well-known WebKit gap (the desktop app's WKWebView) and can't be assumed on Android WebView either, which fits "the app normally scrolls, this doesn't" + "on the phone too".

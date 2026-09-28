@@ -302,6 +302,17 @@ enter. The host (`#onBlockCaret`) moves them into window pixels (the frame's `ge
 a caret last has it** (`#caretBlock`); a late "no caret" from the side that lost it is ignored, so switching note ↔ cell never blanks
 the cursor. `hide` mirrors the plugin's choice: if `.live-editor .cm-content` has a transparent `caret-color`, block frames hide theirs.
 
+## Pattern: math is found by a pure scanner, drawn like images
+`findMath(text)` (`packages/live-editor/src/math.ts`, tested) returns `$…$` (one line; no space inside the `$`s, closing `$` not before a
+digit, so "$5 and $10" stays text; `\$` is a dollar) and `$$…$$` (display, may span lines), Obsidian's rules. `buildDecorations` drops spans in
+code, tables, embeds and the properties box; a span the cursor touches shows as tinted raw TeX (`cm-math-src`), otherwise a `MathWidget`
+(KaTeX `renderToString`, `trust: false`, cached per TeX) replaces it — a block widget when `$$…$$` fills its lines, inline otherwise.
+Markdown syntax nodes that overlap math (`INLINE_NODES`: emphasis, links, …) are skipped, because `x_1 … x_2` is TeX, not emphasis.
+
+## Pattern: a rule about "this note" must not use `.live-editor:has(...)`
+`LiveEditor` keeps the editors of the last 4 notes alive, hidden, inside one `.live-editor`, and `:has()` sees hidden ones: a whole-page
+sheet in any recently open note used to strip every note's margins. Scope such rules to the note's own `.cm-editor`.
+
 ## Pattern: manifest `setup` and `soon`
 `setup` = numbered "Before you start" steps on a plugin's Store page; `soon: true` = listed but not installable (SOON button, install refused on both apps).
 
