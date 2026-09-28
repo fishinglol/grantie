@@ -16,6 +16,7 @@ contributed plugin looks like.
 | [`dropdown`](https://github.com/fishinglol/grantie/tree/main/examples/plugins/dropdown) | A coloured choice chip, like a status or priority field | `editor.blocks`, `editor.input` | A small, focused block plugin |
 | [`popup`](https://github.com/fishinglol/grantie/tree/main/examples/plugins/popup) | A card that opens another note as a popup/split view; follows renames | `editor.blocks`, `editor.input`, `vault.read`, `vault.write` | `vault.open`, tracking a note across renames |
 | [`smart-chips`](https://github.com/fishinglol/grantie/tree/main/examples/plugins/smart-chips) | Paste a link to ~66 sites, press Tab for a title + icon chip | `editor.links`, `network` | `links.register`, fetching a page title with `network` |
+| [`cursor-fx`](https://github.com/fishinglol/grantie/tree/main/examples/plugins/cursor-fx) | Your text cursor: line / block / underline, colour, blink, glide, trail, dust, popping letters, torch | `editor.caret`, `editor.style`, `ui.panel` | `caret.overlay` (drawing over the editor with a canvas), `caret.setOptions`, a settings window |
 | [`live-collab`](https://github.com/fishinglol/grantie/tree/main/examples/plugins/live-collab) | Share a note and edit it together live, with cursors — like Google Docs | `editor.sync`, `editor.read`, `editor.write`, `editor.blocks`, `editor.input`, `ui.panel`, `vault.read`, `vault.write`, `network` | `editor.sync` (live collaboration), `ui.headerButton`, a bundled dependency (Yjs via esbuild), `setup` steps |
 
 ## Reading order, if you're new

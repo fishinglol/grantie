@@ -30,6 +30,7 @@ import {
 import { dirname, IMAGE_FILE, join, toggleFormat, type InlineFormat } from "@granite/core-notes";
 import { openImageViewer } from "./imageViewer";
 import NoteTitle from "./NoteTitle";
+import { caretEvents, type CaretEvent } from "./caret.ts";
 import { Remote, remoteCursors, SyncSession, type SyncPort } from "./sync.ts";
 
 export { IMAGE_FILE };
@@ -408,6 +409,10 @@ export interface BlockRenderer {
   linkChip?(url: string): LinkChipInfo | null;
   /** `item`: `payload.text` is a `MenuItemInfo.key`. `link`: `payload.text` is a `LinkChipInfo.key`, `payload.url` the address; answers with the page's title. */
   runInput?(kind: "trigger" | "paste" | "item" | "link", payload: { text: string; html?: string; url?: string }): Promise<string | null>;
+  /** True while a plugin draws over the editor (`editor.caret`); nothing about the caret is measured or sent otherwise. */
+  wantsCaret?(): boolean;
+  /** Where the caret is, and what the user typed / deleted (only called while `wantsCaret()`). */
+  caret?(event: CaretEvent): void;
   /** Draw a block into `el`. */
   mount(lang: string, el: HTMLElement, source: string, actions: BlockActions): { update(source: string): void; destroy(): void };
 }
@@ -1457,6 +1462,10 @@ export default function LiveEditor({ ref, title, readOnly = false, value, embeds
           slashMenu(() => blocksRef.current ?? null),
           linkChips(() => blocksRef.current ?? null, () => openLinkRef.current),
           remoteCursors,
+          caretEvents(() => {
+            const b = blocksRef.current;
+            return b?.caret && b.wantsCaret ? { wantsCaret: () => b.wantsCaret!(), caret: (e) => b.caret!(e) } : null;
+          }),
           EditorView.updateListener.of((u) => {
             syncRef.current?.update(u);
             if (u.docChanged && !u.transactions.some((t) => t.annotation(External))) {

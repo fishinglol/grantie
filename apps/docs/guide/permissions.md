@@ -33,6 +33,7 @@ see Known limits below).
 | `editor.input` | `input.trigger`, `input.onPaste`, `input.addItem` | "See what you type on an empty line and what you paste" |
 | `editor.links` | `links.register`, `links.chip`, `links.title`, `links.open` | "Show links to known sites as chips" |
 | `editor.sync` | `editor.sync.*` (live collaboration) | "Follow what you type and your cursor as you type, and change the note live (for working together)" |
+| `editor.caret` | `caret.overlay`, `caret.setOptions`, `caret.getOptions` | "See where your cursor is and what you type, and draw over the editor (it cannot use the internet while it does)" |
 | `ui.panel` | `ui.headerButton`, `ui.setBadge`, `ui.copy` | "Add a button at the top of a note and open a window of its own" |
 | `vault.read` | `vault.list`, `vault.read`, `vault.open` | "Read your notes" |
 | `vault.write` | `vault.write` | "Create and change notes" |
@@ -72,3 +73,5 @@ write outside the vault, into the hidden `.granite/` folder, or to a non-Markdow
   permission for exactly that reason, and it's checked (`checkPluginCss`) to block `@import`, `url()`,
   `image-set()`, backslash escapes and anything that could break out of its `<style>` tag.
 - `ui.panel` allows one window at a time, and only one header button per plugin.
+- `editor.caret`'s overlay frame is told what the user types, so it has **no network at all** (even with `network` in the
+  manifest) and every `granite` call from it is refused. See [`caret`](/api/caret).

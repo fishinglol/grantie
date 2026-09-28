@@ -88,9 +88,9 @@ sample in the Granite repo — copy that folder as your starting point.
 - [The manifest](/guide/manifest) — every field `manifest.json` accepts.
 - [Permissions & the sandbox](/guide/permissions) — what each permission unlocks, and how the sandbox is
   enforced.
-- [API reference](/api/) — the full `granite` global: commands, editor, blocks, input, links, ui, vault.
+- [API reference](/api/) — the full `granite` global: commands, editor, blocks, input, links, caret (draw over the editor), ui, vault.
 - [Example plugins](/guide/examples) — real, shipped plugins to read for patterns (a spreadsheet, a note-card
-  board, live collaboration, and more).
+  board, live collaboration, a custom text cursor, and more).
 - [Publishing to the Store](/guide/publishing) — how a plugin gets listed for other people to install.
 
 ## TypeScript types (optional)

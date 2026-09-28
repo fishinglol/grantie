@@ -15,6 +15,10 @@ When the user types `text` (1–8 characters, e.g. `//`) alone on an otherwise e
 and whatever `handler` returns is put in its place. Return `null` to put the typed text back unchanged.
 Doesn't fire inside code blocks.
 
+A text other than `//` has one owner: if two plugins register the same one, the plugin whose `id` sorts first
+gets it and the other is told (`typing "text" is already used by "Other Plugin"`). `//` itself belongs to the
+`//` list; use `input.addItem` for it.
+
 ## `input.onPaste(handler)`
 
 ```ts
@@ -30,7 +34,8 @@ interface PasteClip {
 
 Called only when the pasted content has a tab in it (i.e. looks like spreadsheet cells copied from Excel or
 Sheets). Return the text to insert instead, or `null` to let the paste through untouched. One handler per
-plugin; it has 5 seconds to answer.
+plugin. Several plugins may have one: they are asked in `id` order until one returns text, so return `null` for
+anything you don't handle and another plugin gets its turn. Together they have 5 seconds to answer.
 
 ## `input.addItem(item)` (API 4)
 

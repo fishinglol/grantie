@@ -2,7 +2,7 @@
  * What a plugin may ask for. Nothing is granted implicitly: the user enables a plugin on each
  * device after seeing this list, and the host refuses any call outside it.
  */
-export const PERMISSIONS = ["editor.read", "editor.write", "editor.style", "editor.blocks", "editor.input", "editor.links", "editor.sync", "ui.panel", "vault.read", "vault.write", "network"] as const;
+export const PERMISSIONS = ["editor.read", "editor.write", "editor.style", "editor.blocks", "editor.input", "editor.links", "editor.sync", "editor.caret", "ui.panel", "vault.read", "vault.write", "network"] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
 export const PERMISSION_LABELS: Record<Permission, string> = {
@@ -13,6 +13,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   "editor.input": "See what you type on an empty line and what you paste",
   "editor.links": "Show links to known sites as chips",
   "editor.sync": "Follow what you type and your cursor as you type, and change the note live (for working together)",
+  "editor.caret": "See where your cursor is and what you type, and draw over the editor (it cannot use the internet while it does)",
   "ui.panel": "Add a button at the top of a note and open a window of its own",
   "vault.read": "Read your notes",
   "vault.write": "Create and change notes",
@@ -20,7 +21,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
 };
 
 /** Version of the plugin API this app implements. A plugin can require a minimum. */
-export const API_VERSION = 7;
+export const API_VERSION = 8;
 
 export interface PluginManifest {
   /** Lower-case letters, digits and dashes; also the plugin's folder name. */
