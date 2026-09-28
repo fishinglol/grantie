@@ -89,6 +89,81 @@ declared permissions, explicit per-device enable**.
 - **API 6 (2026-09-25)**: permission `editor.sync`, `granite.editor.sync.start / stop / remote / ack / setCursors`, `API_VERSION` 6: a plugin can follow the open note's edits and caret and apply other people's edits and draw their carets
   (the base of live collaboration). The plugin is the authority (ordered log; edits as CodeMirror `ChangeSet` JSON, so a plugin bundles `@codemirror/state`); one session at a time. Details and status: `activeContext.md` "Session 2026-09-25 (later)".
 - **API 7 (2026-09-26)**: permission `ui.panel`, `granite.ui.headerButton / setBadge / copy`, `API_VERSION` 7: a plugin puts a button at the top of a note (desktop icon next to book/split/⋯, phone text pill) that opens a window of the plugin's own (its main frame shown as a card / bottom sheet). Live Collab 1.1.0 is the first user (the Share button). Details: `activeContext.md` "Session 2026-09-26 (Share button)".
+- **API 8 (2026-09-27)**: permission `editor.caret`, `granite.caret.overlay(render) / setOptions / getOptions / inOverlay`, `API_VERSION` 8: a plugin draws over the editor and follows the text cursor (cursor shapes, trails, particles, spotlight).
+  The host makes one transparent, `pointer-events:none`, full-window sandboxed iframe per plugin (the *overlay*, `PluginHost` `caret.overlay`) that re-runs the plugin's own `main.js` (`granite.caret.inOverlay`
+  tells the two frames apart) and passes `{ type: "move" | "type" | "delete" | "enter", caret: {x,y,width,height} | null }` events in window pixels. The editor side is `packages/live-editor/src/caret.ts` (`caretEvents`
+  extension: measures after layout, classifies edits by user event, `scroll` flag when only scrolling moved it), reached through `BlockRenderer.wantsCaret/caret`, i.e. through the existing `BlockBridge`, so
+  **neither app needed a change** (the phone's host runs in the same WebView page as the editor). Security: the overlay is told what you type, so it has **no network even with `network` in the manifest**, the host
+  answers none of its `call`s, the plugin's other frame is never sent caret events, and overlays are hidden by `pauseStyles` (consent / delete screens). `setOptions` (JSON <= 20 000 chars) relays the settings window's
+  choices to the overlay (different frames) and keeps them in the host page's `localStorage` (`granite-plugin-options:<id>`, best effort, per device, not synced; **unverified in the phone WebView**, where a page loaded from an HTML string may refuse `localStorage`).
+  First user: **Cursor Effects** (`examples/plugins/cursor-fx`, permissions `editor.caret` + `editor.style` + `ui.panel`): line / block / underline, colour, blink, glide, trail, dust, pop, torch, 5 presets, reduce-motion aware;
+  idea from the Obsidian plugin cursor-smith (MIT, https://github.com/Sadsnake1/cursor-smith), code written from scratch. Not built: Vim-mode cursors (Granite has no Vim mode), CRT / beam / hot-head / bracket-tether effects.
+  Docs: `apps/docs/api/caret.md`. Tests: `packages/plugins/test/caret.test.ts`, `cursor-fx.test.ts`, `packages/live-editor/test/caret.test.ts`.
+- **Cross-plugin bug found live (2026-09-27), fixed at the shared layer + a general guard added**: user hit a real bug installing Cursor
+  Effects next to Simple Table (their own repro, screenshots): edit a table cell, click into ordinary text below and type, then click
+  back into the table cell — the overlay's cursor stayed stuck over the old text instead of disappearing. Root cause (confirmed with
+  headless Chrome, not guessed): a block plugin's iframe (Simple Table) sits *inside* the editor's own DOM, so focus moving into it is a
+  real DOM blur on the editor, but CodeMirror's own `ViewUpdate.focusChanged` reconciles that on a `setTimeout` and can coalesce it away
+  when nothing else changed — `caret.ts`'s `update()` never re-measured. Fix: listen to `focusout` on `view.dom` directly (bubbles, fires
+  the moment focus leaves anything under the editor, iframe or not) instead of relying solely on CodeMirror's flag. This lives in the
+  *shared* `caretEvents` extension every `editor.caret` plugin uses, so it protects any future one, not just this plugin. Verified in
+  headless Chrome: table cell → text below → back to the table cell, no stale cursor.
+  User then asked for a general fix so plugin combinations don't break like this again. Found and fixed one more unguarded case while
+  looking: `blocks.register` had no check for two plugins claiming the same fence language — the first loaded silently won, the second's
+  blocks would render with the *wrong* plugin's code. Now rejects with a clear error (`"lang" blocks are already drawn by "Name"`) at
+  register time, caught in testing rather than in front of a user. Checked and already fine: `ui.panel` (one window, one button per
+  plugin), `editor.sync` (one live session owner) and `links.register` (findLinkProvider, most specific host wins). `editor.style` has no
+  guard and can't cheaply get one (arbitrary CSS, already documented as app-wide) — stays a known limitation. Docs: `api/blocks.md` (the
+  guard), `guide/publishing.md` (new review item: install the plugin next to `simple-table` + `sheet` and click through both, since most
+  cross-plugin bugs are one plugin assuming it's the only thing running). Tests: `packages/plugins/test/block-collision.test.ts`.
+  Rebuilt: `apps/mobile` editor bundle, desktop `tauri build` (not yet copied to `/Applications/Granite.app` — ask the user each time;
+  not yet shipped to the phone — `npm run ship`, ask first, it reaches real devices).
+- **Shared things no longer depend on start order (2026-09-28)**: user asked (Thai) whether an event bus / capability system
+  would reduce bugs; answer was no (every cross-plugin bug so far was host code on a shared surface, and no plugin has ever needed
+  another), so we audited `host.ts` instead. Found: plugins start in parallel (each app calls `load` for all at once), so "first to
+  register wins" differed between launches and between desktop and phone, and an update (unload + load) let a rival grab a block
+  language. Fixed in `host.ts` with one rule, `#claimants`: **when several running plugins ask for the same thing, the plugin whose id
+  sorts first gets it**. Applied to block languages (`#blockOwner`; the loser keeps its claim and takes over when the owner stops;
+  `#handOver` swaps the frames of blocks already on screen in place, because the editor's `BlockWidget.eq` only compares lang +
+  text and would keep the old frame), typed triggers other than `//` (now exclusive, same rule, were unguarded), link-chip ties
+  (equal-length hosts). Paste is now a chain: every `onPaste` plugin is asked in id order until one returns text, 5 s total (before,
+  only the first was asked and a `null` ended it). Header buttons are sorted by plugin name, `blockLangs()` by name (canvas bar).
+  The loser is always told once, whatever the order (a rejected call, which reaches the user as a notice via `unhandledrejection`,
+  or a host notice on takeover). No API or manifest change. Tests: `block-collision.test.ts` (+7, each runs both start orders;
+  removing the id sort makes 5 fail), plugins 153. Checked in the desktop preview: Cards, Excel, Simple Table, Dropdown blocks
+  draw; switching Dropdown off turns its block into text and back on redraws it; smoke test 10/15 (the known `//` cascade).
+  Docs: `api/blocks.md`, `api/input.md`. **Rule for every new API**: see `systemPatterns.md` "Pattern: one owner per shared thing".
+  **Checked in the real Tauri window (WKWebView)** the same day, with no screen capture (macOS 13 has no ScreenCaptureKit): a temporary
+  `__probe.ts` imported from `main.tsx` opened `Fais OS/my own schedule.md` (Simple Table + Cards + Calendar: one frame each, right
+  owner), switched Cards off (its block became text, others untouched) and on (back, one frame), no JS errors, wrote the result to
+  `probe.json` in the app config dir; probe removed afterwards. Technique worth reusing. The note's hash changed during that run: it was
+  a Drive **download** of a 09:17 phone edit (sync record `remoteModified` before launch), not the test. **Phone not checked** (needs `npm run ship`).
+- **Scroll bug with Cursor Effects on the Mac: FIXED (2026-09-28)**, full story in `caseStudies.md`. In WKWebView the `caret.overlay`
+  frame could take the wheel (Plugins screen proven: `visibility:hidden` while paused still took it). Now: paused overlays are
+  `display:none`, and the overlay forwards any wheel it gets to the host (`OVERLAY_WHEEL_SCRIPT` → `overlay-wheel` → `#wheelAt`:
+  offered to the element under the pointer, else `scrollFrom` scrolls the nearest scrollable; over a block → `scroll-at`). Checked in
+  the real Mac app with Cursor Effects on: sidebar, Plugins screen and note scroll. Installed to `/Applications` 14:23, then 14:32 (with
+  the block caret below). Old builds kept in `~/Granite-backups/`.
+- **Caret inside plugin blocks (2026-09-28)**: the user's original wish (special cursor was a plain one inside Cards / Simple Table).
+  `packages/plugins/src/blockCaret.ts` `BLOCK_CARET_SCRIPT` in every block frame reports its text field's caret + typing while the host
+  says `caret-want {on, hide}`; the host (`#onBlockCaret`, `#caretBlock`) moves it into window pixels and decides who has the caret.
+  No API change: every `editor.caret` plugin gets it. The user checked it in the real Mac app (cursor in cells and cards, no double
+  cursor, follows back into the note). Not checked on the phone (host code is in the phone's generated `editorHtml.ts`: needs
+  `npm run ship`, ask first). Docs: `api/caret.md`.
+- **Plugin clash check in CI (2026-09-28)**: `packages/plugins/scripts/check-plugins.ts` (`npm run check-plugins -w @granite/plugins`) runs
+  every `examples/plugins/*/main.js` in a Node vm with a recording fake `granite` (browser globals it touches, e.g. Live Collab's `crypto`,
+  are stubbed on demand; errors from the vm are another realm, so no `instanceof Error`) and fails on: two plugins drawing the same block
+  language / answering the same typed text (not `//`) / drawing chips for the same host, a registration without its permission
+  (`METHOD_PERMISSION`), folder != id, a plugin that can't be started. With `--base <ref>` (CI on pull requests, checkout `fetch-depth: 0`,
+  base passed via env) it also fails when a plugin's files changed but `version` didn't. `test/check-plugins.test.ts` also runs it over the
+  real examples, so plain `npm test` guards clashes too. Deliberately **no CSS-scoping rule** (user chose guideline-only on 2026-09-27).
+  Note: this runs contributors' `main.js` in CI (as the plugin tests already did); `vm` is not a security boundary, acceptable only because
+  CI has no secrets (`pull_request`). Docs: `guide/publishing.md` step 4. Still not done: single-plugin smoke-test mode, author guide page.
+- **Dev tool added: `apps/desktop/scripts/plugin-smoke-test.mjs`** (2026-09-27, in response to "how do I stop this happening to a *future* plugin"): installs every plugin in `examples/plugins/` together against a running `desktop-web` preview (raw CDP over Node's built-in `WebSocket`, same technique as the Store screenshots — no new dependency), then walks the real `//` list: text-only entries just get typed, and anything that draws a block gets clicked into, typed in, then clicked out of and typed in again — the exact focus transition the bug above needed. Usage and the honest caveat live in its own header comment: after several blocks pile into one long note, the `//` list can stop reopening for the rest of that run — confirmed with headless Chrome to be a real CodeMirror view-state issue under back-to-back synthetic input (not this script's logic, and not something a real user's slower, varied input hits the same way); a cascade of "menu item not found" after one genuine result reads as that, not as every later plugin failing. A clean run (10/15 or better with today's 11 plugins) is a real pass. Typical run: `Installed: <names>` then one line per `//` entry. Not wired into CI (no headless Chrome there, and Store screenshots have always been a by-hand step in this repo too); it's for a person (or Claude) to run locally before listing a new plugin, alongside the by-hand `simple-table` + `sheet` check in `guide/publishing.md`.
+
+## CSS scoping guideline (2026-09-27, researched against Obsidian)
+User asked, after the smoke-test tool: at scale (many outside authors), what stops one plugin's `editor.style` from breaking every other plugin's UI? Researched Obsidian's own answer first (they have thousands of plugins, no JS sandbox at all — plugins get full filesystem/network access — and their own CSS-conflict prevention is 100% convention: use their CSS variables, scope selectors under your own class, avoid `!important`; none of it is technically enforced, and their plugin review is explicitly "functionality and basic quality, not a security audit," with plugin updates after the first not re-reviewed with the same scrutiny). Given even Obsidian at far greater scale hasn't (and likely can't, without breaking whole-editor-restyle plugins like Sheet) auto-scope CSS, and the user chose "guideline only, don't enforce in code" when offered an automated `checkPluginCss` lint: added a "Keep it scoped" section to `apps/docs/api/editor.md` (use the CSS variables, put every selector under `.live-editor`, avoid `!important` except the one legitimate case cursor-fx already uses it for) and a matching review-checklist line in `guide/publishing.md`. No code changed — this is purely a documented practice for future plugin authors and for review, same posture as Obsidian's.
+**Important context for "how much does the sandbox already cover":** the two real bugs found this session (the caret focus bug, the block-language collision) were NOT "plugin A's code reached out and broke plugin B" — the `iframe sandbox="allow-scripts"` (no `allow-same-origin`) already makes that structurally impossible; a plugin's JS cannot touch another plugin's DOM, memory or code. Both were bugs in *Granite's own host code* that only surfaced with multiple plugins running, found by testing multiple plugins together and fixed once at the host layer (protects every plugin, present and future, automatically). `editor.style` is the one permission that is a real, structural exception to the sandbox (CSS is deliberately unscoped, app-wide, by design) — everything else a plugin can reach is mediated by `GraniteApi`/`METHOD_PERMISSION` and checked there.
 - **Manifest `setup` (2026-09-26)**: optional list of "Before you start" steps, shown numbered on a plugin's Store page (both apps). Live Collab uses it.
 - **Live Collab (2026-09-25)**: `examples/plugins/live-collab` uses API 6 (see `activeContext.md` "the Live Collab plugin itself"). Also added: manifest `connect` (servers a plugin may reach) and `network` now includes `wss:` in the CSP (`https:` alone does not cover it).
 - **Popup (2026-09-25)**: `examples/plugins/popup`, a `//` entry that inserts a ```` ```popup ```` block (`note: path`); a card that opens the note with `vault.open(path, { beside: true })` (phone bottom sheet, desktop split). No API change. Details: `progress.md` "Popup plugin".

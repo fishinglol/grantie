@@ -741,3 +741,22 @@ End-to-end encrypted transport (`src/relay.ts`, `server/room.mjs`), Cloudflare W
 
 ## 2026-09-26 — Phone: offline no longer toasts "Sync failed" every 3 s
 `apps/mobile/App.tsx` `doSync`: with no internet the 3 s poll failed each time (`UnknownHostException oauth2.googleapis.com` from the token refresh) and re-showed the red toast forever. Now a network-type error (`isOffline`) shows **no toast** (user found it annoying): `isOfflineNow` state adds "· Offline" to the sidebar title and an "Offline: notes are saved on this phone…" line in the settings sheet caption; background polls wait `OFFLINE_RETRY_MS` (30 s); saves / Sync now / foreground still try; the first success clears it. Other errors still toast. Notes and the saved Google session work offline (restore reads local storage only). Desktop unchanged (status line only, retries every 3 s). Not checked on a real phone; needs `npm run ship` (an old build keeps showing the toast).
+
+## 2026-09-26 — Import no longer overwrites the vault
+- `VaultSetupPage` used to import into `~/Documents/GraniteVault` (ignoring the active vault), overwrite same-named notes, flatten
+  assets into one `assets/`, and switch the active vault to it; `categorizeFile` also treated every unknown extension as a note.
+- Now: import goes to a new `<active vault>/Imported/<name>` (numbered if taken), the vault is never switched, only
+  md/markdown/txt/html/htm/csv are notes (`node_modules` and dot-folders skipped), and the page shows **Open vault / Undo import**
+  (undo removes only the folder that import created). Empty result removes the folder again.
+- Brand marks (simple-icons, CC0) in `apps/desktop/src/assets/brands/`, tinted via CSS mask (`importIcons.tsx`); our logo from `Logo/`
+  is `apps/desktop/src/assets/logo.png` (used by the login, setup and gate screens, `.mark`).
+- Checked in the browser preview (in-memory fs) only, not on a real Tauri vault.
+
+## 2026-09-27 — Cards 1.4.1: dropdown chip on the card face
+- User's phone screenshot: a card whose text holds a ```` ```dropdown ```` fence (inserted from the `//` list inside the card editor) showed the raw fence on the card.
+  `examples/plugins/cards/main.js` `withChips` / `dropdownChip` now draw it as a read-only coloured chip (click the card to edit; picking options is still done in the note's own Dropdown block). Checked with a fake DOM (chip colour, dark/light, plain text unchanged); plugins tests 122. Needs UPDATE in the Store + `npm run ship` on the phone.
+- **Not fixed / asked:** the same screenshot's "Link plugin doesn't list on card" — no plugin has a `//` entry called "Link" (only Simple Table's cell type), so `//Li` correctly shows Bulleted / Numbered list. Waiting for the user to say what "Link" should insert.
+
+## 2026-09-27 — close / delete for a note opened from a Popup card (desktop + phone)
+User (Thai) could not close or delete the note a Popup card opens. Desktop: `PageMenu` shows a ✕ (was the split icon) once split, and its ⋯ menu gets "Close this pane" (only when split) and "Delete note" (red, uses the existing `DeleteDialog`). Phone: the open-beside sheet (`editor-web/main.tsx` `Sheet`) gets a ⋯ menu with "Close" and "Delete note"; delete is a new page -> app `vault` op `delete` (`PluginVaultRequest`), which `App.tsx` `askDelete` confirms with an Alert and resolves `true` once the file is gone, then the sheet closes (its unsaved edit is dropped first). Plugins cannot reach that op (the host adapter only maps read/write/list/open).
+Checked: `tsc` clean for mobile and the editor page (desktop only the old `vite.config.ts` error), `npm run build:editor`, desktop in the browser preview (✕, menu, delete dialog). **Not verified:** the phone sheet itself (the nested plugin frame could not be driven in the Expo web preview), a real phone, the real Tauri window.
