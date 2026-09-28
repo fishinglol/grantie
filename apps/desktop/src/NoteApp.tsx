@@ -1212,6 +1212,7 @@ export default function NoteApp({
                         split={panes.length > 1}
                         onSplit={splitRight}
                         onClosePane={() => closePane(i)}
+                        onDelete={() => dir && setDeleting({ file: p.slice(dir.length + 1), folder: false })}
                       />
                     )}
                     {p && dir && isCanvas(p) ? (

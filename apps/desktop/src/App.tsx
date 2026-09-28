@@ -9,6 +9,7 @@ import { isGoogleConfigured } from "./config";
 import { restoreGoogleSession, signInWithGoogle } from "./googleLogin";
 import { getStoredVaultDir } from "./vault";
 import "./App.css";
+import logo from "./assets/logo.png";
 
 /**
  * `checking` — looking for a session & stored vault saved by a previous launch.
@@ -90,7 +91,7 @@ export default function App() {
     return (
       <div className="login">
         <div className="login-card">
-          <div className="mark" aria-hidden="true" />
+          <img className="mark" src={logo} alt="" />
           <p className="tagline">Opening your vault…</p>
         </div>
       </div>

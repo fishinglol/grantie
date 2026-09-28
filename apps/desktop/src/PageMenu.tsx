@@ -16,13 +16,15 @@ export interface PageMenuProps {
   split: boolean;
   onSplit: () => void;
   onClosePane: () => void;
+  /** Ask to delete this note's file (the app confirms first). */
+  onDelete: () => void;
 }
 
 /**
- * The buttons at the top right of a note pane: the book (reading mode), split, and ⋯ (page-level actions from
- * plugins, e.g. "Turn this page into a sheet").
+ * The buttons at the top right of a note pane: the book (reading mode), split (a ✕ once split), and ⋯ (page-level actions from
+ * plugins, e.g. "Turn this page into a sheet", then Close pane and Delete note).
  */
-export default function PageMenu({ commands, onRun, onOpenPlugins, buttons, onButton, reading, onToggleReading, split, onSplit, onClosePane }: PageMenuProps) {
+export default function PageMenu({ commands, onRun, onOpenPlugins, buttons, onButton, reading, onToggleReading, split, onSplit, onClosePane, onDelete }: PageMenuProps) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
 
@@ -64,8 +66,14 @@ export default function PageMenu({ commands, onRun, onOpenPlugins, buttons, onBu
         onClick={split ? onClosePane : onSplit}
       >
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="3" y="5" width="18" height="14" rx="3" />
-          <path d="M12 5v14" />
+          {split ? (
+            <path d="M6 6l12 12M18 6L6 18" />
+          ) : (
+            <>
+              <rect x="3" y="5" width="18" height="14" rx="3" />
+              <path d="M12 5v14" />
+            </>
+          )}
         </svg>
       </button>
       <button className="page-menu-btn" title="Page actions" aria-label="Page actions" aria-expanded={open} onClick={() => setOpen(!open)}>
@@ -100,6 +108,28 @@ export default function PageMenu({ commands, onRun, onOpenPlugins, buttons, onBu
               No page actions yet. Get one from the plugin Store…
             </button>
           )}
+          <div className="page-menu-sep" role="separator" />
+          {split && (
+            <button
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onClosePane();
+              }}
+            >
+              Close this pane
+            </button>
+          )}
+          <button
+            role="menuitem"
+            className="danger"
+            onClick={() => {
+              setOpen(false);
+              onDelete();
+            }}
+          >
+            Delete note
+          </button>
         </div>
       )}
     </div>

@@ -155,6 +155,8 @@ test("categorizeFile separates notes, assets, and ignored files", () => {
   assert.equal(categorizeFile("draft.txt"), "note");
   assert.equal(categorizeFile("photo.png"), "asset");
   assert.equal(categorizeFile("drawing.svg"), "asset");
+  assert.equal(categorizeFile("config.json"), "ignore");
+  assert.equal(categorizeFile("Makefile"), "ignore");
   assert.equal(categorizeFile(".DS_Store"), "ignore");
   assert.equal(categorizeFile(".git"), "ignore");
 });

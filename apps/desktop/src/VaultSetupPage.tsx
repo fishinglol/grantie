@@ -6,8 +6,11 @@ import {
   type ImportProgress,
   type ImportResult,
 } from "@granite/core-importer";
-import { defaultVaultDir, setStoredVaultDir } from "./vault";
+import { join } from "@granite/core-notes";
+import { defaultVaultDir, getStoredVaultDir, setStoredVaultDir } from "./vault";
 import { tauriFs } from "./tauriFs";
+import { SourceIcon, UiGlyph } from "./importIcons";
+import logo from "./assets/logo.png";
 
 export interface VaultSetupPageProps {
   onVaultReady: (vaultDir: string) => void;
@@ -19,6 +22,15 @@ type Tab = "vault" | "import";
 const isTauri = () =>
   typeof window !== "undefined" &&
   Boolean((window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+
+/** Where an import is placed: a brand-new folder, so nothing already in the vault can be overwritten. */
+async function newImportDir(vault: string, sourcePath: string): Promise<string> {
+  const last = sourcePath.split(/[\\/]/).filter(Boolean).pop() ?? "notes";
+  const name = last.replace(/\.[^.]+$/, "") || "notes";
+  let dir = join(vault, "Imported", name);
+  for (let n = 2; await tauriFs.exists(dir); n++) dir = join(vault, "Imported", `${name} ${n}`);
+  return dir;
+}
 
 function formatErrorMessage(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
@@ -36,6 +48,7 @@ export default function VaultSetupPage({ onVaultReady, onCancel }: VaultSetupPag
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<ImportProgress | null>(null);
+  const [imported, setImported] = useState<{ vault: string; dir: string } | null>(null);
 
   // Listen to native Tauri window drag & drop
   useEffect(() => {
@@ -66,49 +79,81 @@ export default function VaultSetupPage({ onVaultReady, onCancel }: VaultSetupPag
     };
   }, []);
 
-  /** Auto-scan dropped or selected path, detect app, and import into .md */
+  /**
+   * Auto-scan a dropped or selected path, detect the app, and convert it to .md inside a NEW folder
+   * `<current vault>/Imported/<name>`. The vault itself is never switched or overwritten, and the
+   * result can be undone (the new folder is removed).
+   */
   async function handleAutoImport(targetPath: string) {
     setBusy(true);
     setError(null);
     setDetectedApp(null);
     setProgress(null);
+    setImported(null);
     setStatus(`Scanning ${targetPath}…`);
 
     try {
-      const target = await defaultVaultDir();
-      await tauriFs.mkdirp(target);
+      const vault = (await getStoredVaultDir()) ?? (await defaultVaultDir());
+      const dest = await newImportDir(vault, targetPath);
+      await tauriFs.mkdirp(dest);
 
       const importer = new VaultImporter(tauriFs);
-      const { detected, result } = await importer.autoImport(
-        targetPath,
-        target,
-        (p: ImportProgress) => setProgress(p)
+      const { detected, result } = await importer.autoImport(targetPath, dest, (p: ImportProgress) =>
+        setProgress(p)
       );
 
       setDetectedApp(detected);
-      finishImport(target, result, detected);
+      await finishImport(vault, dest, result, detected);
     } catch (e) {
       setError(formatErrorMessage(e));
-      setBusy(false);
       setStatus(null);
+    } finally {
+      setBusy(false);
     }
   }
 
   async function finishImport(
-    targetVault: string,
+    vault: string,
+    dest: string,
     res: ImportResult,
-    detected?: DetectionResult
+    detected: DetectionResult
   ) {
-    await setStoredVaultDir(targetVault);
-    const appLabel = detected ? ` from ${detected.displayName}` : "";
+    if (res.notesCount === 0) {
+      await removeImport(vault, dest);
+      setStatus(`No notes found in this ${detected.displayName} source, so nothing was imported.`);
+      return;
+    }
+    await setStoredVaultDir(vault);
+    setImported({ vault, dir: dest });
+    const skipped = res.skippedCount ? `, ${res.skippedCount} skipped` : "";
     setStatus(
-      `✓ Successfully scanned & imported${appLabel}! ${res.notesCount} note${
-        res.notesCount === 1 ? "" : "s"
-      } converted to .md (${res.assetsCount} assets in assets/).`
+      `Imported ${res.notesCount} note${res.notesCount === 1 ? "" : "s"} from ${detected.displayName} ` +
+        `into Imported/${dest.split("/").pop()} (${res.assetsCount} assets${skipped}). Your existing notes were not touched.`
     );
-    setTimeout(() => {
-      onVaultReady(targetVault);
-    }, 1500);
+  }
+
+  /** Removes only the folder this import created, plus `Imported/` if that leaves it empty. */
+  async function removeImport(vault: string, dir: string) {
+    await tauriFs.removeDir(dir);
+    const parent = join(vault, "Imported");
+    if ((await tauriFs.exists(parent)) && (await tauriFs.listDir(parent)).length === 0) {
+      await tauriFs.removeDir(parent);
+    }
+  }
+
+  async function undoImport() {
+    if (!imported) return;
+    setBusy(true);
+    try {
+      await removeImport(imported.vault, imported.dir);
+      setImported(null);
+      setDetectedApp(null);
+      setStatus("Import undone. The imported folder was removed.");
+    } catch (e) {
+      setError(formatErrorMessage(e));
+    } finally {
+      setBusy(false);
+    }
   }
 
   /** Browse folder to auto-scan */
@@ -294,7 +339,7 @@ export default function VaultSetupPage({ onVaultReady, onCancel }: VaultSetupPag
       />
 
       <div className="login-card vault-setup-card">
-        <div className="mark" aria-hidden="true" />
+        <img className="mark" src={logo} alt="" />
         <h1>Welcome to Granite</h1>
         <p className="tagline">Drag & drop your notes — Granite will scan and detect the app automatically.</p>
 
@@ -350,7 +395,9 @@ export default function VaultSetupPage({ onVaultReady, onCancel }: VaultSetupPag
                 }
               }}
             >
-              <div className="dropzone-icon">{isDragging ? "📂" : "📥"}</div>
+              <div className="dropzone-icon">
+                <UiGlyph name={isDragging ? "folder" : "download"} size={40} />
+              </div>
               <h3>Drag & drop any notes folder or export file here</h3>
               <p className="dropzone-sub">
                 Granite will scan the structure and auto-detect whether it is from <b>Obsidian</b>, <b>Evernote</b>, <b>Notion</b>, <b>Joplin</b>, or <b>OneNote</b>.
@@ -359,26 +406,36 @@ export default function VaultSetupPage({ onVaultReady, onCancel }: VaultSetupPag
 
               <div className="dropzone-actions">
                 <button className="browse-btn" onClick={browseFolder} disabled={busy}>
-                  📁 Browse Folder…
+                  <UiGlyph name="folder" size={15} /> Browse Folder…
                 </button>
                 <button className="browse-btn secondary" onClick={browseFile} disabled={busy}>
-                  📄 Browse File (.enex / archive)…
+                  <UiGlyph name="file" size={15} /> Browse File (.enex / archive)…
                 </button>
               </div>
 
               <div className="detected-supported-bar">
                 <span>Auto-detects:</span>
-                <span className="source-pill">🟣 Obsidian</span>
-                <span className="source-pill">🐘 Evernote</span>
-                <span className="source-pill">📓 Notion</span>
-                <span className="source-pill">🔵 Joplin</span>
-                <span className="source-pill">📔 OneNote</span>
+                {(
+                  [
+                    ["obsidian", "Obsidian"],
+                    ["evernote", "Evernote"],
+                    ["notion", "Notion"],
+                    ["joplin", "Joplin"],
+                    ["onenote", "OneNote"],
+                  ] as const
+                ).map(([kind, label]) => (
+                  <span key={kind} className="source-pill">
+                    <SourceIcon kind={kind} /> {label}
+                  </span>
+                ))}
               </div>
             </div>
 
             {detectedApp && (
               <div className="detection-banner">
-                <span className="badge-icon">{detectedApp.badge}</span>
+                <span className="badge-icon">
+                  <SourceIcon kind={detectedApp.kind} size={26} />
+                </span>
                 <div>
                   <strong>Detected: {detectedApp.displayName}</strong>
                   <p>{detectedApp.description}</p>
@@ -391,7 +448,9 @@ export default function VaultSetupPage({ onVaultReady, onCancel }: VaultSetupPag
         {tab === "vault" && (
           <div className="setup-options">
             <button className="option-card" onClick={openExistingFolderAsVault} disabled={busy}>
-              <div className="option-icon">📂</div>
+              <div className="option-icon">
+                <UiGlyph name="folder" size={22} />
+              </div>
               <div className="option-text">
                 <h3>Open folder as vault</h3>
                 <p>Choose an existing folder on your computer to open as your Granite vault (same as Obsidian).</p>
@@ -399,7 +458,9 @@ export default function VaultSetupPage({ onVaultReady, onCancel }: VaultSetupPag
             </button>
 
             <button className="option-card" onClick={createNewVaultFolder} disabled={busy}>
-              <div className="option-icon">✨</div>
+              <div className="option-icon">
+                <UiGlyph name="plus" size={22} />
+              </div>
               <div className="option-text">
                 <h3>Create new vault</h3>
                 <p>Create a fresh vault folder at any location on your disk.</p>
@@ -407,7 +468,9 @@ export default function VaultSetupPage({ onVaultReady, onCancel }: VaultSetupPag
             </button>
 
             <button className="option-card highlight" onClick={chooseDefaultVault} disabled={busy}>
-              <div className="option-icon">🏠</div>
+              <div className="option-icon">
+                <UiGlyph name="home" size={22} />
+              </div>
               <div className="option-text">
                 <h3>Quick start with default vault</h3>
                 <p>Use the default <code>~/Documents/GraniteVault</code> folder.</p>
@@ -429,6 +492,16 @@ export default function VaultSetupPage({ onVaultReady, onCancel }: VaultSetupPag
         )}
 
         {!busy && status && <p className="success-banner">{status}</p>}
+        {!busy && imported && (
+          <div className="import-actions">
+            <button className="browse-btn" onClick={() => onVaultReady(imported.vault)}>
+              Open vault
+            </button>
+            <button className="browse-btn secondary" onClick={() => void undoImport()}>
+              Undo import
+            </button>
+          </div>
+        )}
         {error && <p className="error" role="alert">{error}</p>}
 
         <div className="setup-footer">
