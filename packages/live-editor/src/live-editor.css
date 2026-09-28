@@ -298,7 +298,8 @@
 /* A block drawn by a plugin (```sheet …): the plugin paints the frame, the note only spaces it. */
 .live-editor .cm-plugin-block { margin: 10px 0; }
 /* A block that is the whole page (a sheet): edge to edge and exactly as tall as the editor, with no room to scroll past it. */
-.live-editor:has(.cm-plugin-block-page) .cm-content { max-width: none; padding: 0 !important; }
+/* Scoped to that note's own .cm-editor: the editors of recently open notes stay in .live-editor (hidden), and `:has` sees them too. */
+.live-editor .cm-editor:has(.cm-plugin-block-page) .cm-content { max-width: none; padding: 0 !important; }
 .live-editor .cm-plugin-block-page { margin: 0; height: var(--editor-h, 100vh); }
 
 /* The `//` list (plugins' things to insert). */
