@@ -24,7 +24,12 @@ So the only way onto the Store is a folder under `examples/plugins/<id>/` in the
    Store without them — real captures of it running, not mockups.
 3. **Write a `README.md`** for the folder (what it does, how to install it, anything worth knowing) — every
    shipped example plugin has one; follow that pattern.
-4. **Open a pull request.** A maintainer reads the code before it's merged. There's no other path to
+4. **Run the clash check**: `npm run check-plugins -w @granite/plugins`. It starts every plugin in
+   `examples/plugins/` (yours included) and fails if two of them draw the same ```` ```lang ```` blocks, answer the
+   same typed text or draw chips for the same site, or if yours registers something its manifest has no
+   permission for. On a pull request, CI runs it too, and also fails when a plugin's files changed but its
+   `version` didn't. A clash means only one of the two plugins would ever work, so pick another name.
+5. **Open a pull request.** A maintainer reads the code before it's merged. There's no other path to
    distribution today — nothing is installable from an unreviewed source, and there's no install-from-URL or
    community registry outside this repo.
 
@@ -60,6 +65,18 @@ Since the sandbox already constrains what a plugin's code *can* do, review mostl
 - **Note content is data, never markup.** Your block's text can come from someone else (a shared note, an import,
   a live session). Put it on the page with `textContent` / DOM nodes, or escape it before `innerHTML`; otherwise a
   crafted note runs code with *your* plugin's permissions.
+- **Installed alongside a block plugin and a style plugin, it still behaves.** Plugins share one editor and one
+  window, so install the new one next to [`simple-table`](https://github.com/fishinglol/grantie/tree/main/examples/plugins/simple-table)
+  (a block with its own focus) and [`sheet`](https://github.com/fishinglol/grantie/tree/main/examples/plugins/sheet) (app-wide CSS) and click
+  through both while the new plugin runs. Most cross-plugin bugs are one plugin assuming it's the only thing on
+  screen — this catches that before a user does. `apps/desktop/scripts/plugin-smoke-test.mjs` automates a version
+  of this (installs everything in `examples/plugins/` at once, including whatever you're adding, and clicks
+  through the real `//` list) against a running `desktop-web` preview; not a substitute for trying the plugin
+  yourself, but a fast first pass.
+- **`editor.style` is scoped.** Every selector sits under `.live-editor` (or narrower); no bare `body`, `*`,
+  `input`, `button`, `a`, or `!important`. This is the one permission the sandbox can't contain — CSS reaches
+  the whole app — so it's a manual read every time, not a one-off check. See "Keep it scoped" in
+  [`editor`](/api/editor).
 - **The pull request only touches `examples/plugins/<id>/`.**
 
 Asking for more permissions (or servers) in an update is fine, but each device switches the plugin off until its

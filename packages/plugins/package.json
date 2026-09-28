@@ -10,7 +10,8 @@
   },
   "scripts": {
     "test": "node --test 'test/**/*.test.ts'",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check-plugins": "node scripts/check-plugins.ts"
   },
   "dependencies": {
     "@granite/core-cloud": "*",

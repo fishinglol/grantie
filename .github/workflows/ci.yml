@@ -10,6 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the plugin check compares with the PR's base branch
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -19,6 +21,11 @@ jobs:
         run: npm test --workspaces --if-present
       - name: Typecheck the plugin package
         run: npm run typecheck -w @granite/plugins
+      - name: Plugins don't clash, and changed plugins raise their version
+        working-directory: packages/plugins
+        env:
+          BASE: ${{ github.base_ref }}
+        run: node scripts/check-plugins.ts ${BASE:+--base "origin/$BASE"}
       - name: Build the docs site
         run: npm run build -w @granite/docs
       # A plugin that ships a bundled main.js must also ship its source: rebuild it and fail if the committed main.js differs,
