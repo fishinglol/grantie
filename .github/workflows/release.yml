@@ -4,6 +4,10 @@ on:
   push:
     tags:
       - "v*"
+  # Editing this file runs both builds as a dry run (nothing is published), so a broken path shows up in the PR, not on the release.
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
 
 permissions:
   contents: write
@@ -19,26 +23,30 @@ jobs:
           node-version: 24
           cache: npm
 
+      # macos-latest is an Apple-silicon machine; a plain build only runs on Apple silicon. Universal = one app for Intel and Apple-silicon Macs.
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - run: npm ci
 
-      - name: Build the desktop app (unsigned)
+      - name: Build the desktop app (unsigned, universal)
         working-directory: apps/desktop
-        run: npm run tauri build
+        run: npm run tauri build -- --target universal-apple-darwin
 
       - name: Zip the .app bundle
-        working-directory: apps/desktop/src-tauri/target/release/bundle/macos
+        working-directory: apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos
         run: ditto -c -k --sequesterRsrc --keepParent Granite.app Granite-macOS.zip
 
       - name: Attach build artifacts to the release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            apps/desktop/src-tauri/target/release/bundle/dmg/*.dmg
-            apps/desktop/src-tauri/target/release/bundle/macos/Granite-macOS.zip
+            apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Granite-macOS.zip
           body: |
-            Unsigned macOS build. On first launch, macOS Gatekeeper will say the app
+            Unsigned macOS build for Intel and Apple-silicon Macs. On first launch, macOS Gatekeeper will say the app
             is from an unidentified developer: right-click the app, choose **Open**,
             then confirm **Open** in the dialog. You only need to do this once.
 
@@ -61,6 +69,7 @@ jobs:
         run: npm run tauri build
 
       - name: Attach build artifacts to the release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
