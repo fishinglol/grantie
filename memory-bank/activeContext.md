@@ -2,6 +2,14 @@
 
 _Last updated: 2026-09-28 (see "Session 2026-09-28"). Before: 2026-09-27 (scroll trapped inside plugin blocks fixed, see "Session 2026-09-27 (scroll chaining)"). Earlier: Live Collab 1.2.0: encryption + built-in relay + Store "Before you start", see "Session 2026-09-26 (later)"; Share button / plugin API 7 / Live Collab 1.1.0 at "Session 2026-09-26 (Share button)"; built-in `//` list, `//` in plugin fields, Popup / Simple Table / Cards updates, sync delete confirm; see `progress.md` "2026-09-26")_
 
+## Session 2026-09-29 (later) — is the plugin API ready for macOS / Windows / Android? (audit, for the launch)
+Checked from the code + a real-Chrome run; **no change to the plugin API itself**. Plugins 171 tests pass, `tsc` clean, `check-plugins` 11 plugins no clashes, docs cover every
+`GraniteApi` member (`editor.sync` is in `api/editor.md`), phone `npm run build:editor` builds (11 plugins). `apps/desktop/scripts/plugin-smoke-test.mjs` (all Store plugins installed at once, real Chrome 154):
+**15/15 clean, no console errors**. The old "cascade of menu item not found" was the script's own bug (it typed `" ok"` with a leading space, Enter copies the indent, and `//` only opens at column 0
+(`SLASH_LINE`)): fixed, the "flaky CodeMirror" note removed. Chromium = the engine of Windows (WebView2) and Android (System WebView); macOS is WebKit (where the scroll outage happened, see `caseStudies.md`).
+**Still not verified**: the real Tauri window on Windows and on Android WebView versions (older ones), touch/IME on the phone, WebKit after the scroll fix on a real release build. Known gaps: plugin
+`vault.write` does not reject names Windows can't create (`a:b.md`, `CON.md`) — the example plugins sanitize their own names; `ui.copy`/`sync` unchanged.
+
 ## Session 2026-09-28 — plugins that coexist, CI clash check, the Mac scroll outage (+ fix), the caret inside blocks
 User (Thai) first asked whether a big plugin-to-plugin architecture (event bus, capability registry) was "real"; answered from the code:
 Level 1 is real, Levels 2/3 don't exist and no plugin needs them yet, and they would not fix the bugs seen so far (those were host bugs on
