@@ -13,7 +13,9 @@ const js = readFileSync(resolve(dist, "editor.js"), "utf8");
 const css = readdirSync(dist)
   .filter((f) => f.endsWith(".css"))
   .map((f) => readFileSync(resolve(dist, f), "utf8"))
-  .join("\n");
+  .join("\n")
+  // Fonts (KaTeX's, for math) are inlined in three formats; every phone WebView reads woff2, so the other two only add weight.
+  .replace(/,url\(data:font\/(woff|ttf);base64,[A-Za-z0-9+/=]+\) format\("(woff|truetype)"\)/g, "");
 // Inline scripts need two escapes: `</script` would end the script early, and `<!--` followed later by
 // `<script` puts the HTML parser in a state where the real `</script>` no longer ends it (the plugin
 // host's code contains both). `\/` and `\!` mean the same as `/` and `!` in strings and regexes.

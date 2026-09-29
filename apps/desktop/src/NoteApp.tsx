@@ -2,7 +2,7 @@ import { Fragment, type ReactNode, type RefObject, useCallback, useEffect, useMe
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { readFile } from "@tauri-apps/plugin-fs";
-import { basename, dirname, embedImage, join, moveFolder, noteTitle, NoteRepository, relocateLinks, renamedNoteFile, retargetNoteRefs } from "@granite/core-notes";
+import { basename, dirname, embedImage, join, moveFolder, noteTitle, NoteRepository, relocateLinks, renamedNoteFile, retargetNoteRefs, toPosix, windowsSafe } from "@granite/core-notes";
 import { GoogleDriveProvider, VaultSync, merge3, type GoogleSession, type PendingDeletion, type SyncResult } from "@granite/core-cloud";
 
 import { REMOTE_FOLDER_NAME, SYNC_INTERVAL_MS } from "./config";
@@ -421,7 +421,7 @@ export default function NoteApp({
       const kind = creating;
       setCreating(null);
       if (!kind || !dir) return;
-      const clean = raw.trim().replace(/[\\/:*?"<>|]/g, "_");
+      const clean = windowsSafe(raw.trim().replace(/[\\/:*?"<>|]/g, "_"));
       if (!clean || /^\.+$/.test(clean)) return;
       const parent = activeFolder ? join(dir, activeFolder) : dir;
       const relOf = (name: string) => (activeFolder ? `${activeFolder}/${name}` : name);
@@ -832,7 +832,7 @@ export default function NoteApp({
             const at = toClient(p.position);
             void (async () => {
               const files: AttachInput[] = [];
-              for (const filePath of p.paths) {
+              for (const filePath of p.paths.map(toPosix)) {
                 try {
                   files.push({ name: basename(filePath), data: await readFile(filePath) });
                 } catch {
@@ -921,7 +921,7 @@ export default function NoteApp({
       filters: [{ name: "Markdown", extensions: ["md", "markdown", "txt"] }],
     });
     if (typeof picked === "string") {
-      await load(picked);
+      await load(toPosix(picked));
       if (dir) await refreshVaultFiles(dir);
     }
   }, [load, dir, refreshVaultFiles]);
@@ -1212,6 +1212,7 @@ export default function NoteApp({
                         split={panes.length > 1}
                         onSplit={splitRight}
                         onClosePane={() => closePane(i)}
+                        onDelete={() => dir && setDeleting({ file: p.slice(dir.length + 1), folder: false })}
                       />
                     )}
                     {p && dir && isCanvas(p) ? (

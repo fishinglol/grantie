@@ -75,6 +75,36 @@ export interface HeaderButton {
   badge: string | null;
 }
 
+/** Where the caret is, in window pixels: what a `position: fixed` layer over the whole window draws in. */
+export interface CaretRect {
+  /** Left edge of the caret, and the top of its line. */
+  x: number;
+  y: number;
+  /** Width of the character after the caret (an average character at the end of a line). */
+  width: number;
+  /** Height of the line. */
+  height: number;
+}
+
+/**
+ * What the overlay is told about the caret. `move` says the caret is somewhere new: `selecting` is true while text is selected (the editor
+ * draws no caret then), `scroll` that it only moved on screen because the page scrolled or resized (no gliding, then). `caret` is null when there is nothing to draw (the editor has no focus, or the caret is
+ * scrolled out of sight). `type` / `delete` carry up to 32 characters; a paste, a drop and edits made by the app or a plugin are not reported.
+ */
+export type CaretEvent =
+  | { type: "move"; caret: CaretRect | null; selecting: boolean; scroll: boolean }
+  | { type: "type"; text: string; caret: CaretRect | null }
+  | { type: "delete"; text: string; caret: CaretRect | null }
+  | { type: "enter"; caret: CaretRect | null };
+
+/** What `caret.overlay`'s render function gets to listen with. */
+export interface CaretOverlay {
+  /** Called with every caret event (and once at the start with the last known caret, if there is one). */
+  onCaret(handler: (event: CaretEvent) => void): void;
+  /** Called with the options the plugin's other frame chose (`caret.setOptions`), once at the start if it saved some, then on every change. */
+  onOptions(handler: (options: unknown) => void): void;
+}
+
 export interface GraniteApi {
   commands: {
     /**
@@ -120,6 +150,30 @@ export interface GraniteApi {
       setCursors(cursors: SyncCursor[]): Promise<void>;
     };
   };
+  caret: {
+    /**
+     * editor.caret (API 8): draw over the editor. `render` runs once in a transparent frame that covers the whole window and lets every touch and click
+     * through: fill `el` (its `<body>`), usually with one `<canvas>` sized to the window, and listen through `overlay`. Coordinates in events are
+     * that window's pixels. Effects that follow the caret (a trail, particles, a glow, a different caret shape) are made this way.
+     *
+     * The overlay runs the plugin's code again, so keep `caret.overlay(...)` at the top level and do the plugin's other work (commands, a
+     * settings window) in the usual way: in this frame every other `granite` call is refused. **This frame can never use the internet, even
+     * when the manifest has `network`,** because it is told what the user types. Draw only while something is moving (stop the animation
+     * loop when it is done): a full-window frame that repaints all the time drains a phone's battery.
+     *
+     * The editor's own caret stays; hide it with `editor.setStyle("… { caret-color: transparent }")` (permission `editor.style`) if you draw your own.
+     */
+    overlay(render: (el: HTMLElement, overlay: CaretOverlay) => void): Promise<void>;
+    /** True inside the overlay frame, false in the plugin's other frames: `if (!granite.caret.inOverlay) { …commands, the settings window… }`. */
+    readonly inOverlay: boolean;
+    /**
+     * editor.caret: hand the overlay a JSON value (at most 20 000 characters) and remember it on this device. Use it for what the user
+     * chose in the plugin's window (`ui.headerButton`), which lives in another frame than the overlay.
+     */
+    setOptions(options: unknown): Promise<void>;
+    /** editor.caret: what `setOptions` last saved on this device, or null. */
+    getOptions(): Promise<unknown>;
+  };
   ui: {
     /**
      * ui.panel (API 7): put a button (one per plugin) next to the reading-mode / split / ⋯ buttons at the top of a note. Pressing it shows
@@ -154,7 +208,8 @@ export interface GraniteApi {
     trigger(text: string, handler: () => string | null | Promise<string | null>): Promise<void>;
     /**
      * editor.input (API 2): the user pasted something that has tabs in it (rows copied from Excel or Sheets). Return the text to
-     * insert instead, or `null` to let the paste through untouched. One handler per plugin; it has 5 seconds.
+     * insert instead, or `null` to let the paste through untouched. One handler per plugin; plugins are asked in id order until one
+     * returns text, 5 seconds for all of them together.
      */
     onPaste(handler: (clip: PasteClip) => string | null | Promise<string | null>): Promise<void>;
     /**
@@ -210,6 +265,9 @@ export const METHOD_PERMISSION: Record<string, Permission | null> = {
   "sync.remote": "editor.sync",
   "sync.ack": "editor.sync",
   "sync.setCursors": "editor.sync",
+  "caret.overlay": "editor.caret",
+  "caret.setOptions": "editor.caret",
+  "caret.getOptions": "editor.caret",
   "ui.button": "ui.panel",
   "ui.badge": "ui.panel",
   "ui.copy": "ui.panel",

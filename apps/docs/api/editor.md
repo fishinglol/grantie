@@ -48,6 +48,23 @@ await granite.editor.setStyle(`
 `);
 ```
 
+**Keep it scoped, even though nothing forces you to.** Nothing stops a stylesheet from reaching outside the
+editor — but a plugin that does isn't restyling itself, it's restyling everyone else's plugins too. The
+practice below is how Obsidian asks theme authors to behave (it has no technical enforcement either, at far
+greater scale than Granite's Store); it's worth following here for the same reason:
+
+- Prefer the CSS variables above to hand-picking colours — a plugin that sets `--accent` works with whatever
+  theme is active later; one that hardcodes a colour on `.cm-content` fights it.
+- Put every selector under `.live-editor` (or narrower — a class your own CSS adds). A bare `body`, `*`,
+  `input`, `button`, `a` — anything without `.live-editor` in front of it — reaches UI that isn't the editor at
+  all: dialogs, other plugins' own windows, the sidebar.
+- Avoid `!important`. It's rarely needed once a selector is scoped, and it makes your styling impossible for
+  the person (or a later plugin) to override. The one legitimate case is making sure your own replacement
+  actually replaces something (`cursor-fx` uses it once, on a scoped selector, to hide the editor's native
+  caret so its own drawn one is the only one visible) — still scoped, still one rule, not a habit.
+- If your plugin only needs one or two variables changed (`sheet` and `cursor-fx` both do), that's the whole
+  stylesheet — resist adding more "while you're in there."
+
 ## Live collaboration (`editor.sync`, API 6)
 
 `editor.sync` — a live session of the open note with other people, Google-Docs style. **The plugin is the

@@ -7,7 +7,7 @@ Everything a plugin can do is reached through one global, `granite`, typed as `G
 declare const granite: import("@granite/plugins").GraniteApi;
 ```
 
-The current API version is **7** (`API_VERSION` in `@granite/plugins`). A manifest can require a minimum with
+The current API version is **8** (`API_VERSION` in `@granite/plugins`). A manifest can require a minimum with
 `minApiVersion` — see [The manifest](/guide/manifest).
 
 ## Rules that apply everywhere
@@ -30,6 +30,7 @@ The current API version is **7** (`API_VERSION` in `@granite/plugins`). A manife
 | [`blocks`](/api/blocks) | `editor.blocks` | Draw your own UI in place of a fenced code block inside a note |
 | [`input`](/api/input) | `editor.input` | React to what the user types alone on a line, what they paste, or add a `//` menu entry |
 | [`links`](/api/links) | `editor.links` | Turn pasted/typed links to known sites into chips, or read what another plugin knows about a URL |
+| [`caret`](/api/caret) | `editor.caret` | Draw over the editor and follow the text cursor: cursor shapes, trails, particles, a spotlight |
 | [`ui`](/api/ui) | `ui.panel` | Add a button at the top of a note that opens the plugin's own window |
 | [`vault`](/api/vault) | `vault.read` / `vault.write` | List, read, write and open notes elsewhere in the vault |
 | `notice(message)` | none | Show a short message to the user |

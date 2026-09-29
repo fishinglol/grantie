@@ -19,7 +19,9 @@ export type PluginVaultRequest =
   | { op: 'read'; path: string }
   | { op: 'write'; path: string; text: string; quiet?: boolean }
   | { op: 'open'; path: string }
-  | { op: 'rename'; path: string; title: string };
+  | { op: 'rename'; path: string; title: string }
+  /** The sheet's ⋯ menu: ask the user, then delete. Resolves true when the note is gone. */
+  | { op: 'delete'; path: string };
 
 export interface NoteEditorProps {
   /** URI of the open note; relative image links resolve against its folder. */

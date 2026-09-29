@@ -126,6 +126,27 @@ function inline(text) {
   if (last < text.length) frag.append(text.slice(last));
   return frag;
 }
+// A ```dropdown fence (the Dropdown plugin) typed into a card is drawn on the card as its chip, read-only, not as the fence's source text.
+const CHIP = { red: ["#f4c7c3", "#b3261e", "#5c2b29", "#f2b8b5"], orange: ["#fbd8b0", "#8a4b08", "#5a3a17", "#ffd6a5"], yellow: ["#fce8b2", "#7a5a00", "#554510", "#f7e08b"], green: ["#b7e1cd", "#0b6b3a", "#1f4d38", "#a8dab5"], teal: ["#b2ebf2", "#00606b", "#164e54", "#9be7ee"], blue: ["#d2e3fc", "#174ea6", "#263c66", "#aecbfa"], purple: ["#e1d0f5", "#5b2a99", "#43305f", "#d7c1f5"], pink: ["#fad2e1", "#a1234f", "#5a2a3c", "#f7b7d0"], brown: ["#e6d3c3", "#6d4326", "#4a3a30", "#dcc3ad"], gray: ["#e8eaed", "#3c4043", "#3c4043", "#e8eaed"] };
+function dropdownChip(src, dark) {
+  const lines = src.split("\n").map((l) => l.trim()).filter(Boolean);
+  const value = /^value\s*:/i.test(lines[0] || "") ? lines.shift().replace(/^value\s*:/i, "").trim() : "";
+  const opts = lines.map((l) => { const bar = l.lastIndexOf("|"); return [(bar < 0 ? l : l.slice(0, bar)).trim(), bar < 0 ? "gray" : l.slice(bar + 1).trim().toLowerCase()]; });
+  const on = opts.find((o) => o[0] === value);
+  const c = CHIP[on ? on[1] : "gray"] || CHIP.gray, i = dark ? 2 : 0;
+  return h("span", { class: "cchip", style: `background:${c[i]};color:${c[i + 1]}` }, on ? on[0] : "Select…");
+}
+/** Card text as DOM: inline Markdown, with each ```dropdown fence drawn as its chip. */
+function withChips(md, dark) {
+  const frag = document.createDocumentFragment();
+  let last = 0;
+  for (const m of md.matchAll(/```dropdown[ \t]*\n([\s\S]*?)\n?```/g)) {
+    frag.append(inline(md.slice(last, m.index).replace(/\n$/, "")), dropdownChip(m[1], dark));
+    last = m.index + m[0].length;
+  }
+  frag.append(inline(md.slice(last).replace(/^\n/, "")));
+  return frag;
+}
 /** Fill a rich field from Markdown: lines are separated by <br> (and a trailing newline gets the placeholder <br> that makes the empty last line show). */
 function mdToDom(el, md) {
   el.replaceChildren();
@@ -282,6 +303,7 @@ button{font:inherit;color:inherit}
 .cbody{padding:12px 16px 4px}
 .ctitle{font-weight:600;font-size:15px;margin:0 0 8px;overflow-wrap:anywhere;padding-right:28px}
 .ctext{white-space:pre-wrap;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:20;-webkit-box-orient:vertical;overflow:hidden;min-height:8px}
+.cchip{display:inline-block;max-width:100%;padding:3px 10px;border-radius:8px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
 .cit{display:flex;align-items:flex-start;gap:8px;margin:2px 0}
 .cit input{margin:3px 0 0;flex:none}
 .cit span{overflow-wrap:anywhere}
@@ -659,7 +681,7 @@ function startBoard(root, model, source, block) {
       }
       if (open.length > 12) body.append(h("div", { class: "cmore" }, "+ " + (open.length - 12) + " more"));
       if (done.length) body.append(h("div", { class: "cmore" }, "+ " + done.length + (done.length === 1 ? " completed item" : " completed items")));
-    } else if (c.b) body.append(h("div", { class: "ctext" }, inline(c.b)));
+    } else if (c.b) body.append(h("div", { class: "ctext" }, withChips(c.b, dark)));
     if (!c.t && !c.b && !c.list) body.append(h("div", { class: "ctext" }, ""));
     el.append(body);
     if (inBin) {

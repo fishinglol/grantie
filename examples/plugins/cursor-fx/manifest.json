@@ -1,0 +1,14 @@
+{
+  "id": "cursor-fx",
+  "name": "Cursor Effects",
+  "version": "1.0.0",
+  "description": "Make your text cursor yours: a line, block or underline in any colour, a soft blink, smooth gliding as you type, and optional effects: a pixel trail, dust, letters that pop, a torch spotlight. Works on desktop and phone, and respects \"reduce motion\".",
+  "tagline": "Your text cursor: shape, colour, glide and effects",
+  "author": "Granite",
+  "permissions": [
+    "editor.caret",
+    "editor.style",
+    "ui.panel"
+  ],
+  "minApiVersion": 8
+}

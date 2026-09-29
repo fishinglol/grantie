@@ -147,7 +147,8 @@ fn session_clear() -> Result<(), String> {
 
 /// Lets the app change files in a vault folder the person chose. The capability file only allows writing to the default
 /// `~/Documents/GraniteVault` and the app's config, so a bug in the page can't write anywhere else (e.g. `~/Library/LaunchAgents`).
-/// A vault must be a folder inside the home folder, not the home folder itself, not in `~/Library` or `~/Applications`, not hidden.
+/// A vault must be a folder inside the home folder, not the home folder itself, not in `~/Library` or `~/Applications`
+/// (on Windows: `~\AppData`, where apps keep their own state), not hidden.
 fn allow_vault_dir(app: &AppHandle, dir: &Path) -> Result<(), String> {
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
     let home = std::fs::canonicalize(&home).unwrap_or(home);
@@ -164,7 +165,12 @@ fn allow_vault_dir(app: &AppHandle, dir: &Path) -> Result<(), String> {
         .collect();
     let refused = match parts.first() {
         None => true,
-        Some(first) => first == "Library" || first == "Applications" || parts.iter().any(|p| p.starts_with('.')),
+        Some(first) => {
+            first == "Library"
+                || first == "Applications"
+                || (cfg!(windows) && first.eq_ignore_ascii_case("AppData"))
+                || parts.iter().any(|p| p.starts_with('.'))
+        }
     };
     if refused || !dir.is_dir() {
         return Err(format!("{} can't be a vault", dir.display()));

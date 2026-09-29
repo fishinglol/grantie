@@ -30,7 +30,23 @@ Build a distributable app bundle:
 npm run tauri build         # -> src-tauri/target/release/bundle/
 ```
 
-Prereqs: Rust toolchain (`rustup`) and Xcode Command Line Tools on macOS.
+Prereqs: the Rust toolchain (`rustup`), plus
+- **macOS:** Xcode Command Line Tools.
+- **Windows:** the Rust MSVC toolchain, [Visual Studio C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+  ("Desktop development with C++") and the WebView2 runtime (already there on Windows 11). The build writes an `.exe`
+  installer to `bundle/nsis/` and an `.msi` to `bundle/msi/`.
+
+### On Windows
+
+- The default vault is `Documents\GraniteVault`; the app config (Drive session index, vault list) is in `%APPDATA%\dev.granite.desktop`.
+  The Google sign-in itself is kept in Windows Credential Manager.
+- Inside the app every path is a `/` path (`C:/Users/you/Vault`): Tauri's Windows paths are converted at the door
+  (`toPosix` in `@granite/core-notes`), so notes and Markdown links look the same on every device.
+- A vault folder must be inside your user folder and not in `AppData`.
+- Note, folder and vault names can't hold `\ / : * ? " < > |`, can't end in a dot or a space, and can't be a Windows device
+  name (`CON`, `NUL`, `COM1`…). Granite changes such a name when you type it (`CON` becomes `_CON`), on every platform,
+  so a vault stays valid on every device it syncs to.
+- CI builds and tests on Windows (`windows` job in `.github/workflows/ci.yml`); tagged releases attach the installers.
 
 ## Connecting Google Drive
 

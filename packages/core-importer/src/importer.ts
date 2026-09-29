@@ -131,8 +131,8 @@ export class VaultImporter {
         const fullPath = join(currentDir, entry.name);
 
         if (entry.isDirectory) {
-          // Skip internal hidden/config folders (.obsidian, .git, _resources, etc.)
-          if (entry.name.startsWith(".") || (source === "obsidian" && entry.name === ".obsidian")) {
+          // Skip internal hidden/config folders (.obsidian, .git, etc.) and dependency folders
+          if (entry.name.startsWith(".") || entry.name === "node_modules") {
             result.skippedCount++;
             continue;
           }

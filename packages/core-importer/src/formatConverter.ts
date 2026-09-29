@@ -27,6 +27,10 @@ const ASSET_EXTENSIONS = new Set([
   "mov",
 ]);
 
+// Only these are notes. Anything else (.json, .js, .zip, Makefile …) is not, so picking a big folder
+// does not pour source code and config files into the vault as "notes".
+const NOTE_EXTENSIONS = new Set(["md", "markdown", "txt", "html", "htm", "csv"]);
+
 const IGNORE_FILES = new Set([
   ".ds_store",
   "thumbs.db",
@@ -44,17 +48,11 @@ export function categorizeFile(fileName: string): FileCategory {
   }
 
   const dotIndex = lower.lastIndexOf(".");
-  if (dotIndex <= 0) {
-    // Files without extension (like some plain notes) are treated as notes
-    return "note";
-  }
+  if (dotIndex <= 0) return "ignore";
 
   const ext = lower.slice(dotIndex + 1);
-  if (ASSET_EXTENSIONS.has(ext)) {
-    return "asset";
-  }
-
-  return "note";
+  if (ASSET_EXTENSIONS.has(ext)) return "asset";
+  return NOTE_EXTENSIONS.has(ext) ? "note" : "ignore";
 }
 
 /**

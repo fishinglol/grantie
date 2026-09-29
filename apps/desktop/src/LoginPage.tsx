@@ -3,6 +3,7 @@ import type { GoogleSession } from "@granite/core-cloud";
 
 import { isGoogleConfigured } from "./config";
 import { signInWithGoogle } from "./googleLogin";
+import logo from "./assets/logo.png";
 
 export interface LoginPageProps {
   onSignedIn: (session: GoogleSession) => void;
@@ -30,7 +31,7 @@ export default function LoginPage({ onSignedIn, onSkip }: LoginPageProps) {
   return (
     <div className="login">
       <div className="login-card">
-        <div className="mark" aria-hidden="true" />
+        <img className="mark" src={logo} alt="" />
         <h1>Granite</h1>
         <p className="tagline">Your notes stay on this Mac. Drive is just the mirror.</p>
 

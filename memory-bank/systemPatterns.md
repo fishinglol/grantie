@@ -144,6 +144,12 @@ webview Granite controls. No third-party OAuth crate.
   CSS px; only Windows is physical. Use `toClient()`; never divide by `devicePixelRatio`
   blindly.
 
+## Pattern: paths inside the app are always `/`, Windows converts at the door
+Every path the page gets from Tauri (`documentDir`, `appConfigDir`, `open()` dialogs, `onDragDropEvent` `paths`) goes through
+`toPosix` (core-notes `path.ts`): `C:\Users\f\Vault` → `C:/Users/f/Vault`, which Windows accepts back. `dirname/basename/join/normalize`
+treat `C:/` as a root like a URI scheme. `toPosix` only touches strings that start `X:\`, `X:/` or `\\`, since a macOS folder may contain
+a backslash. New code that receives a path from Tauri must call it, or `basename()` returns the whole path on Windows.
+
 ## Pattern: vault image index for Obsidian-style embeds
 `refreshVaultFiles` walks the vault (including `assets/`, which is hidden from the sidebar)
 and builds `Map<lowercased file name, absolute path>`. `![[name.png]]` resolves by name
@@ -273,6 +279,45 @@ The plugin's hidden main iframe is *shown* as the window (CSS class `.granite-pa
 
 ## Pattern: end-to-end encrypted relay (Live Collab)
 The relay never has the key. The invite's secret gives (via SHA-256 with two labels) the room name the relay sees and the AES-GCM key (room name = AAD). The relay (`server/room.mjs`, shared by the Node server and the Cloudflare Worker) only keeps an ordered list of opaque blobs and replays it to newcomers; first byte of each message = type. Client: `src/relay.ts` `RelayProvider` (replaced y-websocket). Status: built and tested, **not reviewed by anyone and the plugin is "SOON" in the Store** (`manifest.soon`).
+
+## Pattern: scroll chaining out of a block frame is hand-rolled, not native
+A block frame is a sandboxed, opaque-origin iframe; whether wheel/touch scroll that runs out of room inside it (Calendar's week/year view, a tall Cards board) continues into the note's own scroll container is up to the browser engine's cross-iframe chaining, which Chromium supports but WebKit (the desktop app) is known not to, and Android WebView can't be assumed to either. `packages/plugins/src/scrollChain.ts` (injected into every block frame, like `slash.ts`) walks up from the event target for a scrollable ancestor that can still move that way; only when none can (never when nothing scrollable is there at all — a drag/resize is left alone) does it forward the delta to the host (`block-scroll`), which walks up from the block's real container element (outside the iframe) for the nearest scrollable ancestor and moves it directly, rather than relying on the engine's own chaining.
+
+## Pattern: one owner per shared thing, decided by plugin id (not start order)
+Plugins start in parallel, so the order they register in is random. Anything two plugins can ask for at once (a block language, a
+typed trigger, a site for chips, a slot in a list) is resolved with `PluginHost.#claimants(has)`: running plugins that asked, id order,
+first one wins. Keep every claim (the next one takes over when the owner stops) and tell the loser once. Things that can be shared
+instead of owned (paste, `//` list entries, header buttons) are asked or listed in a fixed order (id or name), never start order.
+**When adding a plugin API that registers anything:** decide "what happens if two plugins do this?" before merging, use
+`#claimants`, and add a test to `packages/plugins/test/block-collision.test.ts` that runs both start orders.
+
+## Pattern: an overlay over the whole window must never take the wheel (WebKit)
+A `caret.overlay` frame is `position:fixed; inset:0; pointer-events:none`. Clicks go through it everywhere, but WKWebView (the Mac app)
+can still hand it the wheel. So: hide a paused overlay with `display:none` (never `visibility:hidden`, which still took the wheel), and
+every overlay frame runs `OVERLAY_WHEEL_SCRIPT` (`scrollChain.ts`), which forwards any wheel it gets to the host (`overlay-wheel`). The
+host (`PluginHost.#wheelAt`) finds what is under the pointer with `elementFromPoint`, dispatches a synthetic `wheel` there first (canvas
+zoom/pan, image viewer), and if nobody `preventDefault`s it, `scrollFrom` scrolls the nearest ancestor that can still move; over a block
+frame it posts `scroll-at` and the block's `SCROLL_CHAIN_SCRIPT` does the same inside. Anything new that covers the window must be tried
+in the real WKWebView (see `caseStudies.md` for how, without screenshots).
+
+## Pattern: the caret inside plugin blocks
+Block frames run `BLOCK_CARET_SCRIPT` (`blockCaret.ts`). While the host says `caret-want {on:true}` (only while some plugin has a
+`caret.overlay` and styles are not paused), the frame reports its focused text field's caret (textarea/text inputs measured with a hidden
+mirror, contenteditable with the selection's rect; never password fields) as `block-caret` events in frame pixels, plus type / delete /
+enter. The host (`#onBlockCaret`) moves them into window pixels (the frame's `getBoundingClientRect`) and owns one rule: **whoever reported
+a caret last has it** (`#caretBlock`); a late "no caret" from the side that lost it is ignored, so switching note ↔ cell never blanks
+the cursor. `hide` mirrors the plugin's choice: if `.live-editor .cm-content` has a transparent `caret-color`, block frames hide theirs.
+
+## Pattern: math is found by a pure scanner, drawn like images
+`findMath(text)` (`packages/live-editor/src/math.ts`, tested) returns `$…$` (one line; no space inside the `$`s, closing `$` not before a
+digit, so "$5 and $10" stays text; `\$` is a dollar) and `$$…$$` (display, may span lines), Obsidian's rules. `buildDecorations` drops spans in
+code, tables, embeds and the properties box; a span the cursor touches shows as tinted raw TeX (`cm-math-src`), otherwise a `MathWidget`
+(KaTeX `renderToString`, `trust: false`, cached per TeX) replaces it — a block widget when `$$…$$` fills its lines, inline otherwise.
+Markdown syntax nodes that overlap math (`INLINE_NODES`: emphasis, links, …) are skipped, because `x_1 … x_2` is TeX, not emphasis.
+
+## Pattern: a rule about "this note" must not use `.live-editor:has(...)`
+`LiveEditor` keeps the editors of the last 4 notes alive, hidden, inside one `.live-editor`, and `:has()` sees hidden ones: a whole-page
+sheet in any recently open note used to strip every note's margins. Scope such rules to the note's own `.cm-editor`.
 
 ## Pattern: manifest `setup` and `soon`
 `setup` = numbered "Before you start" steps on a plugin's Store page; `soon: true` = listed but not installable (SOON button, install refused on both apps).

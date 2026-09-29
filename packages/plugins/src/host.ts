@@ -1,5 +1,7 @@
+import { BLOCK_CARET_SCRIPT } from "./blockCaret.ts";
+import { OVERLAY_WHEEL_SCRIPT, SCROLL_CHAIN_SCRIPT } from "./scrollChain.ts";
 import { SLASH_SCRIPT } from "./slash.ts";
-import { METHOD_PERMISSION, checkPluginCss, safeNotePath, type CommandInfo, type HeaderButton, type SyncCursor, type SyncEvent } from "./api.ts";
+import { METHOD_PERMISSION, checkPluginCss, safeNotePath, type CaretEvent, type CommandInfo, type HeaderButton, type SyncCursor, type SyncEvent } from "./api.ts";
 import { checkLinkProvider, checkSvgIcon, findLinkProvider, svgDataUri, type LinkChip, type LinkProvider } from "./links.ts";
 import type { PluginManifest } from "./manifest.ts";
 
@@ -58,6 +60,9 @@ export interface HostAdapter {
   copyText?(text: string): Promise<void>;
 }
 
+const OPTIONS_KEY = "granite-plugin-options:";
+const MAX_OPTIONS = 20_000;
+
 /** A command that hasn't finished after this long is assumed stuck; its plugin is shut down. */
 const COMMAND_TIMEOUT_MS = 15_000;
 const START_TIMEOUT_MS = 5_000;
@@ -68,16 +73,19 @@ const INPUT_TIMEOUT_MS = 5_000;
  * cannot touch the app's DOM, storage or native bridge, and a CSP that blocks every network request
  * unless the manifest asked for `network`. Its only way out is `postMessage` to the host.
  */
-function bootstrapHtml(network: boolean, block: boolean, connect: string[] = [], ui = false): string {
+function bootstrapHtml(network: boolean, block: boolean, connect: string[] = [], ui = false, overlay = false): string {
   // A block frame is visible (it is drawn inside the note), so it may style itself and show inline images. So may a plugin's window (`ui.panel`).
-  const styled = block || ui;
+  const styled = block || ui || overlay;
+  // The overlay is told what the user types, so it never gets the network, whatever the manifest says.
+  if (overlay) [network, connect] = [false, []];
   const csp = `default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'${styled ? "; style-src 'unsafe-inline'; img-src data:" : ""}${network || connect.length > 0 ? `; connect-src ${[...(network ? ["https:", "wss:"] : []), ...connect].join(" ")}` : ""}`;
-  return `<!doctype html><meta http-equiv="Content-Security-Policy" content="${csp}">${block ? "<style>html,body{margin:0;background:transparent}</style>" : ui ? "<style>html,body{margin:0;background:var(--panel);color:var(--text);font:14px system-ui,sans-serif}</style>" : ""}<script>
+  return `<!doctype html><meta http-equiv="Content-Security-Policy" content="${csp}">${block ? "<style>html,body{margin:0;background:transparent}</style>" : overlay ? "<style>html,body{margin:0;background:transparent;overflow:hidden}</style>" : ui ? "<style>html,body{margin:0;background:var(--panel);color:var(--text);font:14px system-ui,sans-serif}</style>" : ""}<script>
 (function () {
-  var host = window.parent, pending = {}, seq = 0, commands = {}, isBlock = false, blockFns = {}, blockHandle = null, triggers = {}, pasteFn = null, items = {}, linkTitles = {}, syncHandler = null, panelFn = null, panelHandle = null;
+  var host = window.parent, pending = {}, seq = 0, commands = {}, isBlock = false, blockFns = {}, blockHandle = null, triggers = {}, pasteFn = null, items = {}, linkTitles = {}, syncHandler = null, panelFn = null, panelHandle = null, isOverlay = false, overlayFn = null, caretFn = null, optionsFn = null;
   function applyVars(vars) { for (var k in vars) document.documentElement.style.setProperty(k, vars[k]); }
   function send(m) { host.postMessage(m, "*"); }
   function call(method, args) {
+    if (isOverlay) return Promise.reject(new Error("the overlay can only draw; do this in the plugin's other frame"));
     return new Promise(function (resolve, reject) {
       var n = ++seq;
       pending[n] = { resolve: resolve, reject: reject };
@@ -107,6 +115,16 @@ function bootstrapHtml(network: boolean, block: boolean, connect: string[] = [],
         ack: function () { return call("sync.ack", []); },
         setCursors: function (list) { return call("sync.setCursors", [list]); }
       })
+    }),
+    caret: Object.freeze({
+      overlay: function (fn) {
+        if (typeof fn !== "function") throw new Error("caret.overlay needs a render function");
+        overlayFn = fn;
+        if (!isBlock) return call("caret.overlay", []);
+      },
+      get inOverlay() { return isOverlay; },
+      setOptions: function (o) { return call("caret.setOptions", [o === undefined ? null : o]); },
+      getOptions: function () { return call("caret.getOptions", []); }
     }),
     ui: Object.freeze({
       headerButton: function (d) {
@@ -170,7 +188,17 @@ function bootstrapHtml(network: boolean, block: boolean, connect: string[] = [],
     if (m.k === "init") {
       try {
         if (m.block) { isBlock = true; applyVars(m.block.vars); }
+        if (m.overlay) { isBlock = isOverlay = true; applyVars(m.overlay.vars); }
         (0, eval)(m.code);
+        if (m.overlay) {
+          if (!overlayFn) throw new Error("this plugin does not draw an overlay");
+          overlayFn(document.body, Object.freeze({
+            onCaret: function (f) { if (typeof f === "function") caretFn = f; },
+            onOptions: function (f) { if (typeof f === "function") optionsFn = f; }
+          }));
+          if (m.overlay.options !== null && optionsFn) optionsFn(m.overlay.options);
+          if (m.overlay.caret && caretFn) caretFn(m.overlay.caret);
+        }
         if (m.block) {
           var render = blockFns[m.block.lang];
           if (!render) throw new Error("this plugin does not draw " + m.block.lang + " blocks");
@@ -202,6 +230,12 @@ function bootstrapHtml(network: boolean, block: boolean, connect: string[] = [],
       applyVars(m.vars);
       try { if (blockHandle && blockHandle.update) blockHandle.update(m.source); }
       catch (err) { send({ k: "error", message: String(err && err.message || err) }); }
+    } else if (m.k === "caret") {
+      try { if (caretFn) caretFn(m.event); }
+      catch (err) { send({ k: "error", message: String(err && err.message || err) }); }
+    } else if (m.k === "caret-options") {
+      try { if (optionsFn) optionsFn(m.options); }
+      catch (err) { send({ k: "error", message: String(err && err.message || err) }); }
     } else if (m.k === "sync") {
       try { if (syncHandler) syncHandler(m.event); }
       catch (err) { send({ k: "error", message: String(err && err.message || err) }); }
@@ -225,7 +259,50 @@ function bootstrapHtml(network: boolean, block: boolean, connect: string[] = [],
   });
   send({ k: "boot" });
 })();
-</script>${block ? "<script>" + SLASH_SCRIPT + "</script>" : ""}`;
+</script>${block ? "<script>" + SLASH_SCRIPT + "</script><script>" + SCROLL_CHAIN_SCRIPT + "</script><script>" + BLOCK_CARET_SCRIPT + "</script>" : ""}${overlay ? "<script>" + OVERLAY_WHEEL_SCRIPT + "</script>" : ""}`;
+}
+
+/** Scrolls the nearest scrollable ancestor of a block's container (outside the iframe, in the note's own DOM) by `dy`. */
+/** Scroll the nearest element from `el` up that can still move that way (the page itself when none can). */
+function scrollFrom(el: Element, dx: number, dy: number): void {
+  for (let node: Element | null = el; node; node = node.parentElement) {
+    const cs = getComputedStyle(node);
+    const y = dy !== 0 && /(auto|scroll)/.test(cs.overflowY) && (dy < 0 ? node.scrollTop > 0 : node.scrollTop + node.clientHeight < node.scrollHeight - 1);
+    const x = dx !== 0 && /(auto|scroll)/.test(cs.overflowX) && (dx < 0 ? node.scrollLeft > 0 : node.scrollLeft + node.clientWidth < node.scrollWidth - 1);
+    if (x || y) {
+      node.scrollBy(x ? dx : 0, y ? dy : 0);
+      return;
+    }
+  }
+  document.scrollingElement?.scrollBy(dx, dy);
+}
+
+function scrollNoteBy(el: HTMLElement, dy: number): void {
+  for (let node: HTMLElement | null = el; node; node = node.parentElement) {
+    const cs = getComputedStyle(node);
+    if (/(auto|scroll)/.test(cs.overflowY) && node.scrollHeight > node.clientHeight + 1) {
+      node.scrollTop += dy;
+      return;
+    }
+  }
+  document.scrollingElement?.scrollBy(0, dy);
+}
+
+/** A caret event from a block frame (`blockCaret.ts`), checked, or null. Positions are the frame's own pixels. */
+function checkCaretEvent(raw: unknown): CaretEvent | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const e = raw as Record<string, unknown>;
+  let caret: CaretEvent["caret"] = null;
+  if (e.caret !== null) {
+    const c = e.caret as Record<string, unknown> | undefined;
+    const n = [c?.x, c?.y, c?.width, c?.height];
+    if (!n.every((v) => typeof v === "number" && Number.isFinite(v) && Math.abs(v) < 100_000)) return null;
+    caret = { x: c!.x as number, y: c!.y as number, width: Math.max(0, c!.width as number), height: Math.max(0, c!.height as number) };
+  }
+  if (e.type === "move") return { type: "move", caret, selecting: e.selecting === true, scroll: e.scroll === true };
+  if (e.type === "enter") return { type: "enter", caret };
+  if ((e.type === "type" || e.type === "delete") && typeof e.text === "string") return { type: e.type, text: e.text.slice(0, 32), caret };
+  return null;
 }
 
 /** One drawn block: a visible frame inside the note, running the same plugin code in "block" mode. */
@@ -236,6 +313,16 @@ interface BlockFrame {
   lang: string;
   source: string;
   actions: BlockActions;
+}
+
+function blockFrame(manifest: PluginManifest, container: HTMLElement): HTMLIFrameElement {
+  const frame = document.createElement("iframe");
+  frame.setAttribute("sandbox", "allow-scripts");
+  frame.title = manifest.name;
+  frame.style.cssText = "display:block;width:100%;height:160px;border:0;background:transparent";
+  frame.srcdoc = bootstrapHtml(manifest.permissions.includes("network"), true, manifest.connect);
+  container.append(frame);
+  return frame;
 }
 
 /** What a block frame may ask of the note; the editor implements these for the block it drew. */
@@ -303,6 +390,10 @@ interface Loaded {
   links: Map<string, LinkProvider>;
   inputs: Map<number, { resolve: (value: string | null) => void; timer: ReturnType<typeof setTimeout> }>;
   runs: Map<number, { resolve: () => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>;
+  /** Its layer over the editor (`caret.overlay`) and the last caret it was told about (what a restarted overlay starts from). */
+  overlay?: { frame: HTMLIFrameElement; caret: CaretEvent | null };
+  /** What `caret.setOptions` last saved (`undefined`: not read from the device yet). */
+  options?: unknown;
   code: string;
   started?: { resolve: () => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> };
 }
@@ -324,6 +415,8 @@ export class PluginHost {
   #panel: { plugin: Loaded; backdrop: HTMLElement } | null = null;
   /** Plugin styles are switched off (`pauseStyles`). */
   #stylesPaused = false;
+  /** The block whose text field has the caret (it reports it itself), or null when the note's editor has it. */
+  #caretBlock: { block: BlockFrame; caret: CaretEvent["caret"]; selecting: boolean } | null = null;
 
   constructor(adapter: HostAdapter, onCommandsChanged: () => void = () => {}, onBlocksChanged: () => void = () => {}, onButtonsChanged: () => void = () => {}) {
     this.#adapter = adapter;
@@ -331,6 +424,7 @@ export class PluginHost {
     this.#onBlocks = onBlocksChanged;
     this.#onButtons = onButtonsChanged;
     window.addEventListener("message", this.#onMessage);
+    window.addEventListener("scroll", this.#onScroll, true);
   }
 
   /** Start a plugin. Resolves once its code has run; rejects with the plugin's own error. */
@@ -362,12 +456,9 @@ export class PluginHost {
     if (this.#panel?.plugin === entry) this.closePanel();
     if (entry.button) this.#onButtons();
     entry.frame.remove();
+    entry.overlay?.frame.remove();
     this.#setStyle(id, ""); // a plugin's look goes away with it
-    for (const b of [...this.#blocks]) {
-      if (b.plugin !== entry) continue;
-      b.frame.remove();
-      this.#blocks.delete(b);
-    }
+    for (const lang of entry.blockLangs) this.#handOver(lang);
     if (entry.blockLangs.size > 0 || entry.links.size > 0) this.#onBlocks(); // its blocks and chips turn back into plain text
     for (const run of entry.runs.values()) {
       clearTimeout(run.timer);
@@ -398,14 +489,26 @@ export class PluginHost {
     return this.#plugins.has(id);
   }
 
+  /**
+   * Running plugins that asked for something, id order. When several ask for the same thing (a block language, a trigger) the first
+   * gets it: plugins start in parallel, so "whoever registered first" would differ between launches and between desktop and phone.
+   */
+  #claimants(has: (p: Loaded) => boolean): Loaded[] {
+    return [...this.#plugins.values()].filter(has).sort((a, b) => (a.manifest.id < b.manifest.id ? -1 : 1));
+  }
+
+  #blockOwner(lang: string): Loaded | undefined {
+    return this.#claimants((p) => p.blockLangs.has(lang))[0];
+  }
+
   /** Languages of the fenced blocks running plugins draw. */
   blockLangs(): string[] {
-    return [...new Set([...this.#plugins.values()].flatMap((p) => [...p.blockLangs]))];
+    return [...new Set([...this.#plugins.values()].flatMap((p) => [...p.blockLangs]))].sort();
   }
 
   /** Name of the running plugin that draws ```lang blocks. */
   blockLabel(lang: string): string {
-    return [...this.#plugins.values()].find((p) => p.blockLangs.has(lang))?.manifest.name ?? lang;
+    return this.#blockOwner(lang)?.manifest.name ?? lang;
   }
 
   /**
@@ -413,27 +516,118 @@ export class PluginHost {
    * to the note, delete it, or open it as text. The frame is removed by `destroy()`.
    */
   mountBlock(lang: string, container: HTMLElement, source: string, actions: BlockActions): BlockMount {
-    const plugin = [...this.#plugins.values()].find((p) => p.blockLangs.has(lang));
+    const plugin = this.#blockOwner(lang);
     if (!plugin) throw new Error(`no running plugin draws "${lang}" blocks`);
-    const frame = document.createElement("iframe");
-    frame.setAttribute("sandbox", "allow-scripts");
-    frame.title = plugin.manifest.name;
-    frame.style.cssText = "display:block;width:100%;height:160px;border:0;background:transparent";
-    frame.srcdoc = bootstrapHtml(plugin.manifest.permissions.includes("network"), true, plugin.manifest.connect);
-    const block: BlockFrame = { plugin, frame, container, lang, source, actions };
+    const block: BlockFrame = { plugin, frame: blockFrame(plugin.manifest, container), container, lang, source, actions };
     this.#blocks.add(block);
-    container.append(frame);
     return {
       update: (next) => {
         if (next === block.source) return; // the frame's own save coming back around
         block.source = next;
-        frame.contentWindow?.postMessage({ k: "block-update", source: next, vars: themeVars(container) }, "*");
+        block.frame.contentWindow?.postMessage({ k: "block-update", source: next, vars: themeVars(container) }, "*");
       },
       destroy: () => {
         this.#blocks.delete(block);
-        frame.remove();
+        this.#dropCaretBlock(block);
+        block.frame.remove();
       },
     };
+  }
+
+  /**
+   * Blocks of `lang` drawn by a plugin that no longer owns it get a new frame running the owner, in place (the editor keeps its
+   * widget, since the text did not change); with no owner left the frame goes and the note shows the text.
+   */
+  #handOver(lang: string): void {
+    const owner = this.#blockOwner(lang);
+    for (const b of [...this.#blocks]) {
+      if (b.lang !== lang || b.plugin === owner) continue;
+      this.#dropCaretBlock(b);
+      b.frame.remove();
+      b.container.classList.remove("cm-plugin-block-page");
+      if (!owner) {
+        this.#blocks.delete(b);
+        continue;
+      }
+      b.plugin = owner;
+      b.frame = blockFrame(owner.manifest, b.container);
+    }
+  }
+
+  /** True while a running plugin draws over the editor (`caret.overlay`); the editor measures the caret only then. */
+  wantsCaret(): boolean {
+    return [...this.#plugins.values()].some((p) => p.overlay);
+  }
+
+  /**
+   * The note's editor reporting its caret. While a block's text field has the caret, the editor has nothing to add (it lost focus to
+   * that block; its "no caret" may even arrive after the block's "here"), until the editor has the caret again.
+   */
+  caretEvent(event: CaretEvent): void {
+    if (event.type === "move" && event.caret) this.#caretBlock = null;
+    else if (this.#caretBlock) return;
+    this.#sendCaret(event);
+  }
+
+  /** A block frame reporting the caret of one of its text fields, moved from the frame's pixels into the window's. */
+  #onBlockCaret(block: BlockFrame, raw: unknown): void {
+    const event = checkCaretEvent(raw);
+    if (!event || !this.wantsCaret()) return;
+    if (event.type === "move" && event.caret) this.#caretBlock = { block, caret: event.caret, selecting: event.selecting };
+    else if (this.#caretBlock?.block !== block) return; // old news from a block the caret already left
+    else if (event.type === "move") this.#caretBlock = null;
+    this.#sendCaret(this.#inWindow(block, event));
+  }
+
+  #inWindow<E extends CaretEvent>(block: BlockFrame, event: E): E {
+    if (!event.caret) return event;
+    const r = block.frame.getBoundingClientRect();
+    return { ...event, caret: { ...event.caret, x: event.caret.x + r.left, y: event.caret.y + r.top } };
+  }
+
+  /** The note (or anything else) scrolled: a block's caret moved on screen with its frame. */
+  #onScroll = (e: Event): void => {
+    const at = this.#caretBlock;
+    if (e.type !== "scroll" || !at || !at.caret) return;
+    this.#sendCaret(this.#inWindow(at.block, { type: "move", caret: at.caret, selecting: at.selecting, scroll: true }));
+  };
+
+  /** Whether block frames should report their caret, and hide their own (as the plugin hid the note's, with `editor.setStyle`). */
+  #tellBlocksCaret(): void {
+    const on = this.wantsCaret() && !this.#stylesPaused;
+    const content = on ? document.querySelector(".live-editor .cm-content") : null;
+    const hide = content !== null && /^(transparent|rgba\(0, 0, 0, 0\))$/.test(getComputedStyle(content).caretColor);
+    for (const b of this.#blocks) b.frame.contentWindow?.postMessage({ k: "caret-want", on, hide }, "*");
+    if (!on && this.#caretBlock) this.#caretBlock = null;
+  }
+
+  /** A block that had the caret is gone (or now runs another plugin's frame): the caret went with it. */
+  #dropCaretBlock(block: BlockFrame): void {
+    if (this.#caretBlock?.block !== block) return;
+    this.#caretBlock = null;
+    this.#sendCaret({ type: "move", caret: null, selecting: false, scroll: false });
+  }
+
+  /** Tell every overlay where the caret is and what was typed. */
+  #sendCaret(event: CaretEvent): void {
+    for (const p of this.#plugins.values()) {
+      if (!p.overlay) continue;
+      if (event.type === "move") p.overlay.caret = event;
+      p.overlay.frame.contentWindow?.postMessage({ k: "caret", event }, "*");
+    }
+  }
+
+  /** What `caret.setOptions` saved for a plugin (kept on this device, in the app's own storage; not in the vault). */
+  #options(entry: Loaded): unknown {
+    if (entry.options === undefined) {
+      try {
+        const saved = localStorage.getItem(OPTIONS_KEY + entry.manifest.id);
+        entry.options = saved === null ? null : (JSON.parse(saved) as unknown);
+      } catch {
+        entry.options = null; // no storage here, or something unreadable in it
+      }
+    }
+    return entry.options;
   }
 
   /** Texts running plugins want to see typed alone on a line. */
@@ -462,7 +656,8 @@ export class PluginHost {
 
   /** The chip a link to `url` is drawn as, or null when no running plugin knows that site. */
   linkChip(url: string): LinkChip | null {
-    const all = [...this.#plugins.values()].flatMap((p) => [...p.links.values()].map((l) => ({ ...l, plugin: p.manifest.id })));
+    // Id order, so of two plugins naming the same site the same one wins on every launch (`findLinkProvider` keeps the first of a tie).
+    const all = this.#claimants((p) => p.links.size > 0).flatMap((p) => [...p.links.values()].map((l) => ({ ...l, plugin: p.manifest.id })));
     const found = findLinkProvider(all, url);
     return found && { key: `${found.plugin}:${found.id}`, name: found.name, label: found.label, color: found.color, icon: svgDataUri(found.icon) };
   }
@@ -482,24 +677,44 @@ export class PluginHost {
       if (kind === "link") text = type ?? "";
       else if (type === "trigger") [sent, text] = ["trigger", "//"];
       else text = id ?? "";
+    } else if (kind === "paste") {
+      return this.#paste(payload);
     } else {
-      entry = [...this.#plugins.values()].find((p) => (kind === "paste" ? p.paste : p.triggers.has(text)));
+      entry = this.#claimants((p) => p.triggers.has(text))[0];
     }
     if (!entry) return Promise.resolve(null);
+    return this.#ask(entry, sent, text, payload, INPUT_TIMEOUT_MS);
+  }
+
+  /** Every plugin with a paste hook is asked in id order until one takes the paste; together they have `INPUT_TIMEOUT_MS`. */
+  async #paste(payload: { text: string; html?: string }): Promise<string | null> {
+    const end = Date.now() + INPUT_TIMEOUT_MS;
+    for (const entry of this.#claimants((p) => p.paste)) {
+      const left = end - Date.now();
+      if (left <= 0) break;
+      const out = await this.#ask(entry, "paste", payload.text, payload, left);
+      if (out !== null) return out;
+    }
+    return null;
+  }
+
+  #ask(entry: Loaded, kind: "trigger" | "paste" | "item" | "link", text: string, payload: { html?: string; url?: string }, ms: number): Promise<string | null> {
     const n = ++this.#runSeq;
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         entry.inputs.delete(n);
         resolve(null);
-      }, INPUT_TIMEOUT_MS);
+      }, ms);
       entry.inputs.set(n, { resolve, timer });
-      entry.frame.contentWindow?.postMessage({ k: "input-run", n, kind: sent, text, html: payload.html ?? "", url: payload.url ?? "" }, "*");
+      entry.frame.contentWindow?.postMessage({ k: "input-run", n, kind, text, html: payload.html ?? "", url: payload.url ?? "" }, "*");
     });
   }
 
   /** The buttons running plugins put at the top of a note (`ui.headerButton`). */
   headerButtons(): HeaderButton[] {
-    return [...this.#plugins.values()].flatMap((p) => (p.button ? [{ pluginId: p.manifest.id, title: p.button.title, icon: svgDataUri(p.button.icon), badge: p.badge }] : []));
+    return [...this.#plugins.values()]
+      .sort((a, b) => a.manifest.name.localeCompare(b.manifest.name)) // not start order, which differs between launches
+      .flatMap((p) => (p.button ? [{ pluginId: p.manifest.id, title: p.button.title, icon: svgDataUri(p.button.icon), badge: p.badge }] : []));
   }
 
   /** Show the window of the plugin whose button was pressed (closing any other). No-op when it has none. */
@@ -578,6 +793,7 @@ export class PluginHost {
 
   dispose(): void {
     window.removeEventListener("message", this.#onMessage);
+    window.removeEventListener("scroll", this.#onScroll, true);
     for (const id of [...this.#plugins.keys()]) this.unload(id);
   }
 
@@ -587,6 +803,10 @@ export class PluginHost {
     switch (d.k) {
       case "boot":
         post({ k: "init", code: block.plugin.code, block: { lang: block.lang, source: block.source, vars: themeVars(block.container) } });
+        this.#tellBlocksCaret();
+        break;
+      case "block-caret":
+        this.#onBlockCaret(block, d.event);
         break;
       case "block-save":
         if (typeof d.source !== "string" || d.source.length > MAX_BLOCK_SOURCE) break;
@@ -608,6 +828,11 @@ export class PluginHost {
         }
         const h = Number(d.height);
         if (Number.isFinite(h)) block.frame.style.height = `${Math.round(Math.min(Math.max(h, 40), MAX_BLOCK_HEIGHT))}px`;
+        break;
+      }
+      case "block-scroll": { // the frame's own scrollable content ran out of room in this direction (scrollChain.ts)
+        const dy = Number(d.dy);
+        if (Number.isFinite(dy)) scrollNoteBy(block.container, dy);
         break;
       }
       case "slash-list": // a text field in the frame wants the plugins' entries for its `//` menu (slash.ts)
@@ -633,11 +858,51 @@ export class PluginHost {
     }
   }
 
+  /**
+   * A wheel the overlay caught (it covers the window, and WebKit gives it the wheel even with `pointer-events: none`). Hand it to what
+   * is under the pointer as if the overlay were not there: a block frame scrolls its own content; anything else is offered the event
+   * first (the canvas zooms and pans on the wheel, the image viewer zooms) and otherwise scrolls.
+   */
+  #wheelAt(d: { [key: string]: unknown }): void {
+    const [x, y, dx, dy] = [d.x, d.y, d.dx, d.dy].map(Number) as [number, number, number, number];
+    if (![x, y, dx, dy].every(Number.isFinite)) return;
+    const under = document.elementFromPoint(x, y); // the overlay has `pointer-events: none`, so this is what is below it
+    if (!under) return;
+    const mods = { ctrl: d.ctrl === true, shift: d.shift === true, meta: d.meta === true };
+    const block = [...this.#blocks].find((b) => b.frame === under);
+    if (block) {
+      const r = under.getBoundingClientRect();
+      block.frame.contentWindow?.postMessage({ k: "scroll-at", x: x - r.left, y: y - r.top, dx, dy, ...mods }, "*");
+      return;
+    }
+    const wheel = new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: x, clientY: y, deltaX: dx, deltaY: dy, ctrlKey: mods.ctrl, shiftKey: mods.shift, metaKey: mods.meta });
+    if (under.dispatchEvent(wheel)) scrollFrom(under, dx, dy);
+  }
+
+  /** The overlay is told what the user types, so it may only start up and report errors (and pass on the wheel): none of its `call`s are answered. */
+  #onOverlayMessage(entry: Loaded, d: { k?: string; [key: string]: unknown }): void {
+    if (d.k === "boot") {
+      const vars = themeVars((document.querySelector(".live-editor") as HTMLElement | null) ?? document.documentElement);
+      entry.overlay?.frame.contentWindow?.postMessage({ k: "init", code: entry.code, overlay: { vars, options: this.#options(entry), caret: entry.overlay.caret } }, "*");
+    } else if (d.k === "overlay-wheel") {
+      this.#wheelAt(d);
+    } else if (d.k === "error") {
+      this.#adapter.notice(`${entry.manifest.name}: ${String(d.message)}`);
+      if (d.fatal) {
+        entry.overlay?.frame.remove();
+        entry.overlay = undefined;
+        this.#tellBlocksCaret();
+      }
+    }
+  }
+
   #onMessage = (event: MessageEvent): void => {
     const d = event.data as { k?: string; [key: string]: unknown } | null;
     if (!d || typeof d !== "object") return;
     const block = [...this.#blocks].find((b) => b.frame.contentWindow === event.source);
     if (block) return this.#onBlockMessage(block, d);
+    const layer = [...this.#plugins.values()].find((p) => p.overlay?.frame.contentWindow === event.source);
+    if (layer) return this.#onOverlayMessage(layer, d);
     const entry = [...this.#plugins.values()].find((p) => p.frame.contentWindow === event.source);
     if (!entry) return;
     const reply = (n: number, ok: boolean, value?: unknown, error?: string) =>
@@ -708,12 +973,15 @@ export class PluginHost {
   };
 
   /**
-   * Switch every plugin's styles off (or back on). Plugin CSS applies to the whole window, so the app pauses it while it shows
+   * Switch every plugin's styles (and overlays) off (or back on). Plugin CSS applies to the whole window, so the app pauses it while it shows
    * something a stylesheet must not be able to hide or disguise: the permissions a plugin asks for, a delete confirmation.
    */
   pauseStyles(paused: boolean): void {
     this.#stylesPaused = paused;
     document.head.querySelectorAll("style[data-granite-plugin]").forEach((style) => style.setAttribute("media", paused ? "not all" : "all"));
+    // A layer over the whole window could just as well cover those screens (and draw a fake one), so overlays are hidden too.
+    for (const p of this.#plugins.values()) if (p.overlay) p.overlay.frame.style.display = paused ? "none" : ""; // not `visibility`: a hidden frame can still take the wheel
+    this.#tellBlocksCaret();
   }
 
   /** One `<style>` per plugin in the app's document (which is where the editor lives, on desktop and phone). */
@@ -721,13 +989,14 @@ export class PluginHost {
     const existing = document.head.querySelector(`style[data-granite-plugin="${id}"]`);
     if (css === "") {
       existing?.remove();
-      return;
+    } else {
+      const style = existing ?? document.createElement("style");
+      style.setAttribute("data-granite-plugin", id);
+      style.setAttribute("media", this.#stylesPaused ? "not all" : "all");
+      style.textContent = css;
+      if (!existing) document.head.append(style);
     }
-    const style = existing ?? document.createElement("style");
-    style.setAttribute("data-granite-plugin", id);
-    style.setAttribute("media", this.#stylesPaused ? "not all" : "all");
-    style.textContent = css;
-    if (!existing) document.head.append(style);
+    this.#tellBlocksCaret(); // the style may hide (or show again) the note's caret; blocks follow it
   }
 
   async #call(manifest: PluginManifest, method: string, args: unknown[], origin: HTMLElement | null = null): Promise<unknown> {
@@ -800,22 +1069,40 @@ export class PluginHost {
       case "blocks.register": {
         const lang = text(0);
         if (!/^[a-z][a-z0-9-]{0,29}$/.test(lang)) throw new Error(`"${lang}" is not a block language (lower-case letters, digits, dashes)`);
-        this.#plugins.get(manifest.id)?.blockLangs.add(lang);
+        // Two plugins drawing the same fence: the one whose id sorts first draws it (`#claimants`), and the other is told so either way
+        // (a refusal if it asks second, a notice if it asked first). Its claim is kept: it takes over if the owner is switched off.
+        const entry = this.#plugins.get(manifest.id);
+        if (!entry) return;
+        const before = this.#blockOwner(lang);
+        entry.blockLangs.add(lang);
+        const owner = this.#blockOwner(lang)!;
+        if (owner !== entry) throw new Error(`"${lang}" blocks are already drawn by "${owner.manifest.name}"`);
+        if (before && before !== entry) {
+          this.#adapter.notice(`${before.manifest.name}: "${lang}" blocks are already drawn by "${entry.manifest.name}"`);
+          this.#handOver(lang);
+        }
         this.#onBlocks();
         return;
       }
       case "input.register": {
         const entry = this.#plugins.get(manifest.id);
+        if (!entry) return;
         if (text(0) === "paste") {
-          if (entry) entry.paste = true;
+          entry.paste = true;
         } else if (text(0) === "item") {
           const id = text(1);
           if (!/^[a-z0-9-]{1,30}$/i.test(id)) throw new Error(`"${id}" is not an item id (letters, digits, dashes)`);
-          entry?.items.set(id, { name: text(2).slice(0, 40), description: text(3).slice(0, 120) });
+          entry.items.set(id, { name: text(2).slice(0, 40), description: text(3).slice(0, 120) });
         } else {
           const trigger = text(1);
           if (trigger.length < 1 || trigger.length > 8 || /\s/.test(trigger)) throw new Error(`"${trigger}" is not a trigger (1–8 characters, no spaces)`);
-          entry?.triggers.add(trigger);
+          // `//` belongs to the list, where every plugin gets its own entry; any other text has one owner, same rule as block languages.
+          const before = this.#claimants((p) => p.triggers.has(trigger))[0];
+          entry.triggers.add(trigger);
+          if (trigger === "//") return;
+          const owner = this.#claimants((p) => p.triggers.has(trigger))[0]!;
+          if (owner !== entry) throw new Error(`typing "${trigger}" is already used by "${owner.manifest.name}"`);
+          if (before && before !== entry) this.#adapter.notice(`${before.manifest.name}: typing "${trigger}" is already used by "${entry.manifest.name}"`);
         }
         return;
       }
@@ -837,6 +1124,43 @@ export class PluginHost {
       case "links.open": {
         if (!/^https?:\/\//i.test(text(0))) throw new Error("only http and https addresses can be opened");
         return this.#adapter.openUrl?.(text(0));
+      }
+      case "caret.overlay": {
+        if (origin) throw new Error("a block can't draw over the editor");
+        const entry = this.#plugins.get(manifest.id);
+        if (!entry || entry.overlay) return;
+        const frame = document.createElement("iframe");
+        frame.setAttribute("sandbox", "allow-scripts");
+        frame.setAttribute("aria-hidden", "true");
+        frame.setAttribute("tabindex", "-1");
+        frame.title = manifest.name;
+        // Under the plugin's window (`PANEL_CSS`), over everything else; every touch and click goes through it to the editor.
+        frame.style.cssText = "position:fixed;inset:0;width:100%;height:100%;border:0;background:transparent;pointer-events:none;z-index:2147482000";
+        if (this.#stylesPaused) frame.style.display = "none";
+        frame.srcdoc = bootstrapHtml(false, false, [], false, true);
+        entry.overlay = { frame, caret: null };
+        document.body.append(frame);
+        this.#tellBlocksCaret();
+        return;
+      }
+      case "caret.setOptions": {
+        if (origin) throw new Error("a block can't set options");
+        const json = JSON.stringify(args[0] ?? null);
+        if (json.length > MAX_OPTIONS) throw new Error(`options are longer than ${MAX_OPTIONS} characters`);
+        const entry = this.#plugins.get(manifest.id);
+        if (!entry) return;
+        entry.options = JSON.parse(json) as unknown;
+        try {
+          localStorage.setItem(OPTIONS_KEY + manifest.id, json);
+        } catch {
+          // still used until the app closes
+        }
+        entry.overlay?.frame.contentWindow?.postMessage({ k: "caret-options", options: entry.options }, "*");
+        return;
+      }
+      case "caret.getOptions": {
+        const entry = this.#plugins.get(manifest.id);
+        return entry ? this.#options(entry) : null;
       }
       case "ui.button": {
         if (origin) throw new Error("a block can't add a button");
@@ -889,6 +1213,8 @@ export class BlockBridge {
   linkChip = (url: string): LinkChip | null => this.host?.linkChip(url) ?? null;
   runInput = (kind: "trigger" | "paste" | "item" | "link", payload: { text: string; html?: string; url?: string }): Promise<string | null> =>
     this.host?.runInput(kind, payload) ?? Promise.resolve(null);
+  wantsCaret = (): boolean => this.host?.wantsCaret() ?? false;
+  caret = (event: CaretEvent): void => this.host?.caretEvent(event);
   /** Call from the host's `onBlocksChanged`. */
   changed = (): void => this.#listeners.forEach((l) => l());
 }

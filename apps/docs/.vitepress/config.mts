@@ -49,6 +49,7 @@ export default defineConfig({
           { text: "blocks", link: "/api/blocks" },
           { text: "input", link: "/api/input" },
           { text: "links", link: "/api/links" },
+          { text: "caret", link: "/api/caret" },
           { text: "ui", link: "/api/ui" },
           { text: "vault", link: "/api/vault" },
         ],

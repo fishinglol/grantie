@@ -1,6 +1,28 @@
 # Active Context
 
-_Last updated: 2026-09-26 (Live Collab 1.2.0: encryption + built-in relay + Store "Before you start", see "Session 2026-09-26 (later)"; Share button / plugin API 7 / Live Collab 1.1.0 at "Session 2026-09-26 (Share button)"; built-in `//` list, `//` in plugin fields, Popup / Simple Table / Cards updates, sync delete confirm; see `progress.md` "2026-09-26")_
+_Last updated: 2026-09-28 (see "Session 2026-09-28"). Before: 2026-09-27 (scroll trapped inside plugin blocks fixed, see "Session 2026-09-27 (scroll chaining)"). Earlier: Live Collab 1.2.0: encryption + built-in relay + Store "Before you start", see "Session 2026-09-26 (later)"; Share button / plugin API 7 / Live Collab 1.1.0 at "Session 2026-09-26 (Share button)"; built-in `//` list, `//` in plugin fields, Popup / Simple Table / Cards updates, sync delete confirm; see `progress.md` "2026-09-26")_
+
+## Session 2026-09-28 — plugins that coexist, CI clash check, the Mac scroll outage (+ fix), the caret inside blocks
+User (Thai) first asked whether a big plugin-to-plugin architecture (event bus, capability registry) was "real"; answered from the code:
+Level 1 is real, Levels 2/3 don't exist and no plugin needs them yet, and they would not fix the bugs seen so far (those were host bugs on
+shared surfaces). Built instead:
+1. **One owner per shared thing** (`host.ts` `#claimants`, id order, not start order) for block languages, typed triggers, chip hosts;
+   paste offered to every hook in id order; header buttons sorted. See `systemPatterns.md`. Tests `block-collision.test.ts`.
+2. **CI clash check** `packages/plugins/scripts/check-plugins.ts` (+ version-bump check on PRs). See `pluginDesign.md`.
+3. **Outage:** the user's Mac app could not scroll anywhere (Cursor Effects overlay, WebKit). Unblocked by switching the plugin off in
+   `plugins.json`, then fixed in the host and verified in the real app. Full write-up: **`caseStudies.md`**.
+4. **The user's original wish:** the special cursor now also shows inside Cards / Simple Table fields (`blockCaret.ts`). User confirmed
+   in the real Mac app.
+Installed: `/Applications/Granite.app` built 14:29 (old builds in `~/Granite-backups/`). Not done: phone (`npm run ship`, ask first).
+Plugins tests 169. Then committed on a new branch and PR'd (after merging PR #10).
+5. **Page margins** (user screenshot vs Obsidian): after opening a note with a whole-page sheet, every note lost its margins (`:has` saw a hidden
+   editor). Fixed by scoping to `.cm-editor`. **Math** (`$…$`, `$$…$$`, KaTeX, desktop + phone; user chose KaTeX over MathJax). Both checked in the
+   desktop preview; math also in the phone web preview. Both in PR #12 (`feat/plugins-coexist`). Mac app: install only after the user tries it.
+
+## Session 2026-09-27 (scroll chaining) — a plugin block trapped scrolling
+User (Thai, screenshot of the Calendar block in Weeks view) reported that scrolling down inside a plugin block "gets stuck" — not just the calendar, other plugins too — while normal note scrolling works. Diagnosis: a block frame is a sandboxed iframe (`sandbox="allow-scripts"`, opaque origin); once its own scrollable content (Calendar's week/year view, a tall Cards board, ...) hits its edge, whether the leftover wheel/touch scroll "falls through" to the note's own scroll container is up to the browser engine's cross-iframe scroll chaining — verified in the Chromium preview that it already works there, but this is a well-known WebKit gap (the desktop app's WKWebView) and can't be assumed on Android WebView either, which fits "the app normally scrolls, this doesn't" + "on the phone too".
+Fix (engine-independent, doesn't rely on native chaining at all): `packages/plugins/src/scrollChain.ts` (`SCROLL_CHAIN_SCRIPT`, injected into every **block** frame like `slash.ts`) walks up from the wheel/touch event's target for a scrollable ancestor that can still move that way; when none can (or none exists to begin with — a drag/resize gesture is left alone), it posts `{k:"block-scroll", dy}` to the host and calls `preventDefault()`. Host (`host.ts` `#onBlockMessage`, `scrollNoteBy`) walks up from `block.container` (the widget's real DOM element, outside the iframe) for the nearest scrollable ancestor and moves its `scrollTop`, falling back to `document.scrollingElement`. Touch keeps forwarding for the rest of a gesture once it starts (no flicker at the exact edge).
+Verified in the browser preview (desktop-web): built a note with Cards (8+ notes, forces internal scroll) + a text marker + Calendar, confirmed scrolling over an exhausted Cards board continues into the note in one motion, and that normal internal scrolling (Cards list, Calendar's infinite Weeks view advancing months) is unaffected. Tests: `packages/plugins/test/scroll-chain.test.ts` (4 new; plugins 146 total), live-editor 9. **Not checked:** the real Tauri window (WebKit) or a real phone — the whole point of the fix is to not depend on either engine's native behavior, but neither was driven directly this session.
 
 ## Current focus
 **Phone app + sync** (branch `feat/mobile-live-editor`, pushed; PR into `main` not opened yet) — see
@@ -21,6 +43,15 @@ Decisions confirmed with the user this round:
 
 Still **out of scope**: the Yjs CRDT engine (`packages/core-sync`), mobile sync,
 Dropbox/OneDrive providers.
+
+## Session 2026-09-27 (later) — plugin API 8 (`editor.caret`) + the Cursor Effects plugin
+User (Thai) asked to bring the Obsidian plugin cursor-smith into Granite (desktop + phone) and to make a reusable API for other people. Options were shown first (CSS-only / new API / port); the user said go, and "create the API for others".
+Result: see `pluginDesign.md` "API 8". Verified: unit tests (plugins 139, live-editor 9), `tsc` clean (desktop still shows only the old `vite.config.ts` error), docs build, phone editor bundle (`npm run build:editor` in `apps/mobile`),
+and in real headless Chrome (CDP) against the desktop dev server: install from the Store, cursor drawn, block/underline/line, trail + dust + pop + torch, delete burst, cursor hidden on selection and on blur, settings window; and
+against the Expo web preview at 390x844 (install from the phone Store, "Cursor" pill in the note header, cyan cursor with trail). The 4 Store screenshots are real captures of that.
+**Not verified:** the real Tauri window, a real phone (touch, WebView `localStorage`, battery with a full-window frame), a very long note scrolled fast. **To see it:** desktop needs a rebuild (`npm run tauri build -- --bundles app`; the installed
+`/Applications/Granite.app` is a release build and would say "unknown permission editor.caret"), phone needs `npm run ship` in `apps/mobile` (ask first, it reaches real devices). Nothing was committed or deployed (the docs site needs `npm run deploy`).
+The edits touch none of the user's WIP files (desktop `App.*`, `LoginPage`, `VaultSetupPage`, `cards`, `core-importer`, `progress.md`).
 
 ## Session 2026-09-26 (late night) — opening Google sign-in to everyone (in progress)
 Problem: the consent screen was in **Testing** with one test user (`putamafais@gmail.com`), so nobody else could sign in with Google (and refresh tokens die after 7 days).
@@ -412,7 +443,7 @@ Both apps now exist, sharing only `@granite/core-notes` + the `FileSystem` port:
 3. **Vault location (desktop):** RESOLVED ✅ — Desktop now supports Obsidian-style
    custom folder vaults ("Open folder as vault" and "Create new vault"), remembered
    in `vault-config.json`. Mobile custom folder is still deferred.
-4. Windows support for desktop needs `\` path handling in core.
+4. Windows support for desktop: path handling done via `toPosix` at the Tauri boundary (see `progress.md`); untested on real Windows.
 
 ## Latest additions (2026-09-10)
 - **`packages/core-importer`**: pure TypeScript converters (HTML-to-Markdown, Evernote ENEX XML parsing,

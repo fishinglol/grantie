@@ -27,9 +27,12 @@ import {
   type TooltipView,
   WidgetType,
 } from "@codemirror/view";
+import katex from "katex";
 import { dirname, IMAGE_FILE, join, toggleFormat, type InlineFormat } from "@granite/core-notes";
+import { findMath, type MathSpan } from "./math.ts";
 import { openImageViewer } from "./imageViewer";
 import NoteTitle from "./NoteTitle";
+import { caretEvents, type CaretEvent } from "./caret.ts";
 import { Remote, remoteCursors, SyncSession, type SyncPort } from "./sync.ts";
 
 export { IMAGE_FILE };
@@ -408,6 +411,10 @@ export interface BlockRenderer {
   linkChip?(url: string): LinkChipInfo | null;
   /** `item`: `payload.text` is a `MenuItemInfo.key`. `link`: `payload.text` is a `LinkChipInfo.key`, `payload.url` the address; answers with the page's title. */
   runInput?(kind: "trigger" | "paste" | "item" | "link", payload: { text: string; html?: string; url?: string }): Promise<string | null>;
+  /** True while a plugin draws over the editor (`editor.caret`); nothing about the caret is measured or sent otherwise. */
+  wantsCaret?(): boolean;
+  /** Where the caret is, and what the user typed / deleted (only called while `wantsCaret()`). */
+  caret?(event: CaretEvent): void;
   /** Draw a block into `el`. */
   mount(lang: string, el: HTMLElement, source: string, actions: BlockActions): { update(source: string): void; destroy(): void };
 }
@@ -921,6 +928,45 @@ class TableWidget extends WidgetType {
   }
 }
 
+/** KaTeX's HTML for a piece of TeX, kept: every rebuild of the decorations would otherwise render the same formulas again. */
+const mathHtml = new Map<string, string>();
+function renderMath(tex: string, display: boolean): string {
+  const key = (display ? "D" : "I") + tex;
+  let html = mathHtml.get(key);
+  if (html === undefined) {
+    // trust: false keeps \href / \url / \htmlId and the like out, so a note (maybe from someone else) can't put links or HTML in the page.
+    html = katex.renderToString(tex, { displayMode: display, throwOnError: false, output: "html", trust: false, strict: "ignore" });
+    if (mathHtml.size > 1000) mathHtml.clear();
+    mathHtml.set(key, html);
+  }
+  return html;
+}
+
+/** `$…$` / `$$…$$` drawn by KaTeX; a click puts the cursor inside, where the TeX shows as text again. */
+class MathWidget extends WidgetType {
+  constructor(
+    readonly tex: string,
+    readonly display: boolean,
+    readonly enterPos: number,
+  ) {
+    super();
+  }
+  eq(other: MathWidget) {
+    return other.tex === this.tex && other.display === this.display && other.enterPos === this.enterPos;
+  }
+  toDOM(view: EditorView) {
+    const el = document.createElement(this.display ? "div" : "span");
+    el.className = this.display ? "cm-math cm-math-display" : "cm-math";
+    el.innerHTML = renderMath(this.tex, this.display);
+    el.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      view.dispatch({ selection: { anchor: this.enterPos } });
+      view.focus();
+    });
+    return el;
+  }
+}
+
 /** Zero-width vertical bar (like a text cursor) showing where a dragged-in file will land. */
 class DropCaretWidget extends WidgetType {
   eq() {
@@ -1005,6 +1051,9 @@ function inInlineCode(state: EditorState, pos: number): boolean {
   }
   return false;
 }
+
+/** Inline syntax that is TeX, not Markdown, when it touches math (`x_1 … x_2` is not emphasis). */
+const INLINE_NODES = new Set(["Emphasis", "StrongEmphasis", "Strikethrough", "InlineCode", "Link", "Image", "URL", "Autolink", "HTMLTag", "Escape"]);
 
 /** Underline is not Markdown, so it is written `<u>text</u>`. */
 const UNDERLINE = /<u>[^<\n]+<\/u>/g;
@@ -1152,11 +1201,32 @@ function buildDecorations(state: EditorState, ctx: PreviewContext): DecorationSe
   }
   const inEmbed = (from: number, to: number) => embeds.some((e) => from >= e.from && to <= e.to);
 
+  // Math: drawn unless the cursor is in it. Not inside code, tables, embeds or the properties; Markdown inside it is not styled
+  // (the `_` of `x_1` is not emphasis), so nodes that overlap it are skipped below.
+  const maths: MathSpan[] = [];
+  if (doc.length < 500_000) {
+    for (const m of findMath(doc.toString())) {
+      if (m.from < skipBefore || inTable(m.from, m.to) || inEmbed(m.from, m.to) || inCodeBlock(state, m.from) || inInlineCode(state, m.from)) continue;
+      maths.push(m);
+      if (touches(m.from, m.to)) {
+        out.push(markDeco("cm-math-src").range(m.from, m.to));
+        continue;
+      }
+      const start = doc.lineAt(m.from);
+      const end = doc.lineAt(m.to);
+      // A $$ block that fills its lines is a block widget; math sharing a line with text is drawn in the line.
+      const block = m.display && m.from === start.from && m.to === end.to;
+      out.push(Decoration.replace({ widget: new MathWidget(m.tex, m.display, m.from + (m.display ? 2 : 1)), block }).range(m.from, m.to));
+    }
+  }
+  const overlapsMath = (from: number, to: number) => maths.some((m) => from < m.to && to > m.from);
+
   syntaxTree(state).iterate({
     enter: (node) => {
       if (node.from < skipBefore) return node.to <= skipBefore ? false : undefined;
       if (inTable(node.from, node.to) || inEmbed(node.from, node.to)) return false;
       const name = node.name;
+      if (overlapsMath(node.from, node.to) && INLINE_NODES.has(name)) return false;
 
       const heading = HEADING.exec(name);
       if (heading) {
@@ -1279,7 +1349,7 @@ function buildDecorations(state: EditorState, ctx: PreviewContext): DecorationSe
     for (const m of line.text.matchAll(UNDERLINE)) {
       const from = line.from + m.index!;
       const to = from + m[0].length;
-      if (inTable(from, to) || inEmbed(from, to) || inCodeBlock(state, from) || inInlineCode(state, from)) continue;
+      if (inTable(from, to) || inEmbed(from, to) || overlapsMath(from, to) || inCodeBlock(state, from) || inInlineCode(state, from)) continue;
       out.push(markDeco("cm-underline").range(from + 3, to - 4));
       if (!touches(from, to)) {
         hide(from, from + 3);
@@ -1457,6 +1527,10 @@ export default function LiveEditor({ ref, title, readOnly = false, value, embeds
           slashMenu(() => blocksRef.current ?? null),
           linkChips(() => blocksRef.current ?? null, () => openLinkRef.current),
           remoteCursors,
+          caretEvents(() => {
+            const b = blocksRef.current;
+            return b?.caret && b.wantsCaret ? { wantsCaret: () => b.wantsCaret!(), caret: (e) => b.caret!(e) } : null;
+          }),
           EditorView.updateListener.of((u) => {
             syncRef.current?.update(u);
             if (u.docChanged && !u.transactions.some((t) => t.annotation(External))) {

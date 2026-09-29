@@ -115,6 +115,7 @@ export default function App() {
   const [pluginErrors, setPluginErrors] = useState<Record<string, string>>({});
   const [toast, setToast] = useState<string | null>(null);
   const [session, setSession] = useState<GoogleSession | null>(null);
+  const email = session?.user.email ?? null;
   const [syncing, setSyncing] = useState(false);
   /** Set while "Connect Drive" is waiting: the code to type at google.com/device (null = still requesting). */
   const [signIn, setSignIn] = useState<{ device: DeviceCode | null } | null>(null);
@@ -443,18 +444,26 @@ export default function App() {
     [refresh, runSync, say],
   );
 
-  const askDelete = (rel: string) => {
-    const name = noteTitle(basename(rel));
-    const message = `“${name}” is deleted from this phone${email ? ', moved to the Drive trash and removed from your other devices' : ''}. This can't be undone here.`;
-    if (isWeb) {
-      if (window.confirm(`Delete “${name}”?\n\n${message}`)) void deleteNote(rel);
-      return;
-    }
-    Alert.alert(`Delete “${name}”?`, message, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => void deleteNote(rel) },
-    ]);
-  };
+  /** Ask, then delete. Resolves true when the note was deleted, false when the user said no. */
+  const askDelete = useCallback(
+    (rel: string) =>
+      new Promise<boolean>((resolve) => {
+        const name = noteTitle(basename(rel));
+        const message = `“${name}” is deleted from this phone${email ? ', moved to the Drive trash and removed from your other devices' : ''}. This can't be undone here.`;
+        const go = () => void deleteNote(rel).then(() => resolve(true));
+        if (isWeb) return window.confirm(`Delete “${name}”?\n\n${message}`) ? go() : resolve(false);
+        Alert.alert(
+          `Delete “${name}”?`,
+          message,
+          [
+            { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+            { text: 'Delete', style: 'destructive', onPress: go },
+          ],
+          { onDismiss: () => resolve(false) },
+        );
+      }),
+    [email, deleteNote],
+  );
 
   /** Rename a note's file from a title (it stays in its folder). Returns the new path, or null if it didn't happen. */
   const renameFile = useCallback(
@@ -649,6 +658,7 @@ export default function App() {
         return;
       }
       if (request.op === 'rename') return renameFile(rel, String(request.title)); // the sheet's heading: the new path, or null
+      if (request.op === 'delete') return askDelete(rel);
       const abs = join(VAULT_DIR, rel);
       if (request.op === 'read') return fs.readTextFile(abs);
       if (typeof request.text !== 'string') throw new Error('write needs text');
@@ -658,7 +668,7 @@ export default function App() {
       void syncNow.current();
       return null;
     },
-    [refresh, openNote, renameFile],
+    [refresh, openNote, renameFile, askDelete],
   );
 
   /** Move a note into `folder` ("" = vault root), keeping its relative image links pointing at the same files. */
@@ -779,8 +789,6 @@ export default function App() {
       say(`Error: ${String(err)}`);
     }
   }, [say, runSync]);
-
-  const email = session?.user.email ?? null;
 
   const pluginsRow = {
     label: 'Plugins',

@@ -16,6 +16,13 @@ your plugin's own UI. `render` runs once per block, each in its own sandboxed fr
 `<body>`); `source` is the raw text between the fences. While the cursor is inside the block, the note shows
 it as plain text instead (so it stays editable as Markdown).
 
+Only one running plugin draws a given language. When two ask for the same one, the plugin whose `id` sorts first
+alphabetically draws it, whichever started first (plugins start at the same time, so start order changes from
+launch to launch and between desktop and phone). The other plugin's `blocks.register` rejects with
+`"lang" blocks are already drawn by "Other Plugin"`, or the user sees that message if the other plugin had
+registered first. If the owner is switched off, the other plugin takes over. Pick a name unlikely to clash
+(`"acme-cards"`, not `"cards"`) if your block's purpose is common.
+
 ```js
 granite.blocks.register("dropdown", (el, source, block) => {
   const state = source ? JSON.parse(source) : { value: null, options: [] };

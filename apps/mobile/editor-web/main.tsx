@@ -206,7 +206,7 @@ const SHEET_CLOSE_PULL = 110;
  * A note in a sheet that slides up over the bottom of the page (the calendar stays visible above it): a heading, a handle to
  * pull it down, and a second editor. It is the same page and the same JS as the main editor, so it costs no second WebView.
  */
-function Sheet({ name, text, notePath, embeds, blocks, editor, reading, onChange, onRename, onClose }: {
+function Sheet({ name, text, notePath, embeds, blocks, editor, reading, onChange, onRename, onClose, onDelete }: {
   name: string;
   text: string;
   notePath: string;
@@ -217,8 +217,11 @@ function Sheet({ name, text, notePath, embeds, blocks, editor, reading, onChange
   onChange: (text: string) => void;
   onRename: (title: string) => Promise<boolean>;
   onClose: () => void;
+  /** Ask the app to delete this note (it confirms); the sheet closes itself when that happens. */
+  onDelete: () => void;
 }) {
   const [pull, setPull] = useState<number | null>(null);
+  const [menu, setMenu] = useState(false);
   const from = useRef(0);
   return (
     <div className="sheet-layer">
@@ -244,9 +247,30 @@ function Sheet({ name, text, notePath, embeds, blocks, editor, reading, onChange
             <div className="sheet-name" onPointerDown={(e) => e.stopPropagation()}>
               <NoteTitle name={name} onRename={onRename} readOnly={reading} />
             </div>
+            <button type="button" className="sheet-close" aria-label="Note menu" aria-expanded={menu} onPointerDown={(e) => e.stopPropagation()} onClick={() => setMenu(!menu)}>
+              ⋯
+            </button>
             <button type="button" className="sheet-close" aria-label="Close" onPointerDown={(e) => e.stopPropagation()} onClick={onClose}>
               ×
             </button>
+            {menu && (
+              <div className="sheet-menu" role="menu" onPointerDown={(e) => e.stopPropagation()}>
+                <button type="button" role="menuitem" onClick={onClose}>
+                  Close
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="danger"
+                  onClick={() => {
+                    setMenu(false);
+                    onDelete();
+                  }}
+                >
+                  Delete note
+                </button>
+              </div>
+            )}
           </div>
         </div>
         <div className="sheet-body">
@@ -343,6 +367,16 @@ function Page() {
         return to !== null;
       }}
       onClose={() => void closeSheet()}
+      onDelete={() => {
+        const path = sheet.path;
+        // The edit still waiting to be written must not bring the file back.
+        clearTimeout(sheetSave.current?.timer);
+        sheetSave.current = null;
+        vault({ op: "delete", path }).then(
+          (gone) => gone === true && void closeSheet(),
+          (e) => send({ type: "notice", message: `Could not delete ${path}: ${e instanceof Error ? e.message : String(e)}` }),
+        );
+      }}
     />
   );
   /** What each running plugin was started from, to notice when the app sends a changed one. */
