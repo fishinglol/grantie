@@ -666,6 +666,11 @@ The first screenshot showed the endless `(Drive copy …)` files again: not inve
       APK now live in the EAS `preview` environment (plain-text `EXPO_PUBLIC_*`); build with `npx eas-cli build -p android --profile preview`
       from a CLEAN checkout (EAS refuses/complains about uncommitted files) with `node_modules` present for the config plugins.
       v0.1.1 = first release with all three; the Windows app and the APK have never been opened on a real device.
+      **v0.1.1's desktop apps had NO Google sign-in** (found 2026-09-29 when the user opened the Mac app: "One-time setup needed"): CI never got
+      `VITE_GOOGLE_CLIENT_ID/SECRET` (they live only in the git-ignored `apps/desktop/.env`). Fixed for v0.1.2: both are GitHub Actions secrets
+      (set from `.env` via stdin), passed to the build **only on a tag** (PR dry runs get no secrets), and a step fails a tag build unless the
+      client ID is found inside `apps/desktop/dist`. Vite bakes process-env `VITE_*` (checked with a dummy value). Not yet checked: a sign-in
+      with a non-owner Google account, and that the Google Cloud app is really "In production" (else only Test users can sign in).
 
 ### Separate future milestones (NOT now)
 - [ ] `packages/core-sync` — Yjs CRDT doc <-> markdown binding; prove merge with
