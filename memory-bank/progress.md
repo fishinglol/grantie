@@ -671,6 +671,12 @@ The first screenshot showed the endless `(Drive copy …)` files again: not inve
       (set from `.env` via stdin), passed to the build **only on a tag** (PR dry runs get no secrets), and a step fails a tag build unless the
       client ID is found inside `apps/desktop/dist`. Vite bakes process-env `VITE_*` (checked with a dummy value). Not yet checked: a sign-in
       with a non-owner Google account, and that the Google Cloud app is really "In production" (else only Test users can sign in).
+      **v0.1.0-0.1.2 broke on a FIRST launch on any machine** (found 2026-09-29, the user had deleted `~/Library/Application Support/dev.granite.desktop`):
+      picking a vault showed "forbidden path: …/dev.granite.desktop". `stores.ts` `configPath` creates the app-config folder, but the capability
+      scope `$APPCONFIG/**` does not match the folder itself (checked with the `glob` crate: `dir/**` vs `dir` = false), and every dev machine already
+      had the folder, so it never showed. Fixed for v0.1.3: `$APPCONFIG` added to `fs:allow-exists` and `fs:allow-mkdir`, and `lib.rs` `setup`
+      creates the folder. Lesson: test a release on a machine (or account/HOME) that has never run Granite; a signed-in Keychain session skips
+      the login page and lands on vault setup, which is not a bug.
 
 ### Separate future milestones (NOT now)
 - [ ] `packages/core-sync` — Yjs CRDT doc <-> markdown binding; prove merge with
