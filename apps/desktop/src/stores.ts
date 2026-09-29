@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { appConfigDir } from "@tauri-apps/api/path";
 import { exists, mkdir, readTextFile, remove, writeTextFile } from "@tauri-apps/plugin-fs";
-import { join } from "@granite/core-notes";
+import { join, toPosix } from "@granite/core-notes";
 import type { IndexStore, SessionStore, StoredSession, SyncIndex } from "@granite/core-cloud";
 import type { PluginSettings } from "@granite/plugins";
 
@@ -18,7 +18,7 @@ const isTauri = () =>
   Boolean((window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
 
 async function configPath(fileName: string): Promise<string> {
-  const dir = await appConfigDir();
+  const dir = toPosix(await appConfigDir());
   if (!(await exists(dir))) await mkdir(dir, { recursive: true });
   return join(dir, fileName);
 }

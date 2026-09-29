@@ -36,7 +36,7 @@ features:
 
 ## About Granite
 
-Granite is a **local-first Markdown notes app** for desktop and phone. Your notes are plain `.md` files in a folder on your
+Granite is a **local-first Markdown notes app** for desktop (macOS and Windows) and phone. Your notes are plain `.md` files in a folder on your
 own device, so they stay readable without Granite. The editor shows the formatting as you type, and plugins can add blocks,
 themes and shortcuts to it.
 

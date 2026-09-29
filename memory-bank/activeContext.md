@@ -443,7 +443,7 @@ Both apps now exist, sharing only `@granite/core-notes` + the `FileSystem` port:
 3. **Vault location (desktop):** RESOLVED ✅ — Desktop now supports Obsidian-style
    custom folder vaults ("Open folder as vault" and "Create new vault"), remembered
    in `vault-config.json`. Mobile custom folder is still deferred.
-4. Windows support for desktop needs `\` path handling in core.
+4. Windows support for desktop: path handling done via `toPosix` at the Tauri boundary (see `progress.md`); untested on real Windows.
 
 ## Latest additions (2026-09-10)
 - **`packages/core-importer`**: pure TypeScript converters (HTML-to-Markdown, Evernote ENEX XML parsing,

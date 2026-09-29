@@ -37,6 +37,14 @@ Whatever a plugin passes to `vault.read`/`vault.write`/`vault.open`, it's valida
 A path that fails any of these throws instead of silently doing something else — build error handling around
 that.
 
+### Windows
+
+Paths are written with `/` on every platform, Windows included: `granite.vault.write("Daily/2026-09-29.md", …)`,
+never `Daily\2026-09-29.md`. What differs on Windows is what a name may contain. Windows can't create a file whose name has
+`< > : " | ? *`, ends in a dot or a space, or is a device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`, with
+or without `.md`). Such a write works on macOS and throws on Windows, so keep note names clear of them if your plugin is
+meant for both.
+
 ```js
 granite.commands.add({
   id: "new-daily-note",

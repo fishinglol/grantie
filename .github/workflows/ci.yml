@@ -39,3 +39,23 @@ jobs:
       - name: Live Collab tests
         working-directory: examples/plugins/live-collab
         run: npm test
+
+  # The desktop app also ships for Windows: its tests run there (paths, line endings) and the Rust side has to compile.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - name: Package tests
+        run: npm test --workspaces --if-present
+      - name: Build the desktop frontend (the Rust build embeds it)
+        run: npm run build
+        working-directory: apps/desktop
+      - name: Desktop Rust compiles
+        run: cargo check
+        working-directory: apps/desktop/src-tauri

@@ -144,6 +144,12 @@ webview Granite controls. No third-party OAuth crate.
   CSS px; only Windows is physical. Use `toClient()`; never divide by `devicePixelRatio`
   blindly.
 
+## Pattern: paths inside the app are always `/`, Windows converts at the door
+Every path the page gets from Tauri (`documentDir`, `appConfigDir`, `open()` dialogs, `onDragDropEvent` `paths`) goes through
+`toPosix` (core-notes `path.ts`): `C:\Users\f\Vault` → `C:/Users/f/Vault`, which Windows accepts back. `dirname/basename/join/normalize`
+treat `C:/` as a root like a URI scheme. `toPosix` only touches strings that start `X:\`, `X:/` or `\\`, since a macOS folder may contain
+a backslash. New code that receives a path from Tauri must call it, or `basename()` returns the whole path on Windows.
+
 ## Pattern: vault image index for Obsidian-style embeds
 `refreshVaultFiles` walks the vault (including `assets/`, which is hidden from the sidebar)
 and builds `Map<lowercased file name, absolute path>`. `![[name.png]]` resolves by name
