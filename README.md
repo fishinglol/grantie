@@ -18,11 +18,11 @@ first time you open one — that's expected, not a sign anything is wrong.
 
 **[⬇ Latest release](https://github.com/fishinglol/grantie/releases/latest)**
 
-| Platform | What to get | First-launch note |
+| Platform | Download | First-launch note |
 | --- | --- | --- |
-| **macOS** (Intel and Apple silicon) | the `.dmg` | Gatekeeper blocks unsigned apps: right-click the app → **Open** → confirm **Open**. Only needed once. |
-| **Windows** | the `-setup.exe` (or the `.msi`) | Windows SmartScreen blocks unsigned apps: click **More info** → **Run anyway**. Only needed once. New in this beta, so expect rough edges — please [report them](https://github.com/fishinglol/grantie/issues). |
-| **Android** | the `.apk` | Not on Google Play yet, so Android will warn about "unknown sources" — enable **Install unknown apps** for your browser/file manager when prompted. |
+| **Mac** (Intel or Apple silicon) | [`Granite-Mac.dmg`](https://github.com/fishinglol/grantie/releases/latest/download/Granite-Mac.dmg) | Gatekeeper blocks unsigned apps: right-click the app → **Open** → confirm **Open**. Only needed once. |
+| **Windows** | [`Granite-Windows-Setup.exe`](https://github.com/fishinglol/grantie/releases/latest/download/Granite-Windows-Setup.exe) | Windows SmartScreen blocks unsigned apps: click **More info** → **Run anyway**. Only needed once. New in this beta, so expect rough edges — please [report them](https://github.com/fishinglol/grantie/issues). |
+| **Android** | [`Granite-Android.apk`](https://github.com/fishinglol/grantie/releases/latest/download/Granite-Android.apk) | Not on Google Play yet, so Android will warn about "unknown sources" — enable **Install unknown apps** for your browser/file manager when prompted. |
 | **iPhone / iPad** | not yet available | iOS needs an Apple Developer account we haven't set up. |
 | **Linux** | not yet available | Desktop builds target macOS and Windows for now. |
 

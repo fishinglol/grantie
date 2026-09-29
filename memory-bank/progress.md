@@ -660,6 +660,12 @@ The first screenshot showed the endless `(Drive copy …)` files again: not inve
       on the PR (publish steps only on a tag). v0.1.0 has only the arm64 dmg/zip; next tag is v0.1.1 (desktop version bumped). Android `.apk`
       is NOT built by CI: it comes from `eas build` (EAS account `fais12`; the `preview` EAS environment has no variables, so the Google
       client IDs from `apps/mobile/.env` must be given to the build) and is attached to the release by hand (`gh release upload`).
+      **Release files (2026-09-29): exactly three, named for the device, no version** (`Granite-Mac.dmg`, `Granite-Windows-Setup.exe`,
+      `Granite-Android.apk`) so `releases/latest/download/<name>` is a permanent link; no `.zip`/`.msi` (they confused people). One shared
+      `.github/release-notes.md` is the release body (two jobs each setting `body` overwrote each other). The Google client ID/secret for the
+      APK now live in the EAS `preview` environment (plain-text `EXPO_PUBLIC_*`); build with `npx eas-cli build -p android --profile preview`
+      from a CLEAN checkout (EAS refuses/complains about uncommitted files) with `node_modules` present for the config plugins.
+      v0.1.1 = first release with all three; the Windows app and the APK have never been opened on a real device.
 
 ### Separate future milestones (NOT now)
 - [ ] `packages/core-sync` — Yjs CRDT doc <-> markdown binding; prove merge with
