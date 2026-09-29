@@ -655,6 +655,11 @@ The first screenshot showed the endless `(Drive copy …)` files again: not inve
       the docs site is deployed by hand (`cd apps/docs && npm run deploy`) — not yet redeployed.
       Still to do: install the `.exe`/`.msi` and click through (open vault, drop an image, sync, plugins)
 - [ ] `npm run tauri build` for a distributable `.app` (only `dev` run so far)
+- [~] Release pipeline (2026-09-29, `.github/workflows/release.yml`): tag `v*` builds **macOS universal** (Intel + Apple silicon; v0.1.0 was
+      arm64-only, so Intel Macs could not open it) and **Windows** (`.exe` + `.msi`) and attaches them. Editing the workflow runs both as a dry run
+      on the PR (publish steps only on a tag). v0.1.0 has only the arm64 dmg/zip; next tag is v0.1.1 (desktop version bumped). Android `.apk`
+      is NOT built by CI: it comes from `eas build` (EAS account `fais12`; the `preview` EAS environment has no variables, so the Google
+      client IDs from `apps/mobile/.env` must be given to the build) and is attached to the release by hand (`gh release upload`).
 
 ### Separate future milestones (NOT now)
 - [ ] `packages/core-sync` — Yjs CRDT doc <-> markdown binding; prove merge with

@@ -20,7 +20,7 @@ first time you open one — that's expected, not a sign anything is wrong.
 
 | Platform | What to get | First-launch note |
 | --- | --- | --- |
-| **macOS** | the `.dmg` | Gatekeeper blocks unsigned apps: right-click the app → **Open** → confirm **Open**. Only needed once. |
+| **macOS** (Intel and Apple silicon) | the `.dmg` | Gatekeeper blocks unsigned apps: right-click the app → **Open** → confirm **Open**. Only needed once. |
 | **Windows** | the `-setup.exe` (or the `.msi`) | Windows SmartScreen blocks unsigned apps: click **More info** → **Run anyway**. Only needed once. New in this beta, so expect rough edges — please [report them](https://github.com/fishinglol/grantie/issues). |
 | **Android** | the `.apk` | Not on Google Play yet, so Android will warn about "unknown sources" — enable **Install unknown apps** for your browser/file manager when prompted. |
 | **iPhone / iPad** | not yet available | iOS needs an Apple Developer account we haven't set up. |
