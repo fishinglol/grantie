@@ -677,6 +677,9 @@ The first screenshot showed the endless `(Drive copy …)` files again: not inve
       had the folder, so it never showed. Fixed for v0.1.3: `$APPCONFIG` added to `fs:allow-exists` and `fs:allow-mkdir`, and `lib.rs` `setup`
       creates the folder. Lesson: test a release on a machine (or account/HOME) that has never run Granite; a signed-in Keychain session skips
       the login page and lands on vault setup, which is not a bug.
+      **Same release: images linked `../assets/x.png` (a note in a subfolder) did not load in the desktop app** (2026-09-29, user's `class/Linear Algebra/` notes):
+      Tauri's asset protocol refuses a path with `..`. The fix (`normalize(join(baseDir, src))` in `LiveEditor.tsx`) had been written but sat
+      uncommitted in the user's working tree, so no release had it. Lesson: a fix that only exists in the working tree is not shipped.
 
 ### Separate future milestones (NOT now)
 - [ ] `packages/core-sync` — Yjs CRDT doc <-> markdown binding; prove merge with

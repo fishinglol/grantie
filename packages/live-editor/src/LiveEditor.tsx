@@ -28,7 +28,7 @@ import {
   WidgetType,
 } from "@codemirror/view";
 import katex from "katex";
-import { dirname, IMAGE_FILE, join, toggleFormat, type InlineFormat } from "@granite/core-notes";
+import { dirname, IMAGE_FILE, join, normalize, toggleFormat, type InlineFormat } from "@granite/core-notes";
 import { findMath, type MathSpan } from "./math.ts";
 import { openImageViewer } from "./imageViewer";
 import NoteTitle from "./NoteTitle";
@@ -1020,7 +1020,7 @@ const HEADING = /^ATXHeading([1-6])$/;
 function resolveImageSrc(src: string, baseDir: string, toUrl: (path: string) => string): string {
   if (/^(https?:|data:|blob:)/.test(src)) return src;
   try {
-    return toUrl(join(baseDir, src));
+    return toUrl(normalize(join(baseDir, src))); // `../assets/x.png` from a note in a subfolder: Tauri refuses a path with `..`
   } catch {
     return src;
   }
