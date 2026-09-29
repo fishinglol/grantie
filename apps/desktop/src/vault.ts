@@ -1,13 +1,13 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { documentDir } from "@tauri-apps/api/path";
-import { join } from "@granite/core-notes";
+import { join, toPosix } from "@granite/core-notes";
 import type { VaultFileSystem } from "@granite/core-cloud";
 import { vaultStore } from "./stores";
 
 /** Default fallback vault folder: ~/Documents/GraniteVault */
 export async function defaultVaultDir(): Promise<string> {
   try {
-    return join(await documentDir(), "GraniteVault");
+    return join(toPosix(await documentDir()), "GraniteVault");
   } catch {
     return "/Documents/GraniteVault";
   }

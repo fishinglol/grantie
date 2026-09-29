@@ -41,3 +41,31 @@ jobs:
             Unsigned macOS build. On first launch, macOS Gatekeeper will say the app
             is from an unidentified developer: right-click the app, choose **Open**,
             then confirm **Open** in the dialog. You only need to do this once.
+
+  desktop-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - run: npm ci
+
+      - name: Build the desktop app (unsigned)
+        working-directory: apps/desktop
+        run: npm run tauri build
+
+      - name: Attach build artifacts to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+            apps/desktop/src-tauri/target/release/bundle/msi/*.msi
+          body: |
+            Unsigned Windows build. On first launch, Windows SmartScreen will say it
+            protected your PC: click **More info**, then **Run anyway**. You only need to do this once.

@@ -6,7 +6,7 @@ import {
   type ImportProgress,
   type ImportResult,
 } from "@granite/core-importer";
-import { join } from "@granite/core-notes";
+import { join, toPosix, windowsSafe } from "@granite/core-notes";
 import { defaultVaultDir, getStoredVaultDir, setStoredVaultDir } from "./vault";
 import { tauriFs } from "./tauriFs";
 import { SourceIcon, UiGlyph } from "./importIcons";
@@ -58,7 +58,7 @@ export default function VaultSetupPage({ onVaultReady, onCancel }: VaultSetupPag
         getCurrentWebview()
           .onDragDropEvent((event) => {
             if (event.payload.type === "drop" && event.payload.paths?.length) {
-              const droppedPath = event.payload.paths[0]!;
+              const droppedPath = toPosix(event.payload.paths[0]!);
               setIsDragging(false);
               void handleAutoImport(droppedPath);
             } else if (event.payload.type === "over" || event.payload.type === "enter") {
@@ -172,7 +172,7 @@ export default function VaultSetupPage({ onVaultReady, onCancel }: VaultSetupPag
         title: "Select any notes folder (Obsidian, Notion, Joplin, OneNote, etc.)",
       });
       if (typeof picked === "string") {
-        await handleAutoImport(picked);
+        await handleAutoImport(toPosix(picked));
       } else {
         setBusy(false);
       }
@@ -199,7 +199,7 @@ export default function VaultSetupPage({ onVaultReady, onCancel }: VaultSetupPag
         title: "Select export file to scan and import",
       });
       if (typeof picked === "string") {
-        await handleAutoImport(picked);
+        await handleAutoImport(toPosix(picked));
       } else {
         setBusy(false);
       }
@@ -242,9 +242,10 @@ export default function VaultSetupPage({ onVaultReady, onCancel }: VaultSetupPag
         title: "Select an existing folder to open as your Granite vault",
       });
       if (typeof picked === "string") {
-        await tauriFs.mkdirp(picked);
-        await setStoredVaultDir(picked);
-        onVaultReady(picked);
+        const dir = toPosix(picked);
+        await tauriFs.mkdirp(dir);
+        await setStoredVaultDir(dir);
+        onVaultReady(dir);
         return;
       }
     } catch (e) {
@@ -277,8 +278,8 @@ export default function VaultSetupPage({ onVaultReady, onCancel }: VaultSetupPag
           setBusy(false);
           return;
         }
-        const cleanName = vaultName.trim().replace(/[\\/:*?"<>|]/g, "_");
-        const newPath = `${parentDir}/${cleanName}`.replace(/\/{2,}/g, "/");
+        const cleanName = windowsSafe(vaultName.trim().replace(/[\\/:*?"<>|]/g, "_")) || "Granite Vault";
+        const newPath = `${toPosix(parentDir)}/${cleanName}`.replace(/\/{2,}/g, "/");
         await tauriFs.mkdirp(newPath);
         await setStoredVaultDir(newPath);
         onVaultReady(newPath);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { noteTitle, renamedNoteFile } from "../src/noteName.ts";
+import { noteTitle, renamedNoteFile, windowsSafe } from "../src/noteName.ts";
 
 test("noteTitle hides the extension", () => {
   assert.equal(noteTitle("Community.md"), "Community");
@@ -22,4 +22,21 @@ test("nothing to rename to gives null", () => {
   assert.equal(renamedNoteFile("Old.md", "Old"), null);
   assert.equal(renamedNoteFile("Old.md", "   "), null);
   assert.equal(renamedNoteFile("Old.md", "..."), null);
+});
+
+test("windowsSafe: names Windows can't create get changed, everything else is left alone", () => {
+  assert.equal(windowsSafe("CON"), "_CON");
+  assert.equal(windowsSafe("nul.md"), "_nul.md"); // reserved with or without an extension
+  assert.equal(windowsSafe("COM1.canvas"), "_COM1.canvas");
+  assert.equal(windowsSafe("lpt9"), "_lpt9");
+  assert.equal(windowsSafe("Notes."), "Notes"); // Windows drops a trailing dot or space, so the file would not be the one asked for
+  assert.equal(windowsSafe("Notes  "), "Notes");
+  assert.equal(windowsSafe("Console"), "Console");
+  assert.equal(windowsSafe("com10"), "com10");
+  assert.equal(windowsSafe("Weekly plan.md"), "Weekly plan.md");
+});
+
+test("renaming a note to a reserved Windows name gives a name that works", () => {
+  assert.equal(renamedNoteFile("old.md", "CON"), "_CON.md");
+  assert.equal(renamedNoteFile("old.md", "Plan."), "Plan.md");
 });

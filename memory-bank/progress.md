@@ -642,7 +642,18 @@ The first screenshot showed the endless `(Drive copy …)` files again: not inve
       `splitSize`) — none exist yet; extract them out of `LiveEditor.tsx` first
 - [x] Editor for mobile (WebView, shared `@granite/live-editor`)
 - [ ] Fix the pre-existing `vite.config.ts` `@ts-expect-error` so `tsc -b` is clean
-- [ ] Windows path support in `@granite/core-notes` (`\` separators)
+- [~] Windows desktop (2026-09-29): code done, **never run on a real Windows machine** — first proof is the `windows` CI job and
+      the `desktop-windows` release job. Paths stay `/` inside the app; `toPosix` (core-notes) converts at the Tauri boundary
+      (`documentDir`, `appConfigDir`, folder/file dialogs, dropped files). `allow_vault_dir` also refuses `~\AppData`.
+      Simulated on macOS only: `packages/core-notes/test/windows.test.ts` runs vault ops on a `C:/…` root (paste image, move
+      note/folder, forbidden characters, CRLF); the sync suite also passed with `vaultDir` = `C:/Users/Fais/Documents/My Vault`
+      (temporary copy — the test fake `MemoryFs.mkdirpSync` assumes a POSIX root, so a permanent run needs that fixed).
+      `windowsSafe` (core-notes `noteName.ts`) also renames names Windows can't hold (`CON`, `NUL.md`, trailing dot/space) when a
+      note/folder/vault is created or a note renamed — on every platform, so a vault is valid on all devices. Not yet applied to
+      plugin `vault.write` (`safeNotePath`) or to files arriving from Drive (a bad name there fails only that file).
+      Docs updated: README download table, `apps/desktop/README.md` "On Windows", docs site (`privacy`, `api/vault`, `index`);
+      the docs site is deployed by hand (`cd apps/docs && npm run deploy`) — not yet redeployed.
+      Still to do: install the `.exe`/`.msi` and click through (open vault, drop an image, sync, plugins)
 - [ ] `npm run tauri build` for a distributable `.app` (only `dev` run so far)
 
 ### Separate future milestones (NOT now)

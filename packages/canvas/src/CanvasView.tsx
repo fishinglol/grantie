@@ -88,6 +88,8 @@ type XY = { x: number; y: number };
 
 const SIDES: Record<Side, Position> = { top: Position.Top, right: Position.Right, bottom: Position.Bottom, left: Position.Left };
 const EDGE_COLOR = "var(--canvas-edge)";
+/** The modifier the shortcut labels name: ⌘ on Apple devices, Ctrl elsewhere (both keys work either way). */
+const MOD = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent) ? "⌘" : "Ctrl";
 
 /** Obsidian's default card sizes. */
 const SIZE = {
@@ -622,7 +624,7 @@ function Board(props: CanvasViewProps) {
             ) : touch ? (
               <>Double-tap or use the buttons below to add a card<br />Drag to pan · Pinch to zoom</>
             ) : (
-              <>Drag from below or double click<br />Space + Drag to pan<br />⌘ + Scroll to zoom</>
+              <>Drag from below or double click<br />Space + Drag to pan<br />{MOD} + Scroll to zoom</>
             )}
           </div>
         )}
@@ -945,9 +947,9 @@ function HelpCard({ touch, onClose }: { touch: boolean; onClose: () => void }) {
         ["Drag a dot on a card's edge", "Draw an arrow"],
         ["Drag on empty space", "Select"],
         ["Space + drag / scroll", "Pan"],
-        ["⌘ + scroll", "Zoom"],
+        [`${MOD} + scroll`, "Zoom"],
         ["Delete", "Remove selection"],
-        ["⌘Z / ⇧⌘Z", "Undo / redo"],
+        [MOD === "⌘" ? "⌘Z / ⇧⌘Z" : "Ctrl+Z / Ctrl+Shift+Z", "Undo / redo"],
       ];
   return (
     <Panel position="top-right" className="canvas-help">

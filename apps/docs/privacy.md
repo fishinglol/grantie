@@ -43,7 +43,7 @@ does not sell it, use it for advertising, use it to train AI models, or let peop
 ### Where the sign-in is kept
 
 The sign-in (a token that lets Granite reach your Drive without asking for your password again) is stored on your device
-only, in the operating system's secure storage (Keychain on macOS and iOS, Keystore on Android; older phone versions kept it
+only, in the operating system's secure storage (Keychain on macOS and iOS, Credential Manager on Windows, Keystore on Android; older phone versions kept it
 in the app's private storage). **Sign out** in Granite revokes Granite's access with Google and removes the saved sign-in.
 You can also remove Granite's access at any time on the
 [Google permissions page](https://myaccount.google.com/permissions). Removing it does not delete your notes or the
