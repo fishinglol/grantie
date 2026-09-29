@@ -9,12 +9,11 @@
 // Needs no browser automation library: Node's built-in `WebSocket` talks to Chrome's DevTools Protocol directly
 // (the same approach already used for the Store's screenshots, see memory-bank/techContext.md).
 //
-// Known flakiness, honestly: after several plugins' blocks have been created and left in one long-lived note,
-// the `//` list can occasionally stop reopening for the rest of the run (confirmed with headless Chrome to be a
-// real CodeMirror view-state issue under back-to-back synthetic input, not a bug in this script's logic or in
-// the app a real user would hit the same way) — a cascade of "menu item not found" after one real result is that,
-// not a real problem with every plugin from that point on. Treat a clean run as a real pass; on a cascade, read
-// where it started and re-run — the screenshot (plugin-smoke-test.png) is worth a look either way.
+// Reading a failure: "menu item not found" means the `//` list did not open. It opens only when `//` is at the very
+// start of a line, so anything that leaves the next line indented (Enter copies the previous line's indent) makes every
+// later item fail, one after another. This script used to type " ok" with a leading space after each block and so
+// broke itself after the first block plugin, which looked like flaky CodeMirror; it is not flaky. A cascade now means
+// something real: read where it started, and the screenshot (plugin-smoke-test.png) shows what the note looks like.
 //
 // Usage: start the desktop preview first (`.claude/launch.json` → "desktop-web", or `npx vite --port 1420` in
 // apps/desktop), then from apps/desktop: `node scripts/plugin-smoke-test.mjs`.
@@ -213,7 +212,7 @@ async function runMenuItem(c, index, name) {
     await sleep(300);
     ok = await c.evalJs(`(() => { const el = document.querySelectorAll(".cm-slash-menu .cm-slash-item")[${index}]; if (!el) return false; el.click(); return true; })()`);
   }
-  if (!ok) return { name, ok: false, note: "menu item not found — likely a prior item left the editor in a state the `//` list doesn't reopen from; see the top-of-file note on known flakiness" };
+  if (!ok) return { name, ok: false, note: "menu item not found — the `//` list did not open (it needs `//` at the start of a line); see the note at the top of this file" };
   await sleep(400);
 
   const after = await c.evalJs(`[...document.querySelectorAll("iframe")].map((f) => f.title)`);
@@ -237,7 +236,7 @@ async function runMenuItem(c, index, name) {
   await sleep(200);
   await c.evalJs(FOCUS_MAIN); // leave the block for plain text
   await sleep(200);
-  await c.type(" ok");
+  await c.type("ok"); // no leading space: the next line would inherit it and `//` must be at column 0
   await sleep(200);
   return { name, ok: true, note: `block "${newFrame}"` };
 }
