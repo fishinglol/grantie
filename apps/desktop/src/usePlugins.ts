@@ -155,10 +155,11 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
       const id = entry.manifest.id;
       const fresh = !installed?.some((p) => p.manifest?.id === id);
       try {
+        const code = await entry.getCode(); // fetched and checked before anything is written
         const dir = join(vaultDir, PLUGINS_DIR, id);
         await tauriFs.mkdirp(dir);
         await tauriFs.writeTextFile(join(dir, "manifest.json"), entry.manifestText);
-        await tauriFs.writeTextFile(join(dir, "main.js"), entry.code);
+        await tauriFs.writeTextFile(join(dir, "main.js"), code);
         // Installing (or updating) from the Store allows what its page listed.
         await pluginStore.save(withPlugin(await pluginStore.load(), entry.manifest, true));
         await refresh();

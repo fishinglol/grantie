@@ -1,10 +1,13 @@
-import { parseManifest, type PluginManifest } from "@granite/plugins";
+import { fetchRegistry, parseManifest, type PluginManifest } from "@granite/plugins";
 
-/** A plugin the store can install: its files, bundled into the app at build time. */
+/** A plugin the store can install: bundled into the app at build time, or listed in the registry and fetched from its author's repo. */
 export interface CatalogPlugin {
   manifest: PluginManifest;
   manifestText: string;
-  code: string;
+  /** The plugin's `main.js`. For a registry plugin this fetches it and refuses it if it isn't the reviewed version. */
+  getCode: () => Promise<string>;
+  /** `owner/name` of the author's GitHub repo, for plugins that live there. */
+  repo?: string;
   /** URLs of the pictures shown on the plugin's page in the store. */
   screenshots: string[];
 }
@@ -36,9 +39,24 @@ export const CATALOG: CatalogPlugin[] = Object.entries(manifests)
         console.warn(`Store: "${manifest.id}" is not listed, it needs at least ${MIN_SCREENSHOTS} screenshots in screenshots/`);
         return [];
       }
-      return [{ manifest, manifestText, code, screenshots }];
+      return [{ manifest, manifestText, getCode: async () => code, screenshots }];
     } catch {
       return []; // a broken example is left out of the store rather than breaking it
     }
   })
   .sort((a, b) => a.manifest.name.localeCompare(b.manifest.name));
+
+/** The bundled plugins plus the registry's (plugins in their authors' own repos). Offline or with the registry down, just the bundled ones. */
+export async function loadCatalog(): Promise<CatalogPlugin[]> {
+  try {
+    const bundled = new Set(CATALOG.map((c) => c.manifest.id));
+    const remote = (await fetchRegistry()).flatMap((r): CatalogPlugin[] =>
+      bundled.has(r.manifest.id) || r.screenshots.length < MIN_SCREENSHOTS
+        ? []
+        : [{ manifest: r.manifest, manifestText: r.manifestText, getCode: r.getCode, repo: r.entry.repo, screenshots: r.screenshots }],
+    );
+    return [...CATALOG, ...remote].sort((a, b) => a.manifest.name.localeCompare(b.manifest.name));
+  } catch {
+    return CATALOG;
+  }
+}

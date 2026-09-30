@@ -32,14 +32,14 @@ features:
     title: Trusted because it is sandboxed
     details: Your plugin runs in an isolated frame and only gets what its manifest declares. People see that list before they turn it on, so they can say yes with confidence.
   - icon: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>'
-    title: A page of your own
-    details: Every listed plugin gets a public page with your screenshots, your name and a link to your site. Share it anywhere and it previews with your first screenshot.
+    title: Your own repo
+    details: Your plugin lives in your GitHub repo, under your name and your licence. The Store lists the version a maintainer reviewed and shows where the code comes from.
   - icon: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>'
-    title: See how many install it
-    details: The Store counts installs for each plugin and shows the number on your page and in the app.
+    title: Nobody can swap the code
+    details: The registry pins an exact commit and the hash of your files. The app refuses anything that doesn't match, so what was reviewed is what people run.
   - icon: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>'
     title: Reviewed and open
-    details: Granite is open source. You add your plugin with a pull request and a maintainer reads the code. Listed plugins carry that trust.
+    details: A maintainer reads your code before each version is listed. Listed plugins carry that trust.
 ---
 
 ## How it works
@@ -48,8 +48,8 @@ features:
 
 1. **Write it.** A folder with a `manifest.json` and a `main.js`. The [Getting started](/guide/getting-started) guide has a working plugin you can copy, and the [API reference](/api/) covers everything the `granite` object can do.
 2. **Try it in your own vault.** Drop the folder into `.granite/plugins/` and switch it on in the Plugins screen. No build step.
-3. **Send it in.** Open a pull request that adds your plugin, with at least three screenshots and a short README. See [Publishing to the Store](/guide/publishing).
-4. **Get listed.** Once it is reviewed and merged, your plugin appears in the Store with its own page, and people can install it from the app.
+3. **Send it in.** Put it in a GitHub repo of your own, with at least three screenshots and a short README, then open a pull request on the [`granite-plugins`](https://github.com/fishinglol/granite-plugins) registry that pins the exact version. See [Publishing to the Store](/guide/publishing).
+4. **Get listed.** Once a maintainer has read that version and merged the pull request, your plugin appears in the Store and people can install it from the app. Updates work the same way: a new pinned version, reviewed again.
 
 </div>
 

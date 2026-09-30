@@ -1,9 +1,10 @@
 # Example plugins
 
-Every plugin listed in Granite's Store lives in
+These are Granite's own plugins, built into the app and living in
 [`examples/plugins/`](https://github.com/fishinglol/grantie/tree/main/examples/plugins) — read any of them for
-real, shipped patterns. They're ordinary review-merged pull requests, so their code is exactly what a
-contributed plugin looks like.
+real, shipped patterns. Community plugins live in their authors' own repos and are listed through the
+[`granite-plugins`](https://github.com/fishinglol/granite-plugins) registry (see
+[Publishing to the Store](/guide/publishing)); their code follows the same patterns.
 
 | Plugin | What it does | Permissions | Good for learning |
 | --- | --- | --- | --- |
