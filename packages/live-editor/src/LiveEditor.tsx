@@ -345,21 +345,47 @@ function splitRow(line: string): string[] {
 
 const INLINE = /`([^`]+)`|\*\*(.+?)\*\*|~~(.+?)~~|\*(.+?)\*|\[([^\]]*)\]\(([^)\s]+)\)/g;
 
-/** Tiny inline-Markdown renderer for table cells (code, bold, italic, strike, links). */
-function renderInline(text: string, parent: HTMLElement) {
+/** Text with the `$…$` spans in it drawn by KaTeX (a table cell's text is not part of the editor's own math pass). */
+function appendWithMath(text: string, parent: HTMLElement) {
   let last = 0;
-  for (const m of text.matchAll(INLINE)) {
-    if (m.index! > last) parent.append(text.slice(last, m.index));
+  for (const m of findMath(text)) {
+    if (m.from > last) parent.append(text.slice(last, m.from));
+    const el = document.createElement("span");
+    el.className = "cm-math";
+    el.innerHTML = renderMath(m.tex, false);
+    parent.append(el);
+    last = m.to;
+  }
+  if (last < text.length) parent.append(text.slice(last));
+}
+
+/** Tiny inline-Markdown renderer for table cells (code, bold, italic, strike, links, `$math$`). */
+function renderInline(text: string, parent: HTMLElement) {
+  // The pattern runs on a copy with the math blanked out, so `*` `_` `~` inside TeX are not emphasis; the text shown comes from `text`.
+  const code = [...text.matchAll(/`[^`]+`/g)].map((c) => [c.index!, c.index! + c[0].length]);
+  let masked = text;
+  for (const m of findMath(text)) {
+    if (code.some(([from, to]) => m.from >= from && m.from < to)) continue;
+    masked = masked.slice(0, m.from) + "\uE000".repeat(m.to - m.from) + masked.slice(m.to);
+  }
+  // Group `i` of a match, cut from `text` (same offsets as `masked`): every group starts 1 (`x`, *x*, [x]) or 2 (**x**, ~~x~~) characters in.
+  const part = (m: RegExpMatchArray, i: number) => {
+    const start = m.index! + (i === 2 || i === 3 ? 2 : 1);
+    return text.slice(start, start + m[i]!.length);
+  };
+  let last = 0;
+  for (const m of masked.matchAll(INLINE)) {
+    if (m.index! > last) appendWithMath(text.slice(last, m.index), parent);
     const el = document.createElement(m[1] != null ? "code" : m[2] != null ? "strong" : m[3] != null ? "del" : m[4] != null ? "em" : "span");
-    if (m[1] != null) el.textContent = m[1];
+    if (m[1] != null) el.textContent = part(m, 1);
     else if (m[5] != null) {
       el.className = "cm-link";
-      el.textContent = m[5];
-    } else renderInline((m[2] ?? m[3] ?? m[4])!, el);
+      el.textContent = part(m, 5);
+    } else renderInline(part(m, m[2] != null ? 2 : m[3] != null ? 3 : 4), el);
     parent.append(el);
     last = m.index! + m[0].length;
   }
-  if (last < text.length) parent.append(text.slice(last));
+  if (last < text.length) appendWithMath(text.slice(last), parent);
 }
 
 /**
