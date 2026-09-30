@@ -1246,13 +1246,15 @@ function buildDecorations(state: EditorState, ctx: PreviewContext): DecorationSe
     }
   }
   const overlapsMath = (from: number, to: number) => maths.some((m) => from < m.to && to > m.from);
+  // Math wholly inside a node (`**Transpose $A^T$**`) leaves it alone; math cut by its edge (`x_1 … x_2`) makes it TeX, not Markdown.
+  const cutsMath = (from: number, to: number) => maths.some((m) => from < m.to && to > m.from && !(from <= m.from && m.to <= to));
 
   syntaxTree(state).iterate({
     enter: (node) => {
       if (node.from < skipBefore) return node.to <= skipBefore ? false : undefined;
       if (inTable(node.from, node.to) || inEmbed(node.from, node.to)) return false;
       const name = node.name;
-      if (overlapsMath(node.from, node.to) && INLINE_NODES.has(name)) return false;
+      if (cutsMath(node.from, node.to) && INLINE_NODES.has(name)) return false;
 
       const heading = HEADING.exec(name);
       if (heading) {
