@@ -18,9 +18,9 @@ The Store shows two kinds of plugin:
   [`examples/plugins/`](https://github.com/fishinglol/grantie/tree/main/examples/plugins) in the Granite repo
   ship inside the app. These are Granite's own and the reference examples. They reach users with an app release.
 
-The desktop Store reads the registry when it opens (offline, it shows the built-in ones). A plugin installed
-on desktop is written into your vault, so it syncs to your phone like any other plugin; the phone's own Store
-doesn't read the registry yet.
+Both Stores (desktop and phone) read the registry when they open; offline they show the built-in ones. A plugin
+installed on one device is written into your vault, so it syncs to the other like any other plugin. A plugin
+marked `"desktopOnly": true` is left out of the phone's Store.
 
 ## Listing your plugin
 
@@ -45,11 +45,6 @@ Raise `version` in `manifest.json`, commit, and open a new pull request that run
 user has installed, so a change without a version bump is invisible to anyone who already installed it. Users
 get the new version only after it has been reviewed and merged.
 
-## Not yet for registry plugins
-
-The public plugin pages on this site (`/plugins/<id>`) and the install counter are built from the built-in
-plugins only. A registry plugin has its own repo page on GitHub for now.
-
 ## Contributing to the built-in plugins
 
 To fix or extend one of Granite's own plugins, fork the Granite repo and change its folder under
@@ -62,10 +57,11 @@ ones for the same reason: a clash means only one of the two would ever work, so 
 
 ## Public plugin pages
 
-Every built-in plugin also gets a page of its own on this site (`/plugins/<id>`), built from its folder: its
-name and tagline, its screenshots, the permissions it asks for, its `author` (linked to `homepage` if set), and how
-many times it has been installed. The page previews with the first screenshot when shared. Nothing extra to submit:
-it appears once the pull request is merged and the site rebuilds.
+Every listed plugin also gets a page of its own on this site (`/plugins/<id>`): its name and tagline, its
+screenshots, the permissions it asks for, its `author` (linked to `homepage` if set), a link to its source repo, and
+how many times it has been installed. The page previews with the first screenshot when shared. Nothing extra to
+submit. The site reads the registry (and checks the same hashes) every time it is built, so a newly merged plugin
+appears with the next build of the site, and the install counter starts counting it from then.
 
 ## What reviewers look for
 

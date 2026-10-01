@@ -21,6 +21,7 @@ const counts = useInstallCounts();
   <span v-else-if="params.homepage"><a :href="params.homepage" target="_blank" rel="noopener noreferrer nofollow">Author's page</a></span>
   <span v-if="counts[params.id]">{{ counts[params.id].toLocaleString() }} installs</span>
   <span v-if="params.desktopOnly">Desktop only</span>
+  <span v-if="params.repo">Source: <a :href="`https://github.com/${params.repo}`" target="_blank" rel="noopener noreferrer nofollow">github.com/{{ params.repo }}</a></span>
 </p>
 
 <div class="plugin-shots">
