@@ -83,6 +83,12 @@ export default function PluginStore({ catalog, installed, busy, onInstall }: Plu
             <span>DEVELOPER</span>
             <strong className="store-dev">{m.author ?? "—"}</strong>
           </div>
+          {open.repo && (
+            <div>
+              <span>SOURCE</span>
+              <strong className="store-dev">github.com/{open.repo}</strong>
+            </div>
+          )}
           {counts[m.id] > 0 && (
             <div>
               <span>INSTALLS</span>

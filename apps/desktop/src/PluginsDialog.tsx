@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { permissionLines, PLUGINS_DIR, type InstalledPlugin, type PluginManifest } from "@granite/plugins";
 import PluginStore from "./PluginStore";
-import { CATALOG } from "./pluginCatalog";
+import { CATALOG, loadCatalog } from "./pluginCatalog";
 import type { PluginsState } from "./usePlugins";
 
 export interface PluginsDialogProps {
@@ -54,6 +54,10 @@ export default function PluginsDialog({ plugins, onClose }: PluginsDialogProps) 
     if (installed.length === 0) setTab("store");
   }, [installed, decided]);
   const [busy, setBusy] = useState<string | null>(null);
+  const [catalog, setCatalog] = useState(CATALOG);
+  useEffect(() => {
+    void loadCatalog().then(setCatalog);
+  }, []);
   /** The plugin whose Uninstall button was pressed once and now asks "Sure?". */
   const [sure, setSure] = useState<string | null>(null);
   const remove = (plugin: InstalledPlugin) => {
@@ -82,7 +86,7 @@ export default function PluginsDialog({ plugins, onClose }: PluginsDialogProps) 
         <div className="plugins-body">
         {tab === "store" && (
           <PluginStore
-            catalog={CATALOG}
+            catalog={catalog}
             installed={installed}
             busy={busy}
             onInstall={(entry) => {

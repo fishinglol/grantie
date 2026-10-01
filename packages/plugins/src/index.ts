@@ -7,3 +7,5 @@ export type { GraniteApi, CommandInfo, BlockContext, BlockHandle, HeaderButton, 
 export type { LinkChip, LinkProvider } from "./links.ts";
 export type { InstalledPlugin } from "./discover.ts";
 export { BUILD_URL, INSTALLS_URL, fetchInstallCounts, installsLabel, reportInstall } from "./stats.ts";
+export { REGISTRY_URL, fetchRegistry, parseRegistry } from "./registry.ts";
+export type { RegistryEntry, RemotePlugin } from "./registry.ts";
