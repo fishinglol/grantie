@@ -102,6 +102,7 @@ export default function PluginStoreView({ catalog, installed, onInstall }: Plugi
             ))}
           </>
         ) : null}
+        {open.repo ? <Text style={styles.perm}>Source: github.com/{open.repo}</Text> : null}
         <Text style={styles.section}>Needs your permission to</Text>
         {permissionLines(m).length === 0 ? (
           <Text style={styles.perm}>Nothing. It needs no permissions.</Text>
