@@ -3,6 +3,7 @@ import { OVERLAY_WHEEL_SCRIPT, SCROLL_CHAIN_SCRIPT } from "./scrollChain.ts";
 import { SLASH_SCRIPT } from "./slash.ts";
 import { METHOD_PERMISSION, checkPluginCss, safeNotePath, type CaretEvent, type CommandInfo, type HeaderButton, type SyncCursor, type SyncEvent } from "./api.ts";
 import { checkLinkProvider, checkSvgIcon, findLinkProvider, svgDataUri, type LinkChip, type LinkProvider } from "./links.ts";
+import { mergeIconConfigs, parseIconConfig, type IconConfig } from "./icons.ts";
 import type { PluginManifest } from "./manifest.ts";
 
 /**
@@ -133,6 +134,7 @@ function bootstrapHtml(network: boolean, block: boolean, connect: string[] = [],
         if (!isBlock) return call("ui.button", [d.title, d.icon]);
       },
       setBadge: function (color) { if (!isBlock) return call("ui.badge", [color == null ? null : String(color)]); },
+      setIcons: function (icons) { if (!isBlock) return call("ui.icons", [icons == null ? null : icons]); },
       copy: function (t) { return call("ui.copy", [String(t)]); }
     }),
     blocks: Object.freeze({ register: function (lang, fn) {
@@ -381,6 +383,8 @@ interface Loaded {
   /** Its button at the top of the note (`ui.headerButton`) and the dot on it. */
   button?: { title: string; icon: string };
   badge: string | null;
+  /** The icons it gave notes and folders in the sidebar (`ui.setIcons`). */
+  icons?: IconConfig;
   /** Texts the user may type alone on a line to trigger it, and whether it takes over pasted spreadsheet text. */
   triggers: Set<string>;
   paste: boolean;
@@ -404,6 +408,7 @@ export class PluginHost {
   readonly #onCommands: () => void;
   readonly #onBlocks: () => void;
   readonly #onButtons: () => void;
+  readonly #onIcons: () => void;
   readonly #plugins = new Map<string, Loaded>();
   readonly #blocks = new Set<BlockFrame>();
   #runSeq = 0;
@@ -418,11 +423,12 @@ export class PluginHost {
   /** The block whose text field has the caret (it reports it itself), or null when the note's editor has it. */
   #caretBlock: { block: BlockFrame; caret: CaretEvent["caret"]; selecting: boolean } | null = null;
 
-  constructor(adapter: HostAdapter, onCommandsChanged: () => void = () => {}, onBlocksChanged: () => void = () => {}, onButtonsChanged: () => void = () => {}) {
+  constructor(adapter: HostAdapter, onCommandsChanged: () => void = () => {}, onBlocksChanged: () => void = () => {}, onButtonsChanged: () => void = () => {}, onIconsChanged: () => void = () => {}) {
     this.#adapter = adapter;
     this.#onCommands = onCommandsChanged;
     this.#onBlocks = onBlocksChanged;
     this.#onButtons = onButtonsChanged;
+    this.#onIcons = onIconsChanged;
     window.addEventListener("message", this.#onMessage);
     window.addEventListener("scroll", this.#onScroll, true);
   }
@@ -455,6 +461,7 @@ export class PluginHost {
     if (this.#syncOwner === id) this.#endSync();
     if (this.#panel?.plugin === entry) this.closePanel();
     if (entry.button) this.#onButtons();
+    if (entry.icons) this.#onIcons();
     entry.frame.remove();
     entry.overlay?.frame.remove();
     this.#setStyle(id, ""); // a plugin's look goes away with it
@@ -708,6 +715,11 @@ export class PluginHost {
       entry.inputs.set(n, { resolve, timer });
       entry.frame.contentWindow?.postMessage({ k: "input-run", n, kind, text, html: payload.html ?? "", url: payload.url ?? "" }, "*");
     });
+  }
+
+  /** The icons running plugins gave notes and folders, as one table (by plugin id, so the same plugin wins on every launch). */
+  iconConfig(): IconConfig {
+    return mergeIconConfigs([...this.#plugins.values()].sort((a, b) => a.manifest.id.localeCompare(b.manifest.id)).flatMap((p) => (p.icons ? [p.icons] : [])));
   }
 
   /** The buttons running plugins put at the top of a note (`ui.headerButton`). */
@@ -1180,6 +1192,14 @@ export class PluginHost {
         const entry = this.#plugins.get(manifest.id);
         if (entry) entry.badge = color === null ? null : (color as string).toLowerCase();
         this.#onButtons();
+        return;
+      }
+      case "ui.icons": {
+        if (origin) throw new Error("a block can't change the icons");
+        const icons = parseIconConfig(args[0]);
+        const entry = this.#plugins.get(manifest.id);
+        if (entry) entry.icons = icons.rules.length > 0 || Object.keys(icons.defaults).length > 0 ? icons : undefined;
+        this.#onIcons();
         return;
       }
       case "ui.copy":

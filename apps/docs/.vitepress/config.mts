@@ -35,6 +35,7 @@ export default defineConfig({
         items: [
           { text: "Getting started", link: "/guide/getting-started" },
           { text: "The manifest", link: "/guide/manifest" },
+          { text: "Customising Granite", link: "/guide/customising" },
           { text: "Permissions & the sandbox", link: "/guide/permissions" },
           { text: "Publishing to the Store", link: "/guide/publishing" },
           { text: "Example plugins", link: "/guide/examples" },

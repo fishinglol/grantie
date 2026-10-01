@@ -2,7 +2,7 @@ import { type RefObject, useCallback, useEffect, useRef, useState } from "react"
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { join } from "@granite/core-notes";
 import type { LiveEditorHandle } from "@granite/live-editor";
-import { API_VERSION, PLUGINS_DIR, discoverPlugins, readPluginCode, reportInstall, reviewApprovals, withPlugin, type CommandInfo, type HeaderButton, type InstalledPlugin } from "@granite/plugins";
+import { API_VERSION, NO_ICONS, PLUGINS_DIR, discoverPlugins, readPluginCode, reportInstall, reviewApprovals, withPlugin, type CommandInfo, type HeaderButton, type IconConfig, type InstalledPlugin } from "@granite/plugins";
 import { BlockBridge, PluginHost } from "@granite/plugins/host";
 import type { CatalogPlugin } from "./pluginCatalog";
 import { pluginStore } from "./stores";
@@ -33,6 +33,8 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
   const [commands, setCommands] = useState<CommandInfo[]>([]);
   /** Buttons plugins put at the top of a note (plugin API 7, `ui.headerButton`). */
   const [buttons, setButtons] = useState<HeaderButton[]>([]);
+  /** The icons plugins gave notes and folders in the sidebar (`ui.setIcons`, API 9). */
+  const [icons, setIcons] = useState<IconConfig>(NO_ICONS);
   /** Why the plugin list could not be read (shown instead of an endless "Looking for plugins…"). */
   const [loadError, setLoadError] = useState<string | null>(null);
   const host = useRef<PluginHost | null>(null);
@@ -80,6 +82,7 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
       () => setCommands(h.commands()),
       blocks.changed,
       () => setButtons(h.headerButtons()),
+      () => setIcons(h.iconConfig()),
     );
     host.current = h;
     blocks.host = h;
@@ -211,7 +214,7 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
   /** Plugin styles apply to the whole window: the app switches them off while it asks for consent or confirms a deletion. */
   const pauseStyles = useCallback((paused: boolean) => host.current?.pauseStyles(paused), []);
 
-  return { installed, enabled, failed, commands, buttons, openPanel, pauseStyles, loadError, blocks, refresh, toggle, install, uninstall, run };
+  return { installed, enabled, failed, commands, buttons, icons, openPanel, pauseStyles, loadError, blocks, refresh, toggle, install, uninstall, run };
 }
 
 export type PluginsState = ReturnType<typeof usePlugins>;
