@@ -35,6 +35,7 @@ const RPC: Record<string, string> = {
   "input.addItem": "input.register",
   "links.register": "links.register",
   "ui.headerButton": "ui.button",
+  "ui.setIcons": "ui.icons",
   "caret.overlay": "caret.overlay",
   "editor.setStyle": "editor.setStyle",
 };

@@ -1,3 +1,4 @@
+import type { IconDefaults, IconRule } from "./icons.ts";
 import type { Permission } from "./manifest.ts";
 
 /**
@@ -191,6 +192,14 @@ export interface GraniteApi {
     setBadge(color: string | null): Promise<void>;
     /** ui.panel: put text on the clipboard (at most 10 000 characters). Rejects when the system refuses. */
     copy(text: string): Promise<void>;
+    /**
+     * ui.icons (API 9): change the icons of folders, notes and canvases in the sidebar, on desktop and phone. `defaults` set an icon for every
+     * item of a kind (`folder`, `folderOpen`, `note`, `canvas`); `rules` give one to the items whose vault path matches (the first matching
+     * rule wins; `*` is any text inside a name, `**` across folders, so `"Fais OS/**"` is everything inside that folder). An icon is an emoji
+     * (`"🧠"`), a plain `<svg>` (desktop only; the phone skips it and uses the next rule or default), or `{ emoji | svg, color: "#rrggbb" }`
+     * (colour applies to an `<svg>`). Calling it again replaces what this plugin set; `null` removes it, and it goes away with the plugin.
+     */
+    setIcons(icons: { defaults?: IconDefaults; rules?: IconRule[] } | null): Promise<void>;
   };
   blocks: {
     /**
@@ -271,6 +280,7 @@ export const METHOD_PERMISSION: Record<string, Permission | null> = {
   "ui.button": "ui.panel",
   "ui.badge": "ui.panel",
   "ui.copy": "ui.panel",
+  "ui.icons": "ui.icons",
   "blocks.register": "editor.blocks",
   "input.register": "editor.input",
   "links.register": "editor.links",

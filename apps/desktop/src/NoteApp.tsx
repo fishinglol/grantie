@@ -15,6 +15,7 @@ import { usePlugins } from "./usePlugins";
 import { http } from "./googleLogin";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { LiveEditor, IMAGE_FILE, type LiveEditorHandle } from "@granite/live-editor";
+import { resolveIcon, svgDataUri, type IconConfig, type IconKind } from "@granite/plugins";
 import { CanvasView, emptyCanvas, serializeCanvas, type CanvasHandle } from "@granite/canvas";
 import { indexStore } from "./stores";
 import { folderFs, moveFile, tauriFs } from "./tauriFs";
@@ -1052,7 +1053,7 @@ export default function NoteApp({
             }}
           >
             <span className="chevron">{isCollapsed ? "▸" : "▾"}</span>
-            <span className="file-icon"><FolderIcon /></span>
+            <span className="file-icon"><ItemIcon icons={plugins.icons} kind="folder" path={folder} open={!isCollapsed}><FolderIcon /></ItemIcon></span>
             <span className="file-name">{folder.slice(folder.lastIndexOf("/") + 1)}</span>
           </button>
         </li>,
@@ -1081,7 +1082,7 @@ export default function NoteApp({
             className={isActive ? "active" : ""}
           >
             <span className="chevron" />
-            <span className="file-icon">{isCanvas(file) ? <CanvasIcon /> : <FileIcon />}</span>
+            <span className="file-icon">{isCanvas(file) ? <ItemIcon icons={plugins.icons} kind="canvas" path={file}><CanvasIcon /></ItemIcon> : <ItemIcon icons={plugins.icons} kind="note" path={file}><FileIcon /></ItemIcon>}</span>
             <span className="file-name">{noteTitle(file.slice(file.lastIndexOf("/") + 1))}</span>
             {docs[fullPath]?.dirty && <span className="dirty-dot" title="Unsaved changes" />}
           </button>
@@ -1095,7 +1096,7 @@ export default function NoteApp({
     <div className={drag ? "app is-dragging" : "app"}>
       {drag && (
         <div className="drag-ghost" style={{ left: drag.x + 12, top: drag.y + 12 }}>
-          {drag.folder ? <FolderIcon /> : isCanvas(drag.file) ? <CanvasIcon /> : <FileIcon />}
+          {drag.folder ? <ItemIcon icons={plugins.icons} kind="folder" path={drag.file}><FolderIcon /></ItemIcon> : isCanvas(drag.file) ? <ItemIcon icons={plugins.icons} kind="canvas" path={drag.file}><CanvasIcon /></ItemIcon> : <ItemIcon icons={plugins.icons} kind="note" path={drag.file}><FileIcon /></ItemIcon>}
           <span>
             {drag.count ? `${drag.count} items` : drag.folder ? drag.file.slice(drag.file.lastIndexOf("/") + 1) : noteTitle(drag.file.slice(drag.file.lastIndexOf("/") + 1))}
           </span>
@@ -1415,6 +1416,18 @@ const svgProps = {
 
 const FILE_PATH = "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z M14 3v5h5";
 const FOLDER_PATH = "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z";
+
+/**
+ * The icon of a note, folder or canvas in the sidebar: the one a plugin gave it (`ui.setIcons`: an emoji, or an svg drawn in its colour
+ * through a mask), or the app's own, passed as children.
+ */
+function ItemIcon({ icons, kind, path, open, children }: { icons: IconConfig; kind: IconKind; path: string; open?: boolean; children: ReactNode }) {
+  const icon = resolveIcon(icons, { kind, path, open });
+  if (!icon) return <>{children}</>;
+  if (icon.emoji) return <span className="plugin-emoji" aria-hidden>{icon.emoji}</span>;
+  const uri = `url("${svgDataUri(icon.svg!)}")`;
+  return <span className="plugin-svg" aria-hidden style={{ WebkitMaskImage: uri, maskImage: uri, ...(icon.color && { background: icon.color }) }} />;
+}
 
 const FileIcon = () => (
   <svg {...svgProps}><path d={FILE_PATH} /></svg>

@@ -35,6 +35,7 @@ see Known limits below).
 | `editor.sync` | `editor.sync.*` (live collaboration) | "Follow what you type and your cursor as you type, and change the note live (for working together)" |
 | `editor.caret` | `caret.overlay`, `caret.setOptions`, `caret.getOptions` | "See where your cursor is and what you type, and draw over the editor (it cannot use the internet while it does)" |
 | `ui.panel` | `ui.headerButton`, `ui.setBadge`, `ui.copy` | "Add a button at the top of a note and open a window of its own" |
+| `ui.icons` | `ui.setIcons` | "Change the icons of notes and folders in the sidebar" |
 | `vault.read` | `vault.list`, `vault.read`, `vault.open` | "Read your notes" |
 | `vault.write` | `vault.write` | "Create and change notes" |
 | `network` | `fetch`/WebSocket to any `https:`/`wss:` address | "Use the internet" |
