@@ -313,7 +313,8 @@ the cursor. `hide` mirrors the plugin's choice: if `.live-editor .cm-content` ha
 digit, so "$5 and $10" stays text; `\$` is a dollar) and `$$…$$` (display, may span lines), Obsidian's rules. `buildDecorations` drops spans in
 code, tables, embeds and the properties box; a span the cursor touches shows as tinted raw TeX (`cm-math-src`), otherwise a `MathWidget`
 (KaTeX `renderToString`, `trust: false`, cached per TeX) replaces it — a block widget when `$$…$$` fills its lines, inline otherwise.
-Markdown syntax nodes that overlap math (`INLINE_NODES`: emphasis, links, …) are skipped, because `x_1 … x_2` is TeX, not emphasis.
+Markdown syntax nodes that math cuts through (`cutsMath`; `INLINE_NODES`: emphasis, links, …) are skipped, because `x_1 … x_2` is TeX, not emphasis; math wholly inside a node (`**Transpose $A^T$**`) leaves it styled.
+**Table cells** are not in the editor's math pass (`inTable`): `TableWidget` → `renderInline` runs `findMath` itself, blanks the spans (so `*` `_` in TeX aren't emphasis; not inside `` `code` ``) before the Markdown pattern, and draws them with `renderMath` (`appendWithMath`). A cell's math is always inline.
 
 ## Pattern: a rule about "this note" must not use `.live-editor:has(...)`
 `LiveEditor` keeps the editors of the last 4 notes alive, hidden, inside one `.live-editor`, and `:has()` sees hidden ones: a whole-page
