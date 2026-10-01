@@ -13,7 +13,8 @@ npm run build -w @granite/docs   # outputs apps/docs/.vitepress/dist
 
 Its own Vercel project, `granite-docs` (never the project behind `grantie.vercel.app`, which is the marketing site).
 The site is built from the whole repository — `scripts/build-registry.mjs` reads `examples/plugins/` and
-`packages/plugins/` — so deploy a *prebuilt* output from this folder:
+`packages/plugins/`, and fetches the community registry (`granite-plugins` on GitHub; needs the network, and if it can't
+be reached the build warns and carries on without community plugins) — so deploy a *prebuilt* output from this folder:
 
 ```bash
 cd apps/docs && npm run deploy   # vercel build --prod && vercel deploy --prebuilt --prod

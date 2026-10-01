@@ -24,7 +24,7 @@ import DeviceSignIn from './src/components/DeviceSignIn';
 import FolderPicker from './src/components/FolderPicker';
 import PluginsSheet from './src/components/PluginsSheet';
 import { nameOf, parentOf } from './src/tree';
-import { CATALOG, type CatalogPlugin } from './src/catalog';
+import { CATALOG, loadCatalog, type CatalogPlugin } from './src/catalog';
 import Toast from './src/components/Toast';
 import Icon from './src/components/Icon';
 import type { NoteEditorHandle, PluginVaultRequest } from './src/components/NoteEditor.types';
@@ -106,6 +106,11 @@ export default function App() {
   const [folderMenu, setFolderMenu] = useState<string | null>(null);
   const [movingFolder, setMovingFolder] = useState<string | null>(null);
   const [pluginsOpen, setPluginsOpen] = useState(false);
+  /** The Store's list: bundled plugins, plus the registry's once it has loaded. */
+  const [catalog, setCatalog] = useState(CATALOG);
+  useEffect(() => {
+    void loadCatalog().then(setCatalog);
+  }, []);
   const [installed, setInstalled] = useState<InstalledPlugin[]>([]);
   const [enabledPlugins, setEnabledPlugins] = useState<string[]>([]);
   /** Code of the enabled plugins, by id, read from the vault. */
@@ -595,9 +600,10 @@ export default function App() {
       const id = entry.manifest.id;
       const fresh = !installed.some((p) => p.manifest?.id === id);
       try {
+        const code = await entry.getCode(); // fetched and checked before anything is written
         const dir = join(VAULT_DIR, PLUGINS_DIR, id);
         await fs.writeTextFile(join(dir, 'manifest.json'), entry.manifestText);
-        await fs.writeTextFile(join(dir, 'main.js'), entry.code);
+        await fs.writeTextFile(join(dir, 'main.js'), code);
         // Installing (or updating) from the Store allows what its page listed.
         const next = withPlugin(await pluginStore.load(), entry.manifest, true);
         setEnabledPlugins(next.enabled);
@@ -954,7 +960,7 @@ export default function App() {
         errors={pluginErrors}
         commands={open ? pluginCommands : []}
         hasNote={open !== null}
-        catalog={CATALOG}
+        catalog={catalog}
         onInstall={installPlugin}
         onUninstall={(folder) => void uninstallPlugin(folder)}
         onToggle={(id, on) => void togglePlugin(id, on)}

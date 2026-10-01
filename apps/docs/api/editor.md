@@ -3,7 +3,7 @@
 ## Reading and writing the open note
 
 ### `editor.getText()`
-`editor.read` — `(): Promise<string>` — the whole open note.
+`editor.read` — `(): Promise<string>` — the whole open note as Markdown text: the source you see when the cursor is in it, including the properties block at the top, `#` headings and code fences. With no note open it returns `""` (the methods that change the note throw `Open a note first`).
 
 ### `editor.getSelection()`
 `editor.read` — `(): Promise<string>` — the selected text, `""` when nothing is selected.

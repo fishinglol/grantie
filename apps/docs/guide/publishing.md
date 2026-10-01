@@ -18,21 +18,31 @@ The Store shows two kinds of plugin:
   [`examples/plugins/`](https://github.com/fishinglol/grantie/tree/main/examples/plugins) in the Granite repo
   ship inside the app. These are Granite's own and the reference examples. They reach users with an app release.
 
-The desktop Store reads the registry when it opens (offline, it shows the built-in ones). A plugin installed
-on desktop is written into your vault, so it syncs to your phone like any other plugin; the phone's own Store
-doesn't read the registry yet.
+Both Stores (desktop and phone) read the registry when they open; offline they show the built-in ones. A plugin
+installed on one device is written into your vault, so it syncs to the other like any other plugin. A plugin
+marked `"desktopOnly": true` is left out of the phone's Store.
 
 ## Listing your plugin
 
-1. **Put your plugin in a repo of your own** with, at the top level: `manifest.json`, `main.js`, a
-   `README.md`, a licence, and **at least 3 screenshots** in `screenshots/` (`.png`, `.jpg` or `.webp`).
-   Real captures of it running, not mockups. Start from [Getting started](/guide/getting-started) and
-   [The manifest](/guide/manifest). The plugin must be plain, readable JavaScript.
-2. **Commit it**, and note the full 40-character commit SHA (`git rev-parse HEAD`).
-3. **Fork [`granite-plugins`](https://github.com/fishinglol/granite-plugins)** and run
-   `node scripts/registry.mjs pin <owner/name> <commit>`. It reads your files at that commit and adds one entry
-   to `plugins.json` with the hashes. (`--local <dir>` reads a checkout on your machine instead.)
-4. **Open a pull request.** CI runs `node scripts/registry.mjs verify`: it re-downloads your files at the
+1. **Put your plugin in a public GitHub repo of your own**, one plugin per repo, with these files **at the top
+   level** of the repo: `manifest.json`, `main.js`, a `README.md` (say why each permission is needed), a licence
+   file (any open-source licence you choose; you keep the copyright), and **at least 3 screenshots** in
+   `screenshots/` (`.png`, `.jpg` or `.webp`, at most 12; real captures of it running, not mockups, wide enough to
+   read, roughly 800 px or more). The repo can be named anything: the plugin's name in Granite is its manifest `id`.
+   Start from [Getting started](/guide/getting-started) and [The manifest](/guide/manifest). The plugin must be
+   plain, readable JavaScript.
+2. **Commit and push it**, then note the full 40-character commit SHA (`git rev-parse HEAD`). The commit must be
+   on GitHub, because the registry (and later every user's app) downloads your files from it. It may be on any
+   branch.
+3. **Fork [`granite-plugins`](https://github.com/fishinglol/granite-plugins)**, clone your fork, and from its top
+   folder run `node scripts/registry.mjs pin <owner/name> <commit>` (needs Node 22 or newer; there is nothing to
+   install). `<owner/name>` is your GitHub repo, for example `octocat/my-granite-plugin`, not the plugin's `id`.
+   It reads your files at that commit and adds one entry to `plugins.json` with the hashes. It refuses a branch
+   name or a short SHA, fewer than 3 screenshots, and an `id` that already belongs to another repo. Add
+   `--local <dir>` (a git checkout of your plugin on your machine) to try it without GitHub; the commit is still
+   needed, but it doesn't have to be pushed yet. Run it that way before you push and you have a free dry run of
+   the registry's own checks.
+4. **Open a pull request** with your change to `plugins.json` only (the title can be the plugin's name). CI runs `node scripts/registry.mjs verify`: it re-downloads your files at the
    pinned commit and checks that they match, that the manifest's `id` is the entry's `id`, and that there are
    at least 3 screenshots. Then a maintainer **reads `main.js` at that commit** before merging.
 5. **Once merged**, your plugin appears in the Store's list, with your name, screenshots and the permissions it
@@ -40,15 +50,11 @@ doesn't read the registry yet.
 
 ## Updating a listed plugin
 
-Raise `version` in `manifest.json`, commit, and open a new pull request that runs `pin` with the new commit
-(it replaces your entry). The Store's **Update** button appears when the listed version differs from what a
-user has installed, so a change without a version bump is invisible to anyone who already installed it. Users
+Change `version` in `manifest.json` (use a new number every time; the Store compares for "different", so
+re-pinning the same version is invisible to people who already installed it), commit and push, and open a new
+pull request that runs `pin` with the new commit (it replaces your entry). The Store's **Update** button
+appears when the listed version differs from what a user has installed. Users
 get the new version only after it has been reviewed and merged.
-
-## Not yet for registry plugins
-
-The public plugin pages on this site (`/plugins/<id>`) and the install counter are built from the built-in
-plugins only. A registry plugin has its own repo page on GitHub for now.
 
 ## Contributing to the built-in plugins
 
@@ -62,17 +68,27 @@ ones for the same reason: a clash means only one of the two would ever work, so 
 
 ## Public plugin pages
 
-Every built-in plugin also gets a page of its own on this site (`/plugins/<id>`), built from its folder: its
-name and tagline, its screenshots, the permissions it asks for, its `author` (linked to `homepage` if set), and how
-many times it has been installed. The page previews with the first screenshot when shared. Nothing extra to submit:
-it appears once the pull request is merged and the site rebuilds.
+Every listed plugin also gets a page of its own on this site (`/plugins/<id>`): its name and tagline, its
+screenshots, the permissions it asks for, its `author` (linked to `homepage` if set), a link to its source repo, and
+how many times it has been installed. The page previews with the first screenshot when shared. Nothing extra to
+submit. The site reads the registry (and checks the same hashes) every time it is built, so a newly merged plugin
+appears with the next build of the site, and the install counter starts counting it from then.
 
 ## What reviewers look for
+
+This is the one list: [CONTRIBUTING.md](https://github.com/fishinglol/grantie/blob/main/CONTRIBUTING.md) points here too.
 
 Since the sandbox already constrains what a plugin's code *can* do, review mostly checks:
 
 - **Permissions match behavior** — nothing asked for that the code doesn't use, and nothing the code needs
-  left undeclared.
+  left undeclared. The risky ones are `network` (data can leave the device), `vault.write`, `vault.read`,
+  `editor.style` (CSS applies to the whole app) and `editor.input` (the plugin sees what the user types alone
+  on a line and what they paste). The README says why each one is needed.
+- **No `eval`, no remote scripts, nothing hidden:** no minified or obfuscated code, no unexplained URLs, and it
+  never loops forever (a stuck plugin freezes its own frame) or writes to the note in a loop.
+- **Works on the phone as well as the desktop,** or the manifest says `"desktopOnly": true`.
+- **`minApiVersion`** is set when the plugin uses something newer than API 1 (for example `input.addItem` is
+  API 4); without it, older Granite versions try to run the plugin and fail. If it is left out, it means 1.
 - **`setup` is filled in** when the plugin needs an account, a server, or any one-time step before it works —
   this becomes the Store's "Before you start" list.
 - **Real screenshots**, not placeholders.

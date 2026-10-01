@@ -46,9 +46,9 @@ features:
 
 <div class="vp-doc build-steps">
 
-1. **Write it.** A folder with a `manifest.json` and a `main.js`. The [Getting started](/guide/getting-started) guide has a working plugin you can copy, and the [API reference](/api/) covers everything the `granite` object can do.
+1. **Write it.** A folder with a `manifest.json` and a `main.js`. The [Getting started](/guide/getting-started) guide has a working plugin you can copy (it lives in Granite's own repo, [`fishinglol/grantie`](https://github.com/fishinglol/grantie)), and the [API reference](/api/) covers everything the `granite` object can do.
 2. **Try it in your own vault.** Drop the folder into `.granite/plugins/` and switch it on in the Plugins screen. No build step.
-3. **Send it in.** Put it in a GitHub repo of your own, with at least three screenshots and a short README, then open a pull request on the [`granite-plugins`](https://github.com/fishinglol/granite-plugins) registry that pins the exact version. See [Publishing to the Store](/guide/publishing).
+3. **Send it in.** Push it to a public GitHub repo of your own, with at least three screenshots and a short README, then open a pull request on the [`granite-plugins`](https://github.com/fishinglol/granite-plugins) registry that pins the exact version. See [Publishing to the Store](/guide/publishing).
 4. **Get listed.** Once a maintainer has read that version and merged the pull request, your plugin appears in the Store and people can install it from the app. Updates work the same way: a new pinned version, reviewed again.
 
 </div>

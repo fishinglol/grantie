@@ -95,8 +95,10 @@ sample in the Granite repo — copy that folder as your starting point.
 
 ## TypeScript types (optional)
 
-`main.js` can be plain JavaScript, but the API is fully typed in the `@granite/plugins` package if you'd
-rather write against types (and compile down to JS):
+`main.js` can be plain JavaScript, but the API is fully typed if you'd rather write against types (and compile down
+to JS). The types live in Granite's repo as the `@granite/plugins` package, which is **not published on npm**: copy
+[`api.ts`](https://github.com/fishinglol/grantie/blob/main/packages/plugins/src/api.ts) into your project, or clone
+the repo, and then:
 
 ```ts
 declare const granite: import("@granite/plugins").GraniteApi;
