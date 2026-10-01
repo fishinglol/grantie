@@ -1,9 +1,11 @@
 /**
  * The `//` menu for text fields inside a plugin's block frame (Cards' note editor, a table cell, ...). It runs in every visible plugin
  * frame, so no plugin has to build its own: type `//` alone on a line of a textarea or a text input and pick from the same list the
- * note has: Date / Time / Checkbox, the Markdown blocks (headings, lists, quote, code, divider, table) and every running plugin's entries
- * (the host lists and runs those: `slash-list` / `slash-run`). The text goes in and the field gets a normal `input` event, so the plugin
- * saves it as if it had been typed. A plugin block that is inserted lands as its source text: it is drawn only where the note draws it.
+ * note has: Date / Time, the Markdown blocks (headings, lists, quote, code, divider, table) and the running plugins' entries that the
+ * field asks for (the host lists and runs those: `slash-list` / `slash-run`). The text goes in and the field gets a normal `input` event,
+ * so the plugin saves it as if it had been typed. A plugin's block that is inserted lands as its source text: it is drawn only where the
+ * note draws it, so a plugin's entries are left out unless the field (or an element around it) says which ones its page can draw:
+ * data-slash-items="dropdown:item:dropdown other:item:x" (the keys are `<plugin id>:item:<item id>`).
  * A field opts out with `data-slash="off"` (a plugin with its own `//` menu), and search boxes (placeholder or type "search") are skipped.
  * Plain JS in a string: the frame is a sandboxed page with no access to the app's code.
  */
@@ -14,7 +16,6 @@ export const SLASH_SCRIPT = String.raw`
   var BUILTIN = [
     { name: "Date", desc: "Today's date", text: function () { var d = new Date(); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); } },
     { name: "Time", desc: "The time now", text: function () { var d = new Date(); return pad(d.getHours()) + ":" + pad(d.getMinutes()); } },
-    { name: "Checkbox", desc: "A tick box", text: "☐ " },
     { name: "Heading 1", desc: "Big section heading", text: "# " },
     { name: "Heading 2", desc: "Medium section heading", text: "## " },
     { name: "Heading 3", desc: "Small section heading", text: "### " },
@@ -86,8 +87,9 @@ export const SLASH_SCRIPT = String.raw`
     return { from: from, to: pos, typed: v.slice(from, pos), query: m[1].toLowerCase() };
   }
   function entries(el) {
-    var all = BUILTIN.filter(function (b) { return !(b.multi && singleLine(el)); }).concat(pluginItems);
-    return all;
+    var wanted = (el.closest("[data-slash-items]") || el).getAttribute("data-slash-items") || "";
+    var keys = wanted.split(/\s+/);
+    return BUILTIN.filter(function (b) { return !(b.multi && singleLine(el)); }).concat(pluginItems.filter(function (p) { return keys.indexOf(p.key) >= 0; }));
   }
   function paint() {
     Array.prototype.forEach.call(menu.children, function (row, i) { row.style.background = i === index ? "var(--panel-hover, rgba(127,127,127,.2))" : "none"; });
