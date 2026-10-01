@@ -840,6 +840,8 @@ function emptyBoard(page) {
 
 if (typeof granite !== "undefined") {
   granite.blocks.register("cards", (el, source, block) => {
+    // The `//` menu inside a card offers only what a card can draw: the Dropdown chip (see withChips). Other plugins' blocks would land as raw text.
+    el.setAttribute("data-slash-items", "dropdown:item:dropdown");
     let inner = mountBoard(el, source, block);
     return {
       update(text) {
