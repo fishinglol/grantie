@@ -31,7 +31,7 @@ The current API version is **8** (`API_VERSION` in `@granite/plugins`). A manife
 | [`input`](/api/input) | `editor.input` | React to what the user types alone on a line, what they paste, or add a `//` menu entry |
 | [`links`](/api/links) | `editor.links` | Turn pasted/typed links to known sites into chips, or read what another plugin knows about a URL |
 | [`caret`](/api/caret) | `editor.caret` | Draw over the editor and follow the text cursor: cursor shapes, trails, particles, a spotlight |
-| [`ui`](/api/ui) | `ui.panel` | Add a button at the top of a note that opens the plugin's own window |
+| [`ui`](/api/ui) | `ui.panel` / `ui.icons` | Add a button at the top of a note that opens the plugin's own window, or change the icons of notes and folders in the sidebar |
 | [`vault`](/api/vault) | `vault.read` / `vault.write` | List, read, write and open notes elsewhere in the vault |
 | `notice(message)` | none | Show a short message to the user |
 

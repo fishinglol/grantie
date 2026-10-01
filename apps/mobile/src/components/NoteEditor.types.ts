@@ -1,4 +1,4 @@
-import type { CommandInfo, HeaderButton, PluginManifest } from '@granite/plugins';
+import type { CommandInfo, HeaderButton, IconConfig, PluginManifest } from '@granite/plugins';
 
 export interface NoteEditorHandle {
   /** Add a block of Markdown (e.g. an image link) at the cursor. */
@@ -51,6 +51,8 @@ export interface NoteEditorProps {
   onPluginCommands: (commands: CommandInfo[]) => void;
   /** The buttons plugins want in the top bar (plugin API 7). */
   onPluginButtons: (buttons: HeaderButton[]) => void;
+  /** The icons plugins gave notes and folders in the sidebar (plugin API 9), resolved by the sidebar with `resolveIcon`. */
+  onPluginIcons: (icons: IconConfig) => void;
   /** A plugin failed to start (`error` set) or started fine (`null`). */
   onPluginStatus: (id: string, error: string | null) => void;
   /** Set when the file is a `.canvas`: the page shows the canvas, offering these vault-relative notes and images. */
