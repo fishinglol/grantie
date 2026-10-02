@@ -38,9 +38,33 @@ first time you open one — that's expected, not a sign anything is wrong.
   it and stay fully local.
 - Add plugins for things like spreadsheets, custom tables, and drawing tools.
 
+## Build from source
+
+You need Node 24 LTS (22+ also works). The desktop app also needs the
+[Rust toolchain](https://rustup.rs/) plus your OS's build tools (see
+[apps/desktop](apps/desktop/README.md) for the Windows and macOS prerequisites).
+
+```bash
+npm ci
+cd apps/desktop
+npm run tauri dev     # first build compiles Rust, so it is slow
+```
+
+The app runs with no setup — choose **Continue without syncing** on the first page.
+Google Drive sync needs your own OAuth client; the steps are in the desktop README.
+For the phone app, see [apps/mobile](apps/mobile/README.md).
+
+To run the tests: `npm test --workspaces --if-present` from the repo root.
+
+## Contributing
+
+Found a bug? [Open an issue](https://github.com/fishinglol/grantie/issues). Want to
+fix something or add a plugin? See [CONTRIBUTING.md](CONTRIBUTING.md). Granite is in
+beta, so bug reports are especially welcome.
+
 ## For developers
 
-Building from source, running the dev server, or writing a plugin:
+More detail on each part, and on writing a plugin:
 
 - [apps/desktop](apps/desktop/README.md) — the Tauri desktop app
 - [apps/mobile](apps/mobile/README.md) — the Expo/React Native phone app

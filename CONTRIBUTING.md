@@ -1,4 +1,24 @@
-# Contributing a plugin
+# Contributing
+
+Thanks for helping. Granite is in beta, so every bug report and fix is useful.
+
+## Report a bug
+
+[Open an issue](https://github.com/fishinglol/grantie/issues). Please include your platform (Windows, macOS or Android),
+the Granite version, what you did, what you expected and what happened instead. Sync and plugin problems are the most
+likely to still be rough, so say whether Google Drive sync or a plugin was involved.
+
+## Change the app's code
+
+1. Fork this repo and set it up following [Build from source](README.md#build-from-source).
+2. Make your change. Keep it small and focused: one fix or feature per pull request.
+3. Run `npm test --workspaces --if-present` from the repo root (and `npm run typecheck` in the package you changed).
+   CI runs the same checks.
+4. Open a pull request and say what changed and how you tried it (desktop, phone, or both).
+
+For a big change, open an issue first so we can agree on the approach before you spend the time.
+
+## Contribute a plugin
 
 Plugins are listed in Granite's **Store** only after a maintainer has read their code. Nothing is installed from an
 unreviewed source.
