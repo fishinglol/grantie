@@ -8,6 +8,8 @@ Thanks for helping. Granite is in beta, so every bug report and fix is useful.
 the Granite version, what you did, what you expected and what happened instead. Sync and plugin problems are the most
 likely to still be rough, so say whether Google Drive sync or a plugin was involved.
 
+Questions and ideas go in [Discussions](https://github.com/fishinglol/grantie/discussions) rather than Issues.
+
 ## Change the app's code
 
 1. Fork this repo and set it up following [Build from source](README.md#build-from-source).

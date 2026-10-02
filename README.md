@@ -58,9 +58,10 @@ To run the tests: `npm test --workspaces --if-present` from the repo root.
 
 ## Contributing
 
-Found a bug? [Open an issue](https://github.com/fishinglol/grantie/issues). Want to
-fix something or add a plugin? See [CONTRIBUTING.md](CONTRIBUTING.md). Granite is in
-beta, so bug reports are especially welcome.
+Found a bug? [Open an issue](https://github.com/fishinglol/grantie/issues). Have a
+question or an idea? Start a [discussion](https://github.com/fishinglol/grantie/discussions).
+Want to fix something or add a plugin? See [CONTRIBUTING.md](CONTRIBUTING.md). Granite
+is in beta, so bug reports are especially welcome.
 
 ## For developers
 
