@@ -6,6 +6,15 @@ import { resolveIcon, type IconConfig, type IconQuery } from '@granite/plugins';
 import { nameOf, parentOf, visibleRows } from '../tree';
 import Icon from './Icon';
 
+/** One thin vertical line per ancestor folder, drawn over a row (rows touch, so the lines read as continuous). */
+const Guides = ({ depth }: { depth: number }) => (
+  <>
+    {Array.from({ length: depth }, (_, k) => (
+      <View key={k} pointerEvents="none" style={[styles.guide, { left: k * STEP + GUIDE_X }]} />
+    ))}
+  </>
+);
+
 export interface NoteListProps {
   notes: string[];
   folders: string[];
@@ -28,6 +37,10 @@ export interface NoteListProps {
 
 /** Every row is this tall, so the row under a finger is plain arithmetic. */
 const ROW = 52;
+/** Indent per folder level, and the chevron's box; the guide lines sit under each ancestor's chevron (row padding 16 + half the box). */
+const STEP = 20;
+const CHEVRON = 22;
+const GUIDE_X = 16 + CHEVRON / 2;
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /**
@@ -116,7 +129,7 @@ export default function NoteList({ notes, folders, selected, icons, title, synci
       onSubmitEditing={commit}
       placeholder={creating === 'note' ? 'Note name' : creating === 'canvas' ? 'Canvas name' : 'Folder name'}
       placeholderTextColor={colors.textFaint}
-      style={[styles.input, { marginLeft: depth * 16 }]}
+      style={[styles.input, { marginLeft: depth * STEP }]}
       returnKeyType="done"
     />
   );
@@ -149,12 +162,14 @@ export default function NoteList({ notes, folders, selected, icons, title, synci
           {rows.map((row) =>
             row.kind === 'folder' ? (
               <Fragment key={row.rel}>
+                <View>
                 <Pressable
                   onPress={() => toggle(row.rel)}
                   onLongPress={() => onFolderMenu(row.rel)}
                   delayLongPress={350}
-                  style={({ pressed }) => [styles.row, { marginLeft: row.depth * 16 }, dragging?.over === row.rel && styles.dropTarget, pressed && styles.pressed]}
+                  style={({ pressed }) => [styles.row, { marginLeft: row.depth * STEP }, dragging?.over === row.rel && styles.dropTarget, pressed && styles.pressed]}
                 >
+                  <Icon name={row.open ? 'chevron-down' : 'chevron-right'} size={CHEVRON} color={colors.textDim} />
                   {(() => {
                     const emoji = pluginEmoji(icons, { kind: 'folder', path: row.rel, open: row.open });
                     return emoji ? (
@@ -167,23 +182,26 @@ export default function NoteList({ notes, folders, selected, icons, title, synci
                     {nameOf(row.rel)}
                   </Text>
                 </Pressable>
+                <Guides depth={row.depth} />
+                </View>
                 {creating && inputUnder === row.rel && nameInput(row.depth + 1)}
               </Fragment>
             ) : (
+              <View key={row.rel}>
               <Pressable
-                key={row.rel}
                 onPress={() => onOpen(row.rel)}
                 onLongPress={(e) => startDrag(row.rel, e.nativeEvent.pageX, e.nativeEvent.pageY)}
                 delayLongPress={350}
                 onPressOut={() => setTimeout(() => !panning.current && drag.current && endDrag(), 60)}
                 style={({ pressed }) => [
                   styles.row,
-                  { marginLeft: row.depth * 16 },
+                  { marginLeft: row.depth * STEP },
                   selected === row.rel && styles.selected,
                   dragging?.note === row.rel && styles.lifted,
                   pressed && styles.pressed,
                 ]}
               >
+                <View style={{ width: CHEVRON }} />
                 {(() => {
                   const canvas = row.rel.toLowerCase().endsWith('.canvas');
                   const emoji = pluginEmoji(icons, { kind: canvas ? 'canvas' : 'note', path: row.rel });
@@ -194,6 +212,8 @@ export default function NoteList({ notes, folders, selected, icons, title, synci
                   {noteTitle(nameOf(row.rel))}
                 </Text>
               </Pressable>
+              <Guides depth={row.depth} />
+              </View>
             ),
           )}
           {creating && inputUnder === '' && nameInput()}
@@ -270,6 +290,7 @@ const styles = StyleSheet.create({
   pressed: { backgroundColor: colors.panelHover },
   label: { color: colors.text, fontSize: 20, flex: 1 },
   emoji: { fontSize: 18, width: 22, textAlign: 'center' },
+  guide: { position: 'absolute', top: 0, bottom: 0, width: 1, backgroundColor: colors.textFaint, opacity: 0.8 },
   empty: { color: colors.textFaint, padding: 16, fontSize: 15 },
   input: {
     color: colors.text,

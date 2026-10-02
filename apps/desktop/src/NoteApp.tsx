@@ -1,6 +1,7 @@
-import { Fragment, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, Fragment, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import type { Update } from "@tauri-apps/plugin-updater";
 import { readFile } from "@tauri-apps/plugin-fs";
 import { basename, dirname, embedImage, join, moveFolder, noteTitle, NoteRepository, relocateLinks, renamedNoteFile, retargetNoteRefs, toPosix, windowsSafe } from "@granite/core-notes";
 import { GoogleDriveProvider, VaultSync, merge3, type GoogleSession, type PendingDeletion, type SyncResult } from "@granite/core-cloud";
@@ -19,6 +20,7 @@ import { resolveIcon, svgDataUri, type IconConfig, type IconKind } from "@granit
 import { CanvasView, emptyCanvas, serializeCanvas, type CanvasHandle } from "@granite/canvas";
 import { indexStore } from "./stores";
 import { folderFs, moveFile, tauriFs } from "./tauriFs";
+import { findUpdate, installUpdate } from "./updater";
 import { ensureSampleVault, vaultDir } from "./vault";
 
 const repo = new NoteRepository(tauriFs);
@@ -91,6 +93,8 @@ export default function NoteApp({
   const path = panes[active] ?? null;
   const [status, setStatus] = useState("Starting…");
   const [busy, setBusy] = useState(false);
+  /** A newer release found on GitHub; the user menu offers to install it. */
+  const [update, setUpdate] = useState<Update | null>(null);
   const [dir, setDir] = useState<string | null>(vaultDirProp ?? null);
   const [sync, setSync] = useState<SyncState>(session ? { phase: "idle" } : { phase: "off" });
   const [showSidebar, setShowSidebar] = useState(true);
@@ -1004,14 +1008,41 @@ export default function NoteApp({
     return () => window.removeEventListener("keydown", onKey);
   }, [picked]);
 
+  // Look for a new release once, shortly after start. Offline or no release yet is not worth telling anyone about.
+  useEffect(() => {
+    const t = setTimeout(() => void findUpdate().then(setUpdate, () => {}), 5000);
+    return () => clearTimeout(t);
+  }, []);
+  /** "Check for updates" finds a release; once one is known, the same item installs it and restarts. */
+  const updateApp = async () => {
+    try {
+      if (!update) {
+        setStatus("Checking for updates…");
+        const found = await findUpdate();
+        setUpdate(found);
+        setStatus(found ? `Granite ${found.version} is available` : "Granite is up to date");
+        return;
+      }
+      if (Object.values(docsRef.current).some((d) => d.dirty)) {
+        setStatus("Save your open notes before updating");
+        return;
+      }
+      await installUpdate(update, (pct) => setStatus(pct === null ? "Downloading update…" : `Downloading update… ${pct}%`));
+    } catch (e) {
+      setStatus(`Update failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
   const allCollapsed = vaultFolders.length > 0 && vaultFolders.every((f) => collapsed.has(f));
 
   const renderDir = (rel: string, depth: number): ReactNode[] => {
     const rows: ReactNode[] = [];
-    const indent = { paddingLeft: 10 + depth * 14 };
+    const indent = { paddingLeft: 10 + depth * TREE_STEP };
+    // `--depth` feeds the indent-guide lines drawn by `.file-list li::before`.
+    const guides = { "--depth": depth } as CSSProperties;
     if (creating && rel === activeFolder) {
       rows.push(
-        <li key="__new" className="tree-new" style={indent}>
+        <li key="__new" className="tree-new" style={{ ...indent, ...guides }}>
           <span className="file-icon">{creating === "folder" ? <FolderIcon /> : creating === "canvas" ? <CanvasIcon /> : <FileIcon />}</span>
           <input
             autoFocus
@@ -1032,6 +1063,7 @@ export default function NoteApp({
       rows.push(
         <li
           key={`d:${folder}`}
+          style={guides}
           data-drop={folder}
           className={[drag?.over === folder ? "drop-target" : "", drag?.file === folder || (drag?.count && picked.has(`d:${folder}`)) ? "dragging" : "", picked.has(`d:${folder}`) ? "picked" : ""].join(" ").trim()}
           onContextMenu={(e) => openMenu(e, `d:${folder}`, folder, true)}
@@ -1052,7 +1084,7 @@ export default function NoteApp({
               });
             }}
           >
-            <span className="chevron">{isCollapsed ? "▸" : "▾"}</span>
+            <span className={isCollapsed ? "chevron" : "chevron open"}><ChevronIcon /></span>
             <span className="file-icon"><ItemIcon icons={plugins.icons} kind="folder" path={folder} open={!isCollapsed}><FolderIcon /></ItemIcon></span>
             <span className="file-name">{folder.slice(folder.lastIndexOf("/") + 1)}</span>
           </button>
@@ -1066,6 +1098,7 @@ export default function NoteApp({
       rows.push(
         <li
           key={`f:${file}`}
+          style={guides}
           data-drop={tree.parentOf(file)}
           className={[isActive ? "active" : "", drag?.file === file || (drag?.count && picked.has(`f:${file}`)) ? "dragging" : "", picked.has(`f:${file}`) ? "picked" : ""].join(" ").trim()}
           onContextMenu={(e) => openMenu(e, `f:${file}`, file, false)}
@@ -1162,6 +1195,8 @@ export default function NoteApp({
               onOpenNote={openNote}
               onOpenVault={onOpenVaultSetup}
               onOpenPlugins={() => setShowPlugins(true)}
+              updateVersion={update?.version ?? null}
+              onUpdate={() => void updateApp()}
             />
           </aside>
         )}
@@ -1328,6 +1363,8 @@ function UserMenu({
   onOpenNote,
   onOpenVault,
   onOpenPlugins,
+  updateVersion,
+  onUpdate,
 }: {
   session: GoogleSession | null;
   sync: SyncState;
@@ -1338,6 +1375,9 @@ function UserMenu({
   onOpenNote: () => void;
   onOpenVault: () => void;
   onOpenPlugins: () => void;
+  /** Version of a newer release that can be installed, if one was found. */
+  updateVersion: string | null;
+  onUpdate: () => void;
 }) {
   const name = session ? (session.user.email ?? "Google Drive") : "Local vault";
   const item = (icon: ReactNode, label: string, onClick: () => void, opts: { disabled?: boolean; danger?: boolean } = {}) => (
@@ -1370,6 +1410,7 @@ function UserMenu({
         {item(<FolderIcon />, "Open note…", onOpenNote, { disabled: busy })}
         {item(<ImportIcon />, "Vault / Import…", onOpenVault)}
         {item(<PuzzleIcon />, "Plugins", onOpenPlugins)}
+        {item(<SyncIcon />, updateVersion ? `Update to ${updateVersion} and restart` : "Check for updates", onUpdate)}
         {session && (
           <>
             <div className="user-sep" />
@@ -1403,6 +1444,9 @@ function describeSync(sync: SyncState): string {
   return "";
 }
 
+/** Sidebar indent per folder level in px; `.file-list` in App.css draws its guide lines from the same number. */
+const TREE_STEP = 18;
+
 const svgProps = {
   width: 16,
   height: 16,
@@ -1429,6 +1473,9 @@ function ItemIcon({ icons, kind, path, open, children }: { icons: IconConfig; ki
   return <span className="plugin-svg" aria-hidden style={{ WebkitMaskImage: uri, maskImage: uri, ...(icon.color && { background: icon.color }) }} />;
 }
 
+const ChevronIcon = () => (
+  <svg {...svgProps} strokeWidth={2.5}><path d="M9 6l6 6-6 6" /></svg>
+);
 const FileIcon = () => (
   <svg {...svgProps}><path d={FILE_PATH} /></svg>
 );
