@@ -32,6 +32,15 @@ jobs:
 
       - run: npm ci
 
+      # The in-app updater compares tauri.conf.json's version with latest.json, so a tag that disagrees with it would publish a release
+      # no installed copy ever offers.
+      - name: Tag must match the app version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          version=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
+          [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "Tag $GITHUB_REF_NAME != tauri.conf.json version $version"; exit 1; }
+
       - name: Build the desktop app (unsigned, universal)
         working-directory: apps/desktop
         env:
@@ -39,7 +48,15 @@ jobs:
           # app's client secret is not confidential), so this is about not printing them, not about hiding them.
           VITE_GOOGLE_CLIENT_ID: ${{ startsWith(github.ref, 'refs/tags/') && secrets.VITE_GOOGLE_CLIENT_ID || '' }}
           VITE_GOOGLE_CLIENT_SECRET: ${{ startsWith(github.ref, 'refs/tags/') && secrets.VITE_GOOGLE_CLIENT_SECRET || '' }}
-        run: npm run tauri build -- --target universal-apple-darwin
+          # Signs the update files (the in-app updater refuses an unsigned update). Tag builds only: a pull request's dry run gets no secrets
+          # and builds without update files instead (see the build step).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ startsWith(github.ref, 'refs/tags/') && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/') && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+        shell: bash
+        run: |
+          extra=()
+          [[ "$GITHUB_REF" == refs/tags/* ]] || extra=(--config '{"bundle":{"createUpdaterArtifacts":false}}')
+          npm run tauri build -- --target universal-apple-darwin "${extra[@]}"
 
       # v0.1.1 shipped without Google sign-in because these two values were not given to the build. Never again: a tag build
       # fails unless the client ID is really inside the built app.
@@ -57,11 +74,22 @@ jobs:
         working-directory: apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg
         run: cp Granite_*_universal.dmg Granite-Mac.dmg
 
+      # The files the in-app updater downloads (and their signatures), named like the installers.
+      - name: Name the update files
+        if: startsWith(github.ref, 'refs/tags/')
+        working-directory: apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos
+        run: |
+          cp Granite.app.tar.gz Granite-Mac.app.tar.gz
+          cp Granite.app.tar.gz.sig Granite-Mac.app.tar.gz.sig
+
       - name: Attach build artifacts to the release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/Granite-Mac.dmg
+          files: |
+            apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/Granite-Mac.dmg
+            apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Granite-Mac.app.tar.gz
+            apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Granite-Mac.app.tar.gz.sig
           body_path: .github/release-notes.md
 
   desktop-windows:
@@ -78,6 +106,15 @@ jobs:
 
       - run: npm ci
 
+      # The in-app updater compares tauri.conf.json's version with latest.json, so a tag that disagrees with it would publish a release
+      # no installed copy ever offers.
+      - name: Tag must match the app version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          version=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
+          [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "Tag $GITHUB_REF_NAME != tauri.conf.json version $version"; exit 1; }
+
       - name: Build the desktop app (unsigned; the .exe installer only, the .msi is for company IT and only confuses)
         working-directory: apps/desktop
         env:
@@ -85,7 +122,15 @@ jobs:
           # app's client secret is not confidential), so this is about not printing them, not about hiding them.
           VITE_GOOGLE_CLIENT_ID: ${{ startsWith(github.ref, 'refs/tags/') && secrets.VITE_GOOGLE_CLIENT_ID || '' }}
           VITE_GOOGLE_CLIENT_SECRET: ${{ startsWith(github.ref, 'refs/tags/') && secrets.VITE_GOOGLE_CLIENT_SECRET || '' }}
-        run: npm run tauri build -- --bundles nsis
+          # Signs the update files (the in-app updater refuses an unsigned update). Tag builds only: a pull request's dry run gets no secrets
+          # and builds without update files instead (see the build step).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ startsWith(github.ref, 'refs/tags/') && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/') && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+        shell: bash
+        run: |
+          extra=()
+          [[ "$GITHUB_REF" == refs/tags/* ]] || extra=(--config '{"bundle":{"createUpdaterArtifacts":false}}')
+          npm run tauri build -- --bundles nsis "${extra[@]}"
 
       # v0.1.1 shipped without Google sign-in because these two values were not given to the build. Never again: a tag build
       # fails unless the client ID is really inside the built app.
@@ -103,9 +148,44 @@ jobs:
         shell: bash
         run: cp Granite_*_x64-setup.exe Granite-Windows-Setup.exe
 
+      # The installer itself is the update file; this is its signature, named to match.
+      - name: Name the update signature
+        if: startsWith(github.ref, 'refs/tags/')
+        working-directory: apps/desktop/src-tauri/target/release/bundle/nsis
+        shell: bash
+        run: cp Granite_*_x64-setup.exe.sig Granite-Windows-Setup.exe.sig
+
       - name: Attach build artifacts to the release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: apps/desktop/src-tauri/target/release/bundle/nsis/Granite-Windows-Setup.exe
+          files: |
+            apps/desktop/src-tauri/target/release/bundle/nsis/Granite-Windows-Setup.exe
+            apps/desktop/src-tauri/target/release/bundle/nsis/Granite-Windows-Setup.exe.sig
           body_path: .github/release-notes.md
+
+  # The in-app updater reads one file, latest.json, from the newest release: the version plus, per platform, where to
+  # download the update and its signature. Built here from the two .sig files the builds attached.
+  update-manifest:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [desktop-macos, desktop-windows]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Write and attach latest.json
+        run: |
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern '*.sig'
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
+          jq -n \
+            --arg version "${GITHUB_REF_NAME#v}" \
+            --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg mac "$(cat Granite-Mac.app.tar.gz.sig)" \
+            --arg win "$(cat Granite-Windows-Setup.exe.sig)" \
+            --arg base "$base" \
+            '{version: $version, notes: "", pub_date: $date, platforms: {
+               "darwin-aarch64": {signature: $mac, url: "\($base)/Granite-Mac.app.tar.gz"},
+               "darwin-x86_64": {signature: $mac, url: "\($base)/Granite-Mac.app.tar.gz"},
+               "windows-x86_64": {signature: $win, url: "\($base)/Granite-Windows-Setup.exe"}}}' > latest.json
+          cat latest.json
+          gh release upload "$GITHUB_REF_NAME" latest.json --repo "$GITHUB_REPOSITORY" --clobber
