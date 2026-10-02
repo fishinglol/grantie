@@ -23,6 +23,20 @@ npx expo start
 Then open in **Expo Go** on a real phone (scan the QR), or press `i` / `a` for a
 simulator if you have Xcode / Android Studio.
 
+### Build an APK for your own phone
+
+Expo Go is enough to try the app. To get a real installed app:
+
+- **On your computer:** install Android Studio (SDK + JDK 17), connect a phone with USB debugging on (or start an
+  emulator), then `npm run android` from `apps/mobile`. This installs a debug build.
+- **In the cloud:** `npx eas-cli login`, then `npx eas-cli build --platform android --profile preview`. It gives
+  you a link to an `.apk` to open on the phone (allow **Install unknown apps** for your browser). The `preview`
+  profile in `eas.json` builds an APK.
+
+`app.json` points at the maintainer's Expo project (`extra.eas.projectId` and `updates.url`). To build under your
+own free Expo account, delete those two entries and run `npx eas-cli init`; also change `android.package`
+(`com.granite.notes`) if you want it installed beside the official build.
+
 ### Web preview (fast iteration, no phone)
 
 ```bash

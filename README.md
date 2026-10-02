@@ -52,7 +52,22 @@ npm run tauri dev     # first build compiles Rust, so it is slow
 
 The app runs with no setup — choose **Continue without syncing** on the first page.
 Google Drive sync needs your own OAuth client; the steps are in the desktop README.
-For the phone app, see [apps/mobile](apps/mobile/README.md).
+
+### Android
+
+Quickest way to try it on a phone, with no APK and no Android Studio: install **Expo Go**
+from Google Play, then
+
+```bash
+npm ci
+cd apps/mobile
+npx expo start        # scan the QR code with Expo Go (phone and computer on the same Wi-Fi)
+```
+
+To build an installable APK yourself, either run `npm run android` (needs Android Studio and
+a phone with USB debugging, or an emulator) or build in the cloud with
+`npx eas-cli build --platform android --profile preview`. Details, including Drive sync on
+the phone and what to change for the cloud build, are in [apps/mobile](apps/mobile/README.md).
 
 To run the tests: `npm test --workspaces --if-present` from the repo root.
 
