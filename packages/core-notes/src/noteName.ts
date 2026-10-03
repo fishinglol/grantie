@@ -19,8 +19,11 @@ export function windowsSafe(name: string): string {
  * (empty title, or the name would not change).
  */
 export function renamedNoteFile(oldFile: string, title: string): string | null {
-  const ext = NOTE_EXT.exec(oldFile)?.[0] ?? ".md";
-  const stem = windowsSafe(noteTitle(title.trim().replace(/[\\/:*?"<>|]/g, "-").replace(/^\.+/, "").trim()).trim());
+  // A PDF is listed with its extension, so the name typed for it may carry `.pdf` already.
+  const pdf = /\.pdf$/i.test(oldFile);
+  const ext = pdf ? ".pdf" : (NOTE_EXT.exec(oldFile)?.[0] ?? ".md");
+  const typed = title.trim().replace(/[\\/:*?"<>|]/g, "-").replace(/^\.+/, "").trim();
+  const stem = windowsSafe((pdf ? typed.replace(/\.pdf$/i, "") : noteTitle(typed)).trim());
   if (!stem) return null;
   const next = stem + ext;
   return next === oldFile ? null : next;

@@ -11,7 +11,7 @@ function segments(path: string): string[] {
   return out;
 }
 
-function relative(fromDir: string, target: string): string {
+export function relative(fromDir: string, target: string): string {
   const a = segments(fromDir);
   const b = segments(target);
   let i = 0;
