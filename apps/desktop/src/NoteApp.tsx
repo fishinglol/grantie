@@ -1,9 +1,9 @@
-import { type CSSProperties, Fragment, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, Fragment, lazy, type ReactNode, type RefObject, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { readFile } from "@tauri-apps/plugin-fs";
-import { basename, dirname, embedImage, join, moveFolder, noteTitle, NoteRepository, relocateLinks, renamedNoteFile, retargetNoteRefs, toPosix, windowsSafe } from "@granite/core-notes";
+import { basename, buildPdfLink, dirname, embedImage, join, moveFolder, noteTitle, NoteRepository, parsePdfLink, relocateLinks, renamedNoteFile, retargetNoteRefs, toPosix, windowsSafe, type PdfLinkTarget, type PdfSelection } from "@granite/core-notes";
 import { GoogleDriveProvider, VaultSync, merge3, type GoogleSession, type PendingDeletion, type SyncResult } from "@granite/core-cloud";
 
 import { REMOTE_FOLDER_NAME, SYNC_INTERVAL_MS } from "./config";
@@ -12,6 +12,8 @@ import DeletionsDialog from "./DeletionsDialog";
 import PageMenu from "./PageMenu";
 import PanePicker from "./PanePicker";
 import PluginsDialog from "./PluginsDialog";
+import type { PdfBacklinkRef, PdfJump } from "./pages/pdf/PdfView";
+import { usePdfBacklinks } from "./pages/pdf/usePdfBacklinks";
 import { usePlugins } from "./usePlugins";
 import { http } from "./googleLogin";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -30,6 +32,17 @@ const MAX_ATTACH_BYTES = 50 * 1024 * 1024;
 type AttachInput = { name: string; data: Uint8Array };
 
 const isCanvas = (p: string | null | undefined) => Boolean(p?.toLowerCase().endsWith(".canvas"));
+const isPdf = (p: string | null | undefined) => Boolean(p?.toLowerCase().endsWith(".pdf"));
+
+/** Loaded on first use: pdf.js is large and most sessions never open a PDF. */
+const PdfView = lazy(() => import("./pages/pdf/PdfView"));
+const NO_BACKLINKS: PdfBacklinkRef[] = [];
+
+/** A PDF's bytes for the viewer, which hands them to its worker (and so detaches them): the browser preview's in-memory copy must survive that. */
+const readPdf = async (p: string) => {
+  const bytes = await tauriFs.readBinaryFile(p);
+  return "__TAURI_INTERNALS__" in window ? bytes : new Uint8Array(bytes);
+};
 
 /**
  * Tauri's drag-drop position is typed PhysicalPosition, but wry only reports real
@@ -131,6 +144,12 @@ export default function NoteApp({
   const pickAnchor = useRef<string | null>(null);
   const [deletingMany, setDeletingMany] = useState<string[] | null>(null);
   const [showPlugins, setShowPlugins] = useState(false);
+  /** Where a link last sent a PDF (page, passage), and a counter bumped after each save so notes are rescanned for PDF links. */
+  const [pdfJump, setPdfJump] = useState<(PdfJump & { path: string }) | null>(null);
+  const pdfJumpN = useRef(0);
+  const [savedTick, setSavedTick] = useState(0);
+  /** The note last shown in a pane: a link copied from a PDF is written relative to it when no note is beside the PDF. */
+  const lastNote = useRef<string | null>(null);
 
   // Status messages surface as a short-lived toast; routine load/auto-save chatter is skipped.
   // The timer lives in a ref, not in the effect's cleanup: a skipped "Saved …" arriving right after a message must not cancel its hiding.
@@ -158,7 +177,7 @@ export default function NoteApp({
             const isAssets = inAssets || e.name === "assets";
             if (!isAssets) folders.push(childRel);
             await walk(join(current, e.name), childRel, isAssets);
-          } else if (/\.(md|markdown|canvas)$/.test(e.name)) {
+          } else if (/\.(md|markdown|canvas|pdf)$/i.test(e.name)) {
             files.push(rel ? `${rel}/${e.name}` : e.name);
           } else if (IMAGE_FILE.test(e.name) && !images.has(e.name.toLowerCase())) {
             images.set(e.name.toLowerCase(), join(current, e.name));
@@ -194,6 +213,7 @@ export default function NoteApp({
   /** Read a note from disk into `docs`. */
   const reloadDoc = useCallback(
     async (p: string) => {
+      if (isPdf(p)) return; // a PDF is read by its viewer, never as text
       const { raw } = await repo.load(p);
       // Typed in while the file was being read: those edits win over what was on disk.
       if (!docsRef.current[p]?.dirty) putDoc(p, { text: raw, dirty: false, saved: raw });
@@ -211,6 +231,7 @@ export default function NoteApp({
         const next = [...panesRef.current];
         next[activeRef.current] = p;
         setPaneList(next);
+        setPdfJump(null);
         setStatus(`Read + parsed ${basename(p)}`);
       } catch (e) {
         setStatus(`Error: ${String(e)}`);
@@ -375,6 +396,7 @@ export default function NoteApp({
         if (now?.text === doc.text) putDoc(p, { text: now.text, dirty: false, saved: doc.text });
         else if (now) putDoc(p, { ...now, saved: doc.text });
         setStatus(`Saved ${basename(p)}`);
+        setSavedTick((t) => t + 1);
         if (dir) await refreshVaultFiles(dir);
         void runSync();
       } catch (e) {
@@ -467,8 +489,8 @@ export default function NoteApp({
     return () => window.removeEventListener("keydown", onKey);
   }, [menu]);
 
-  /** Markdown notes only (the sidebar also lists canvases). */
-  const noteFiles = useMemo(() => vaultFiles.filter((f) => !isCanvas(f)), [vaultFiles]);
+  /** Markdown notes only (the sidebar also lists canvases and PDFs). */
+  const noteFiles = useMemo(() => vaultFiles.filter((f) => !isCanvas(f) && !isPdf(f)), [vaultFiles]);
   /** Vault-relative paths of the vault's images, for a canvas's "Add media". */
   const imageFiles = useMemo(
     () => (dir ? [...vaultImages.values()].filter((p) => p.startsWith(`${dir}/`)).map((p) => p.slice(dir.length + 1)).sort() : []),
@@ -478,7 +500,7 @@ export default function NoteApp({
   const plugins = usePlugins({
     vaultDir: dir,
     editor: editorRef,
-    hasNote: path !== null && !isCanvas(path),
+    hasNote: path !== null && !isCanvas(path) && !isPdf(path),
     notes: noteFiles,
     notify: setStatus,
     onWroteNote: () => {
@@ -499,6 +521,19 @@ export default function NoteApp({
       await load(join(dir, rel));
     },
   });
+
+  useEffect(() => {
+    for (const p of panes) if (p && !isPdf(p) && !isCanvas(p)) lastNote.current = p;
+  }, [panes]);
+  const readNoteText = useCallback(async (rel: string) => {
+    const abs = join(dir ?? "", rel);
+    return docsRef.current[abs]?.text ?? (await tauriFs.readTextFile(abs));
+  }, [dir]);
+  const pdfRels = useMemo(
+    () => (dir ? [...new Set(panes.filter((p): p is string => isPdf(p) && p!.startsWith(`${dir}/`)).map((p) => p.slice(dir.length + 1)))] : []),
+    [panes, dir],
+  );
+  const pdfBacklinks = usePdfBacklinks(pdfRels, noteFiles, savedTick, readNoteText);
 
   // Plugin styles reach the whole window, so they are off while a dialog shows what a plugin may do or confirms a deletion:
   // a plugin's CSS must not be able to hide or disguise those.
@@ -545,10 +580,11 @@ export default function NoteApp({
         await flushDocs((p) => p === from);
         const before = vaultFilesRef.current;
         const isOpen = panesRef.current.includes(from);
-        const text = await tauriFs.readTextFile(from);
-        const fixed = relocateLinks(text, dirname(from), dirname(to));
+        // A PDF is moved as it is: reading it as text would corrupt it.
+        const text = isPdf(from) ? null : await tauriFs.readTextFile(from);
+        const fixed = text === null ? null : relocateLinks(text, dirname(from), dirname(to));
         await moveFile(from, to);
-        if (fixed !== text) await tauriFs.writeTextFile(to, fixed);
+        if (fixed !== null && fixed !== text) await tauriFs.writeTextFile(to, fixed);
         setActiveFolder(targetFolder);
         setCollapsed((prev) => {
           if (!prev.has(targetFolder)) return prev;
@@ -753,7 +789,7 @@ export default function NoteApp({
   const attachFiles = useCallback(
     async (files: AttachInput[], at?: { x: number; y: number }, pane = activeRef.current) => {
       const path = panesRef.current[pane];
-      if (!path) {
+      if (!path || isPdf(path)) {
         setStatus("Open a note first to add files");
         return;
       }
@@ -902,6 +938,52 @@ export default function NoteApp({
     setPaneList(panesRef.current.filter((_, j) => j !== i));
     setReading((r) => [r[1 - i]!, false]);
     setActive(0);
+  };
+
+  /** A note goes in the other pane, splitting first when there is only one. */
+  const openNoteBeside = (file: string) => {
+    const other = panesRef.current.length < 2 ? 1 : 1 - activeRef.current;
+    splitRight();
+    pickForPane(other, file);
+  };
+
+  /** A link in a note to a PDF: the PDF opens in the other pane (splitting first) at its page, with the linked passage flashing. */
+  const openPdfAt = async (t: PdfLinkTarget) => {
+    if (!dir) return;
+    const abs = join(dir, t.path);
+    if (!(await tauriFs.exists(abs))) return setStatus(`PDF not found: ${t.path}`);
+    if (!panesRef.current.includes(abs)) {
+      if (panesRef.current.length < 2) {
+        setPaneList([panesRef.current[0] ?? null, abs]);
+        setReading((r) => [r[0]!, false]);
+      } else {
+        const next = [...panesRef.current];
+        next[1 - activeRef.current] = abs;
+        setPaneList(next);
+      }
+    }
+    setPdfJump({ path: abs, page: t.page ?? 1, selection: t.selection, n: ++pdfJumpN.current });
+  };
+
+  /** A click on a link in the note shown in a pane: PDFs of the vault open here, web addresses in the browser. */
+  const openLink = (url: string, notePath: string | null) => {
+    const rel = dir && notePath ? dirname(notePath.slice(dir.length + 1)) : ".";
+    const target = /^https?:\/\//i.test(url) ? null : parsePdfLink(url, rel === "." ? "" : rel);
+    if (target) void openPdfAt(target);
+    else void openUrl(url);
+  };
+
+  /** "Copy link" on a passage of the PDF in `pane`: a Markdown link, relative to the note beside it (or the last note shown). */
+  const copyPdfLink = (pdfPath: string, pane: number, page: number, selection: PdfSelection) => {
+    if (!dir) return;
+    const beside = panesRef.current[1 - pane];
+    const note = beside && !isPdf(beside) && !isCanvas(beside) ? beside : lastNote.current;
+    const noteDir = note ? dirname(note.slice(dir.length + 1)) : ".";
+    const link = buildPdfLink({ pdf: pdfPath.slice(dir.length + 1), fromDir: noteDir === "." ? "" : noteDir, page, selection, label: `${basename(pdfPath)}, p.${page}` });
+    void navigator.clipboard.writeText(link).then(
+      () => setStatus("Link copied"),
+      () => setStatus("Couldn't copy the link"),
+    );
   };
 
   /** Drag the divider between the panes. */
@@ -1115,7 +1197,7 @@ export default function NoteApp({
             className={isActive ? "active" : ""}
           >
             <span className="chevron" />
-            <span className="file-icon">{isCanvas(file) ? <ItemIcon icons={plugins.icons} kind="canvas" path={file}><CanvasIcon /></ItemIcon> : <ItemIcon icons={plugins.icons} kind="note" path={file}><FileIcon /></ItemIcon>}</span>
+            <span className="file-icon">{isPdf(file) ? <PdfIcon /> : isCanvas(file) ? <ItemIcon icons={plugins.icons} kind="canvas" path={file}><CanvasIcon /></ItemIcon> : <ItemIcon icons={plugins.icons} kind="note" path={file}><FileIcon /></ItemIcon>}</span>
             <span className="file-name">{noteTitle(file.slice(file.lastIndexOf("/") + 1))}</span>
             {docs[fullPath]?.dirty && <span className="dirty-dot" title="Unsaved changes" />}
           </button>
@@ -1129,7 +1211,7 @@ export default function NoteApp({
     <div className={drag ? "app is-dragging" : "app"}>
       {drag && (
         <div className="drag-ghost" style={{ left: drag.x + 12, top: drag.y + 12 }}>
-          {drag.folder ? <ItemIcon icons={plugins.icons} kind="folder" path={drag.file}><FolderIcon /></ItemIcon> : isCanvas(drag.file) ? <ItemIcon icons={plugins.icons} kind="canvas" path={drag.file}><CanvasIcon /></ItemIcon> : <ItemIcon icons={plugins.icons} kind="note" path={drag.file}><FileIcon /></ItemIcon>}
+          {drag.folder ? <ItemIcon icons={plugins.icons} kind="folder" path={drag.file}><FolderIcon /></ItemIcon> : isPdf(drag.file) ? <PdfIcon /> : isCanvas(drag.file) ? <ItemIcon icons={plugins.icons} kind="canvas" path={drag.file}><CanvasIcon /></ItemIcon> : <ItemIcon icons={plugins.icons} kind="note" path={drag.file}><FileIcon /></ItemIcon>}
           <span>
             {drag.count ? `${drag.count} items` : drag.folder ? drag.file.slice(drag.file.lastIndexOf("/") + 1) : noteTitle(drag.file.slice(drag.file.lastIndexOf("/") + 1))}
           </span>
@@ -1235,10 +1317,10 @@ export default function NoteApp({
                   <>
                     {p && (
                       <PageMenu
-                        commands={isCanvas(p) ? [] : plugins.commands.filter((c) => c.page)}
+                        commands={isCanvas(p) || isPdf(p) ? [] : plugins.commands.filter((c) => c.page)}
                         onRun={(c) => void plugins.run(c)}
                         onOpenPlugins={() => setShowPlugins(true)}
-                        buttons={isCanvas(p) ? [] : plugins.buttons}
+                        buttons={isCanvas(p) || isPdf(p) ? [] : plugins.buttons}
                         onButton={(b) => {
                           setActive(i); // the plugin works on the active pane's note
                           plugins.openPanel(b.pluginId);
@@ -1251,7 +1333,19 @@ export default function NoteApp({
                         onDelete={() => dir && setDeleting({ file: p.slice(dir.length + 1), folder: false })}
                       />
                     )}
-                    {p && dir && isCanvas(p) ? (
+                    {p && dir && isPdf(p) ? (
+                      <Suspense fallback={null}>
+                        <PdfView
+                          key={p}
+                          file={p}
+                          read={readPdf}
+                          backlinks={pdfBacklinks[p.slice(dir.length + 1)] ?? NO_BACKLINKS}
+                          jump={pdfJump?.path === p ? pdfJump : null}
+                          onCopyLink={(page, sel) => copyPdfLink(p, i, page, sel)}
+                          onOpenNote={openNoteBeside}
+                        />
+                      </Suspense>
+                    ) : p && dir && isCanvas(p) ? (
                       <CanvasView
                         key={p}
                         ref={canvasRefs[i]}
@@ -1278,7 +1372,7 @@ export default function NoteApp({
                         value={p ? (docs[p]?.text ?? "") : ""}
                         notePath={p}
                         toUrl={convertFileSrc}
-                        onOpenLink={(url) => void openUrl(url)}
+                        onOpenLink={(url) => openLink(url, p)}
                         onChange={(text, changedPath) => (changedPath ?? p) && editDoc((changedPath ?? p)!, text)}
                       />
                     )}
@@ -1490,6 +1584,9 @@ const NewFolderIcon = () => (
 );
 const CanvasIcon = () => (
   <svg {...svgProps}><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /></svg>
+);
+const PdfIcon = () => (
+  <svg {...svgProps}><path d={FILE_PATH} /><path d="M8 14h8M8 17h5" /></svg>
 );
 const CollapseAllIcon = () => (
   <svg {...svgProps}><path d="M7 20l5-5 5 5M7 4l5 5 5-5" /></svg>

@@ -68,7 +68,7 @@ export async function scanVault(fs: VaultFileSystem): Promise<VaultScan> {
         const isAssets = inAssets || entry.name === 'assets';
         if (!isAssets) folders.push(childRel);
         await walk(join(dir, entry.name), childRel, isAssets);
-      } else if (/\.(md|markdown|canvas)$/i.test(entry.name)) {
+      } else if (/\.(md|markdown|canvas|pdf)$/i.test(entry.name)) {
         notes.push(rel ? `${rel}/${entry.name}` : entry.name);
       } else if (IMAGE_FILE.test(entry.name) && !images.has(entry.name.toLowerCase())) {
         images.set(entry.name.toLowerCase(), join(dir, entry.name));

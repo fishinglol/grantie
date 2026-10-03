@@ -797,7 +797,8 @@ function linkChips(getBlocks: () => BlockRenderer | null, getOpenLink: () => ((u
         const open = getOpenLink();
         if (!el || !open || !view.state.selection.main.empty || (!el.classList.contains("cm-chip") && !(event.metaKey || event.ctrlKey))) return false;
         const url = linkUrlAt(view.state, view.posAtDOM(el));
-        if (!url || !/^https?:\/\//i.test(url)) return false;
+        // Web addresses, and links to a PDF of the vault (the app opens those in a pane).
+        if (!url || !(/^https?:\/\//i.test(url) || /^[^:]*\.pdf(#.*)?$/i.test(url))) return false;
         open(url);
         return true;
       },
