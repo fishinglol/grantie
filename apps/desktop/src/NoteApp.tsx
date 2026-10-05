@@ -273,6 +273,14 @@ export default function NoteApp({
     initVault().catch((e) => setStatus(`Error: ${String(e)}`));
   }, [vaultDirProp, load, refreshVaultFiles]);
 
+  /** Files copied into the vault from Finder (e.g. an Obsidian `attachments/` folder) show up when the window is focused again. */
+  useEffect(() => {
+    if (!dir) return;
+    const rescan = () => void refreshVaultFiles(dir);
+    window.addEventListener("focus", rescan);
+    return () => window.removeEventListener("focus", rescan);
+  }, [dir, refreshVaultFiles]);
+
   /** Set while a sync waits for the user to say whether a big batch of deletions may go ahead. */
   const [deletePrompt, setDeletePrompt] = useState<{ files: PendingDeletion[]; answer: (ok: boolean) => void } | null>(null);
   const confirmDeletes = useCallback(
