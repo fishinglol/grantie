@@ -5,7 +5,7 @@ import { readFile } from "@tauri-apps/plugin-fs";
 import { basename, dirname, embedImage, join, moveFolder, noteTitle, NoteRepository, relocateLinks, renamedNoteFile, retargetNoteRefs, toPosix, windowsSafe } from "@granite/core-notes";
 import { GoogleDriveProvider, VaultSync, merge3, type GoogleSession, type PendingDeletion, type SyncResult } from "@granite/core-cloud";
 
-import { REMOTE_FOLDER_NAME, SYNC_INTERVAL_MS } from "./config";
+import { REMOTE_FOLDER_NAME, SYNC_BACKGROUND_INTERVAL_MS, SYNC_INTERVAL_MS } from "./config";
 import DeleteDialog from "./DeleteDialog";
 import DeletionsDialog from "./DeletionsDialog";
 import PageMenu from "./PageMenu";
@@ -357,13 +357,30 @@ export default function NoteApp({
   );
   const runSync = useCallback(() => doSync(false), [doSync]);
 
-  // Near-real-time: a cheap change check every few seconds; it only does a full sync when
-  // something changed on Drive or in the vault. Saving also triggers a full sync right away.
+  // Near-real-time: a cheap change check every few seconds while the window is focused (rarely when it is not,
+  // to save battery); it only does a full sync when something changed on Drive or in the vault. Saving also
+  // triggers a full sync right away, and so does coming back to the window.
   useEffect(() => {
     if (!engine) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      timer = setTimeout(tick, document.hasFocus() ? SYNC_INTERVAL_MS : SYNC_BACKGROUND_INTERVAL_MS);
+    };
+    const tick = () => {
+      void doSync(true);
+      schedule();
+    };
+    const onFocus = () => {
+      clearTimeout(timer);
+      tick();
+    };
     void doSync(false);
-    const timer = setInterval(() => void doSync(true), SYNC_INTERVAL_MS);
-    return () => clearInterval(timer);
+    schedule();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("focus", onFocus);
+    };
   }, [engine, doSync]);
 
   const saveDoc = useCallback(

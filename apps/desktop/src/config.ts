@@ -16,7 +16,10 @@ export const isGoogleConfigured = (): boolean => GOOGLE_CLIENT_ID.length > 0;
 export const REMOTE_FOLDER_NAME = "Granite Vault";
 
 /**
- * How often the app checks for changes while it is open. The check is one cheap request; a full
- * sync only runs when something actually changed (see `VaultSync.syncIfChanged`).
+ * How often the app checks for changes while its window is focused. The check is one cheap request plus a stat of the
+ * vault; a full sync only runs when something actually changed (see `VaultSync.syncIfChanged`).
  */
-export const SYNC_INTERVAL_MS = 3_000;
+export const SYNC_INTERVAL_MS = 5_000;
+
+/** Same check while the window is in the background; focusing the window syncs at once. */
+export const SYNC_BACKGROUND_INTERVAL_MS = 60_000;

@@ -362,12 +362,14 @@ export default function App() {
   const runSync = useCallback(() => doSync(false), [doSync]);
   syncNow.current = runSync;
 
-  // Near-real-time: a cheap change check every few seconds; a full sync only runs when something
-  // changed on Drive or on the phone. Typing triggers a full sync right after it stops.
+  // Near-real-time: a cheap change check every few seconds while the app is on screen; a full sync only runs when
+  // something changed on Drive or on the phone. Typing triggers a full sync right after it stops, and so does coming back to the app.
   useEffect(() => {
     if (!engine) return;
     void doSync(false);
-    const timer = setInterval(() => void doSync(true), SYNC_INTERVAL_MS);
+    const timer = setInterval(() => {
+      if (AppState.currentState === 'active') void doSync(true);
+    }, SYNC_INTERVAL_MS);
     const appState = AppState.addEventListener('change', (state) => {
       if (state === 'active') void doSync(false);
     });
