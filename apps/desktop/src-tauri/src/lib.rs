@@ -220,6 +220,11 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .manage(OauthListener::default())
         .setup(|app| {
+            // The page may create files inside the app config folder but not the folder itself (`$APPCONFIG/**` does not match it),
+            // so a first launch, where it does not exist yet, has to make it here; otherwise picking a vault fails with "forbidden path".
+            if let Ok(dir) = app.path().app_config_dir() {
+                let _ = std::fs::create_dir_all(dir);
+            }
             allow_saved_vaults(app.handle());
             Ok(())
         })

@@ -27,11 +27,11 @@
     },
     {
       "identifier": "fs:allow-mkdir",
-      "allow": [{ "path": "$APPCONFIG/**" }, { "path": "$DOCUMENT/GraniteVault" }, { "path": "$DOCUMENT/GraniteVault/**" }, { "path": "$DOCUMENT/GraniteVault/.granite" }, { "path": "$DOCUMENT/GraniteVault/.granite/**" } ]
+      "allow": [{ "path": "$APPCONFIG" }, { "path": "$APPCONFIG/**" }, { "path": "$DOCUMENT/GraniteVault" }, { "path": "$DOCUMENT/GraniteVault/**" }, { "path": "$DOCUMENT/GraniteVault/.granite" }, { "path": "$DOCUMENT/GraniteVault/.granite/**" } ]
     },
     {
       "identifier": "fs:allow-exists",
-      "allow": [{ "path": "$HOME/**" }, { "path": "$DOCUMENT/**" }, { "path": "$APPCONFIG/**" }, { "path": "$HOME/**/.granite" }, { "path": "$HOME/**/.granite/**" }, { "path": "$DOCUMENT/**/.granite" }, { "path": "$DOCUMENT/**/.granite/**" } ]
+      "allow": [{ "path": "$APPCONFIG" }, { "path": "$HOME/**" }, { "path": "$DOCUMENT/**" }, { "path": "$APPCONFIG/**" }, { "path": "$HOME/**/.granite" }, { "path": "$HOME/**/.granite/**" }, { "path": "$DOCUMENT/**/.granite" }, { "path": "$DOCUMENT/**/.granite/**" } ]
     },
     {
       "identifier": "fs:allow-read-dir",

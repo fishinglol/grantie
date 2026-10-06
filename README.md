@@ -18,11 +18,11 @@ first time you open one — that's expected, not a sign anything is wrong.
 
 **[⬇ Latest release](https://github.com/fishinglol/grantie/releases/latest)**
 
-| Platform | What to get | First-launch note |
+| Platform | Download | First-launch note |
 | --- | --- | --- |
-| **macOS** | the `.dmg` | Gatekeeper blocks unsigned apps: right-click the app → **Open** → confirm **Open**. Only needed once. |
-| **Windows** | the `-setup.exe` (or the `.msi`) | Windows SmartScreen blocks unsigned apps: click **More info** → **Run anyway**. Only needed once. New in this beta, so expect rough edges — please [report them](https://github.com/fishinglol/grantie/issues). |
-| **Android** | the `.apk` | Not on Google Play yet, so Android will warn about "unknown sources" — enable **Install unknown apps** for your browser/file manager when prompted. |
+| **Mac** (Intel or Apple silicon) | [`Granite-Mac.dmg`](https://github.com/fishinglol/grantie/releases/latest/download/Granite-Mac.dmg) | Gatekeeper blocks unsigned apps: right-click the app → **Open** → confirm **Open**. Only needed once. |
+| **Windows** | [`Granite-Windows-Setup.exe`](https://github.com/fishinglol/grantie/releases/latest/download/Granite-Windows-Setup.exe) | Windows SmartScreen blocks unsigned apps: click **More info** → **Run anyway**. Only needed once. New in this beta, so expect rough edges — please [report them](https://github.com/fishinglol/grantie/issues). |
+| **Android** | [`Granite-Android.apk`](https://github.com/fishinglol/grantie/releases/latest/download/Granite-Android.apk) | Not on Google Play yet, so Android will warn about "unknown sources" — enable **Install unknown apps** for your browser/file manager when prompted. |
 | **iPhone / iPad** | not yet available | iOS needs an Apple Developer account we haven't set up. |
 | **Linux** | not yet available | Desktop builds target macOS and Windows for now. |
 
@@ -38,9 +38,49 @@ first time you open one — that's expected, not a sign anything is wrong.
   it and stay fully local.
 - Add plugins for things like spreadsheets, custom tables, and drawing tools.
 
+## Build from source
+
+You need Node 24 LTS (22+ also works). The desktop app also needs the
+[Rust toolchain](https://rustup.rs/) plus your OS's build tools (see
+[apps/desktop](apps/desktop/README.md) for the Windows and macOS prerequisites).
+
+```bash
+npm ci
+cd apps/desktop
+npm run tauri dev     # first build compiles Rust, so it is slow
+```
+
+The app runs with no setup — choose **Continue without syncing** on the first page.
+Google Drive sync needs your own OAuth client; the steps are in the desktop README.
+
+### Android
+
+Quickest way to try it on a phone, with no APK and no Android Studio: install **Expo Go**
+from Google Play, then
+
+```bash
+npm ci
+cd apps/mobile
+npx expo start        # scan the QR code with Expo Go (phone and computer on the same Wi-Fi)
+```
+
+To build an installable APK yourself, either run `npm run android` (needs Android Studio and
+a phone with USB debugging, or an emulator) or build in the cloud with
+`npx eas-cli build --platform android --profile preview`. Details, including Drive sync on
+the phone and what to change for the cloud build, are in [apps/mobile](apps/mobile/README.md).
+
+To run the tests: `npm test --workspaces --if-present` from the repo root.
+
+## Contributing
+
+Found a bug? [Open an issue](https://github.com/fishinglol/grantie/issues). Have a
+question or an idea? Start a [discussion](https://github.com/fishinglol/grantie/discussions).
+Want to fix something or add a plugin? See [CONTRIBUTING.md](CONTRIBUTING.md). Granite
+is in beta, so bug reports are especially welcome.
+
 ## For developers
 
-Building from source, running the dev server, or writing a plugin:
+More detail on each part, and on writing a plugin:
 
 - [apps/desktop](apps/desktop/README.md) — the Tauri desktop app
 - [apps/mobile](apps/mobile/README.md) — the Expo/React Native phone app

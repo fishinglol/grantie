@@ -2,6 +2,7 @@ import { Fragment, useEffect, useRef, useState } from 'react';
 import { PanResponder, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { colors } from '../theme';
 import { noteTitle } from '@granite/core-notes';
+import { resolveIcon, type IconConfig, type IconQuery } from '@granite/plugins';
 import { nameOf, parentOf, visibleRows } from '../tree';
 import Icon from './Icon';
 
@@ -19,6 +20,8 @@ export interface NoteListProps {
   folders: string[];
   /** Open note (relative to the vault), highlighted in the list. */
   selected: string | null;
+  /** Icons plugins gave notes and folders (plugin API 9). Only emoji show on the phone; an svg falls back to the next rule or the app's own icon. */
+  icons: IconConfig;
   /** "Local vault" or the signed-in account. */
   title: string;
   syncing: boolean;
@@ -45,7 +48,10 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
  * Long-press a note and drag it onto a folder (or onto the list's background for the vault root);
  * long-press a folder for its move / delete menu.
  */
-export default function NoteList({ notes, folders, selected, title, syncing, onOpen, onCreate, onMove, onFolderMenu, onOpenSettings }: NoteListProps) {
+/** The emoji a plugin gave this item, or null (the app draws its own icon). */
+const pluginEmoji = (icons: IconConfig, q: IconQuery): string | null => resolveIcon(icons, q, { svg: false })?.emoji ?? null;
+
+export default function NoteList({ notes, folders, selected, icons, title, syncing, onOpen, onCreate, onMove, onFolderMenu, onOpenSettings }: NoteListProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   // Folders start closed when the app opens (the first time the vault's folders arrive); the person opens the ones they want.
   const closedAtStart = useRef(false);
@@ -171,7 +177,14 @@ export default function NoteList({ notes, folders, selected, title, syncing, onO
                   style={({ pressed }) => [styles.row, { marginLeft: row.depth * STEP }, dragging?.over === row.rel && styles.dropTarget, pressed && styles.pressed]}
                 >
                   <Icon name={row.open ? 'chevron-down' : 'chevron-right'} size={CHEVRON} color={colors.textDim} />
-                  <Icon name={row.open ? 'folder-open-outline' : 'folder-outline'} size={22} color={activeFolder === row.rel ? colors.accent : colors.textDim} />
+                  {(() => {
+                    const emoji = pluginEmoji(icons, { kind: 'folder', path: row.rel, open: row.open });
+                    return emoji ? (
+                      <Text style={styles.emoji}>{emoji}</Text>
+                    ) : (
+                      <Icon name={row.open ? 'folder-open-outline' : 'folder-outline'} size={22} color={activeFolder === row.rel ? colors.accent : colors.textDim} />
+                    );
+                  })()}
                   <Text style={[styles.label, activeFolder === row.rel && { color: colors.accent }]} numberOfLines={1}>
                     {nameOf(row.rel)}
                   </Text>
@@ -200,8 +213,13 @@ export default function NoteList({ notes, folders, selected, title, syncing, onO
                 ]}
               >
                 <View style={{ width: CHEVRON }} />
-                {row.rel.toLowerCase().endsWith('.canvas') && <Icon name="view-grid-outline" size={20} color={colors.textDim} />}
-                {row.rel.toLowerCase().endsWith('.pdf') && <Icon name="file-pdf-box" size={20} color={colors.textDim} />}
+                {(() => {
+                  const canvas = row.rel.toLowerCase().endsWith('.canvas');
+                  const emoji = pluginEmoji(icons, { kind: canvas ? 'canvas' : 'note', path: row.rel });
+                  if (emoji) return <Text style={styles.emoji}>{emoji}</Text>;
+                  if (row.rel.toLowerCase().endsWith('.pdf')) return <Icon name="file-pdf-box" size={20} color={colors.textDim} />;
+                  return canvas ? <Icon name="view-grid-outline" size={20} color={colors.textDim} /> : null;
+                })()}
                 <Text style={[styles.label, { marginLeft: 4 }]} numberOfLines={1}>
                   {noteTitle(nameOf(row.rel))}
                 </Text>
@@ -283,6 +301,7 @@ const styles = StyleSheet.create({
   selected: { backgroundColor: colors.panel },
   pressed: { backgroundColor: colors.panelHover },
   label: { color: colors.text, fontSize: 20, flex: 1 },
+  emoji: { fontSize: 18, width: 22, textAlign: 'center' },
   guide: { position: 'absolute', top: 0, bottom: 0, width: 1, backgroundColor: colors.textFaint, opacity: 0.8 },
   more: { padding: 6, marginRight: -8 },
   empty: { color: colors.textFaint, padding: 16, fontSize: 15 },

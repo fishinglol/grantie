@@ -14,7 +14,7 @@ invalid manifest fails to install with a readable error instead of silently misb
 | `author` | `string` | no | Shown in the Store. |
 | `homepage` | `string` | no | An `https://` address (your site or repo). Your name on the plugin's [public page](/plugins/) links to it. |
 | `permissions` | `Permission[]` | yes (may be empty) | See [Permissions & the sandbox](/guide/permissions). Nothing is granted that isn't listed here. |
-| `minApiVersion` | `integer` | no | The lowest [API version](/api/) the plugin needs. The current version is **8**. Left out, it means 1 (no minimum). |
+| `minApiVersion` | `integer` | no | The lowest [API version](/api/) the plugin needs. The current version is **9**. Left out, it means 1 (no minimum). |
 | `desktopOnly` | `boolean` | no | Hides the plugin on the phone — for something that genuinely needs a large screen. |
 | `connect` | `string[]` | no | Up to 10 `wss://host[:port]` or `ws://host[:port]` addresses the plugin may open a WebSocket to. `network` alone already covers `https:`/`wss:`; this is only for a plain `ws:` server (e.g. on your own LAN). Shown to the user like a permission. |
 | `setup` | `string[]` | no | Up to 8 steps (≤300 characters each) shown as a numbered **"Before you start"** list on the plugin's Store page — for anything a person must do first (create an account, run a server). Leave it out when there's nothing. |

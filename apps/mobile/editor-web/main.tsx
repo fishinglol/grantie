@@ -34,6 +34,8 @@ import "./editor.css";
  *              change { value }                    the user edited the note
  *              notice { message }                  a plugin wants to show a message
  *              plugin-commands { commands }         the commands running plugins registered
+ *              plugin-buttons { buttons }           the buttons running plugins put at the top of a note
+ *              plugin-icons { icons }               the icons plugins gave notes and folders (resolved by the app's sidebar)
  *              plugin-status { id, error|null }     a plugin started or failed to
  *              plugin-result { n, error? }          a command finished
  *              vault { id, request }                a plugin wants to list / read / write notes
@@ -413,6 +415,7 @@ function Page() {
       () => send({ type: "plugin-commands", commands: h.commands() }),
       blocks.changed,
       () => send({ type: "plugin-buttons", buttons: h.headerButtons() }),
+      () => send({ type: "plugin-icons", icons: h.iconConfig() }),
     );
     host.current = h;
     blocks.host = h;

@@ -5,7 +5,7 @@ import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import * as Updates from 'expo-updates';
 import { IMAGE_FILE, basename, dirname, embedImage, join, moveFolder, noteTitle, parsePdfLink, relocateLinks, renamedNoteFile, retargetNoteRefs, windowsSafe } from '@granite/core-notes';
-import { PLUGINS_DIR, discoverPlugins, readPluginCode, reportInstall, reviewApprovals, safeNotePath, safeVaultPath, withPlugin, type CommandInfo, type HeaderButton, type InstalledPlugin } from '@granite/plugins';
+import { NO_ICONS, PLUGINS_DIR, discoverPlugins, readPluginCode, reportInstall, reviewApprovals, safeNotePath, safeVaultPath, withPlugin, type CommandInfo, type HeaderButton, type IconConfig, type InstalledPlugin } from '@granite/plugins';
 import { GoogleDriveProvider, VaultSync, merge3, timedHttp, type DeviceCode, type GoogleSession, type PendingDeletion } from '@granite/core-cloud';
 import { emptyCanvas, serializeCanvas } from '@granite/canvas/format';
 
@@ -13,7 +13,7 @@ import { expoFs } from './src/expoFs';
 import { memFs } from './src/memFs';
 import { REMOTE_FOLDER_NAME, SYNC_INTERVAL_MS } from './src/config';
 import { http, restoreGoogleSession, signInWithGoogle } from './src/googleLogin';
-import { indexStore, pluginStore } from './src/stores';
+import { iconCache, indexStore, pluginStore } from './src/stores';
 import { VAULT_DIR, ensureSampleVault, scanVault, type VaultScan } from './src/vault';
 import { colors } from './src/theme';
 import NoteList from './src/components/NoteList';
@@ -121,6 +121,9 @@ export default function App() {
   const [pluginCode, setPluginCode] = useState<Record<string, string>>({});
   const [pluginCommands, setPluginCommands] = useState<CommandInfo[]>([]);
   const [pluginButtons, setPluginButtons] = useState<HeaderButton[]>([]);
+  /** The icons plugins gave notes and folders in the sidebar. They come from the editor page (where plugins run), so the last ones are kept on the phone. */
+  const [pluginIcons, setPluginIcons] = useState<IconConfig>(NO_ICONS);
+  const enabledRef = useRef<string[]>([]);
   const [pluginErrors, setPluginErrors] = useState<Record<string, string>>({});
   const [toast, setToast] = useState<string | null>(null);
   const [session, setSession] = useState<GoogleSession | null>(null);
@@ -647,6 +650,10 @@ export default function App() {
       }
       setInstalled(found);
       setEnabledPlugins(on);
+      enabledRef.current = on;
+      // Until the editor page reports them, the last icons are used, but only while the same plugins are switched on.
+      const cached = await iconCache.load();
+      setPluginIcons(cached && JSON.stringify([...cached.enabled].sort()) === JSON.stringify([...on].sort()) ? cached.config : NO_ICONS);
       setPluginCode(code);
     } catch (err) {
       say(`Error: ${String(err)}`);
@@ -982,6 +989,10 @@ export default function App() {
           onVault={pluginVault}
           onPluginCommands={setPluginCommands}
           onPluginButtons={setPluginButtons}
+          onPluginIcons={(config) => {
+            setPluginIcons(config);
+            void iconCache.save({ enabled: enabledRef.current, config });
+          }}
           buttons={isCanvas(open.rel) ? [] : pluginButtons}
           onPressButton={(pluginId) => editor.current?.openPluginButton(pluginId)}
           onPluginStatus={(id, error) =>
@@ -1011,6 +1022,7 @@ export default function App() {
           notes={scan.notes}
           folders={scan.folders}
           selected={openPdfRel ?? open?.rel ?? null}
+          icons={pluginIcons}
           title={email ? (isOfflineNow ? `${email} · Offline` : email) : 'Local vault'}
           syncing={syncing}
           onOpen={openNote}

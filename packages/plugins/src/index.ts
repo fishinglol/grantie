@@ -2,6 +2,8 @@ export { PERMISSIONS, PERMISSION_LABELS, API_VERSION, grantOf, parseManifest, pe
 export { METHOD_PERMISSION, MAX_PLUGIN_CSS, checkPluginCss, safeNotePath, safeVaultPath } from "./api.ts";
 export { PLUGINS_DIR, discoverPlugins, readPluginCode } from "./discover.ts";
 export type { Permission, PluginManifest, PluginSettings } from "./manifest.ts";
+export { NO_ICONS, globMatch, mergeIconConfigs, parseIcon, parseIconConfig, resolveIcon } from "./icons.ts";
+export type { IconConfig, IconDefaults, IconKind, IconQuery, IconRule, PluginIcon } from "./icons.ts";
 export { checkLinkProvider, checkSvgIcon, findLinkProvider, svgDataUri } from "./links.ts";
 export type { GraniteApi, CommandInfo, BlockContext, BlockHandle, HeaderButton, PanelContext, LinkProviderInfo, SyncCursor, SyncEvent } from "./api.ts";
 export type { LinkChip, LinkProvider } from "./links.ts";

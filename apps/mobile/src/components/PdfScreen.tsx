@@ -356,6 +356,7 @@ export default function PdfScreen({
                   onPluginCommands={() => undefined}
                   onPluginButtons={() => undefined}
                   onPluginStatus={() => undefined}
+                  onPluginIcons={() => undefined}
                   onOpenFile={() => undefined}
                 />
               ) : (

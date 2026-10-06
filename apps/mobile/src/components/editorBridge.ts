@@ -94,6 +94,9 @@ export function createEditorBridge(post: (message: object) => void, getProps: ()
         case 'plugin-buttons':
           props.onPluginButtons(msg.buttons as never);
           break;
+        case 'plugin-icons':
+          props.onPluginIcons(msg.icons as never);
+          break;
         case 'plugin-status':
           props.onPluginStatus(String(msg.id), (msg.error as string | null) ?? null);
           break;

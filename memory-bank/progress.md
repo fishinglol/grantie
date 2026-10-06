@@ -656,6 +656,31 @@ The first screenshot showed the endless `(Drive copy …)` files again: not inve
       the docs site is deployed by hand (`cd apps/docs && npm run deploy`) — not yet redeployed.
       Still to do: install the `.exe`/`.msi` and click through (open vault, drop an image, sync, plugins)
 - [ ] `npm run tauri build` for a distributable `.app` (only `dev` run so far)
+- [~] Release pipeline (2026-09-29, `.github/workflows/release.yml`): tag `v*` builds **macOS universal** (Intel + Apple silicon; v0.1.0 was
+      arm64-only, so Intel Macs could not open it) and **Windows** (`.exe` + `.msi`) and attaches them. Editing the workflow runs both as a dry run
+      on the PR (publish steps only on a tag). v0.1.0 has only the arm64 dmg/zip; next tag is v0.1.1 (desktop version bumped). Android `.apk`
+      is NOT built by CI: it comes from `eas build` (EAS account `fais12`; the `preview` EAS environment has no variables, so the Google
+      client IDs from `apps/mobile/.env` must be given to the build) and is attached to the release by hand (`gh release upload`).
+      **Release files (2026-09-29): exactly three, named for the device, no version** (`Granite-Mac.dmg`, `Granite-Windows-Setup.exe`,
+      `Granite-Android.apk`) so `releases/latest/download/<name>` is a permanent link; no `.zip`/`.msi` (they confused people). One shared
+      `.github/release-notes.md` is the release body (two jobs each setting `body` overwrote each other). The Google client ID/secret for the
+      APK now live in the EAS `preview` environment (plain-text `EXPO_PUBLIC_*`); build with `npx eas-cli build -p android --profile preview`
+      from a CLEAN checkout (EAS refuses/complains about uncommitted files) with `node_modules` present for the config plugins.
+      v0.1.1 = first release with all three; the Windows app and the APK have never been opened on a real device.
+      **v0.1.1's desktop apps had NO Google sign-in** (found 2026-09-29 when the user opened the Mac app: "One-time setup needed"): CI never got
+      `VITE_GOOGLE_CLIENT_ID/SECRET` (they live only in the git-ignored `apps/desktop/.env`). Fixed for v0.1.2: both are GitHub Actions secrets
+      (set from `.env` via stdin), passed to the build **only on a tag** (PR dry runs get no secrets), and a step fails a tag build unless the
+      client ID is found inside `apps/desktop/dist`. Vite bakes process-env `VITE_*` (checked with a dummy value). Not yet checked: a sign-in
+      with a non-owner Google account, and that the Google Cloud app is really "In production" (else only Test users can sign in).
+      **v0.1.0-0.1.2 broke on a FIRST launch on any machine** (found 2026-09-29, the user had deleted `~/Library/Application Support/dev.granite.desktop`):
+      picking a vault showed "forbidden path: …/dev.granite.desktop". `stores.ts` `configPath` creates the app-config folder, but the capability
+      scope `$APPCONFIG/**` does not match the folder itself (checked with the `glob` crate: `dir/**` vs `dir` = false), and every dev machine already
+      had the folder, so it never showed. Fixed for v0.1.3: `$APPCONFIG` added to `fs:allow-exists` and `fs:allow-mkdir`, and `lib.rs` `setup`
+      creates the folder. Lesson: test a release on a machine (or account/HOME) that has never run Granite; a signed-in Keychain session skips
+      the login page and lands on vault setup, which is not a bug.
+      **Same release: images linked `../assets/x.png` (a note in a subfolder) did not load in the desktop app** (2026-09-29, user's `class/Linear Algebra/` notes):
+      Tauri's asset protocol refuses a path with `..`. The fix (`normalize(join(baseDir, src))` in `LiveEditor.tsx`) had been written but sat
+      uncommitted in the user's working tree, so no release had it. Lesson: a fix that only exists in the working tree is not shipped.
 
 ### Separate future milestones (NOT now)
 - [ ] `packages/core-sync` — Yjs CRDT doc <-> markdown binding; prove merge with
@@ -800,3 +825,25 @@ User requested that when viewing a PDF, the page position is remembered so that 
 - Packaged release binary via Tauri: `npm --workspace=desktop run tauri build -- --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'`.
 - Successfully generated macOS application bundle at `apps/desktop/src-tauri/target/release/bundle/macos/Granite.app` (Rust release profile `[optimized]`, 6m 17s).
 
+
+## 2026-09-30 → 2026-10-01 — Obsidian-style community plugins (own repos + a reviewed registry), release 0.1.3
+Details of the design and every decision are in `pluginDesign.md` (search "Obsidian-style registry", "`//` menus"); this is the checklist so nothing is lost.
+- **What exists now.** A plugin can live in its author's own GitHub repo. `fishinglol/granite-plugins` (`plugins.json`, `scripts/registry.mjs` with `pin` / `verify` / `diff`, CI) pins each plugin to a full commit SHA + SHA-256 of `manifest.json` and `main.js`; the apps fetch only `raw.githubusercontent.com/<repo>/<commit>/…` and refuse a file whose hash differs. Code: `packages/plugins/src/registry.ts` (+ tests), desktop `pluginCatalog.ts` `loadCatalog()`, phone `apps/mobile/src/catalog.ts` `loadCatalog()`, `CatalogPlugin.getCode()` replaces `.code`. Offline or registry down → bundled plugins only.
+- **First community plugin:** `fishinglol/check-box-plugin` (id `checkbox`, MIT, ```` ```checkbox ```` block + `//` entry). 1.0.0 → 1.0.1 (Backspace / × on the only item or "Delete checklist" removes the whole block). Shipped through the registry, no app release needed.
+- **PRs (all on `fishinglol/grantie`)**: #19 registry + desktop Store + docs (merged); #20 phone Store, docs pages + counter for registry plugins, doc fixes from a cold-start trial (merged); #21 hello-granite README + 1.0.1 (merged); **#22 `//` menu in plugin frames (open at the time of writing): removes the text `Checkbox ☐` entry, hides other plugins' entries unless `data-slash-items` lists them, Cards 1.4.2.** #17 (first-launch config folder) and #18 (table cell math) were merged by the user in between.
+- **Release 0.1.3 shipped** (tag `v0.1.3` on `main` `d0b28a6`; `Granite-Mac.dmg` unsigned + `Granite-Windows-Setup.exe`). The version bump itself came with #17. The 0.1.3 app is the first that can read the registry. Next release planned as **0.1.4** (needs #22 for the menu change; the three version files are `apps/desktop/package.json`, `apps/desktop/src-tauri/tauri.conf.json`, the `apps/desktop` entry in `package-lock.json`).
+- **Verified:** unit tests (176 → 174 on main after the other PRs), `tsc` for plugins and phone, docs build (12 plugins), Store lists Checkbox from the live registry and installs it in the desktop and phone web previews, `pin`/`verify`/`diff` on GitHub and against scratch copies, tampered hash refused, Checkbox deletion paths (Backspace and × tried in the app; "Delete checklist" appears on hover but was not clicked), the Cards `//` menu. **Not verified:** the real Tauri window, any phone device, the downloaded 0.1.3 dmg (the user tried it and confirmed Checkbox installs and shows in `//`).
+- **Not done / open:**
+  - The docs site was not redeployed, so the install counter (`api/installs/[id].ts`, ids baked in at build) does not yet count `checkbox` and `/plugins/checkbox` is not live. Deploy = `cd apps/docs && npm run deploy`.
+  - Merging: the auto-mode classifier refused `gh pr merge` ("merge without review") even when asked; the user merges PRs themselves (it allowed #19 once, then refused #20).
+  - Reviewing is one person (the user) reading every new version; `registry.mjs diff` shows only what changed and flags new permissions.
+  - Registry plugins that are `desktopOnly` are left out of the phone Store; a plugin's public page / counter only appear after the docs site is rebuilt.
+  - Customisation API asked for on 2026-10-01: colours/themes already existed (`editor.setStyle` + the CSS variables `--bg --bg-body --panel --panel-hover --accent --text --text-dim --text-faint --h`), so they were only documented (`apps/docs/guide/customising.md`); **icons are new: plugin API 9 `ui.setIcons` (permission `ui.icons`), PR #23 (open), desktop + phone, details in `pluginDesign.md` "Plugin API 9"**. Not verified on a device. It touches `NoteApp.tsx`, `NoteList.tsx` and `App.tsx`, which have uncommitted edits in the user's main checkout.
+  - Plugin API is now 9 on `feat/plugin-icons`; `main` is still 8 until #23 merges. 0.1.4 should include #22 and #23.
+- **Working notes.** The user's own uncommitted edits live in the main checkout (`NoteApp.tsx`, `App.css`, `LiveEditor.tsx`, `host.ts`, calendar plugin, `activeContext.md`, `systemPatterns.md`, …), so changes were made in separate `git worktree`s off `origin/main` (each needs its own `npm ci`) and those files were left alone; `.claude/launch.json` was edited temporarily to run a preview from a worktree and restored. `main` is checked out by another worktree (`~/Desktop/granite-downloads`), so `git switch main` fails in the main checkout.
+
+## 2026-10-01 — release 0.1.4
+Desktop 0.1.4 = 0.1.3 + the `//` menu fix for plugin frames (PR #22: no text `Checkbox ☐`, plugin entries only where a field lists them in `data-slash-items`, Cards 1.4.2) + plugin API 9 `ui.setIcons` (PR #23, sidebar icons on desktop and phone). Version bumped in `apps/desktop/package.json`, `apps/desktop/src-tauri/tauri.conf.json` and the `apps/desktop` entry of `package-lock.json`; tag `v0.1.4` on the merge commit of the bump PR builds the unsigned macOS `.dmg` and Windows `.exe` (`release.yml`). Not verified on a real phone or in the 0.1.4 Tauri build itself.
+
+## 2026-10-03 — release 0.1.5 (first release with the in-app updater)
+Desktop 0.1.5 = 0.1.4 + in-app auto-update (PR #29: **Check for updates** in the sidebar user menu, signed update files, `latest.json` on the release) + sidebar indent guide lines and bigger chevrons (desktop and phone). Version bumped in `apps/desktop/package.json`, `apps/desktop/src-tauri/tauri.conf.json` and the `apps/desktop` entry of `package-lock.json`; tag `v0.1.5` on the merge commit of the bump PR. **First tag build that signs and runs the `update-manifest` job: check the release has `Granite-Mac.app.tar.gz(.sig)`, `Granite-Windows-Setup.exe.sig` and `latest.json`.** Installed copies up to 0.1.4 have no updater: install 0.1.5 by hand once; from then on the app offers the next release itself. The Android app is not part of this release (no `.apk` attached).

@@ -69,3 +69,21 @@ granite.input.addItem({
 See [`simple-table`](https://github.com/fishinglol/grantie/tree/main/examples/plugins/simple-table) for
 `onPaste`, and [`dropdown`](https://github.com/fishinglol/grantie/tree/main/examples/plugins/dropdown) or
 [`popup`](https://github.com/fishinglol/grantie/tree/main/examples/plugins/popup) for `addItem`.
+
+## `//` inside your own block's text fields
+
+If your block has text fields (a `<textarea>`, a text `<input>`, or a `contenteditable` element), Granite adds the `//`
+menu to them for you: type `//` alone on a line and the same list opens inside your block's frame. It has **Date**, **Time**
+and the Markdown entries (headings, lists, quote, code block, divider, table; the multi-line ones are left out of
+single-line fields). The text goes into the field and it gets a normal `input` event, so you save it as if it had been typed.
+
+Other plugins' entries are **not** in that list by default, because a block that is inserted lands as its source text
+(` ```lang … ``` `) and is drawn only in the note itself. If your page can draw one (Cards draws the Dropdown chip), say so
+on the field, or on any element around it, with the entry's key `<plugin id>:item:<item id>`:
+
+```js
+root.setAttribute("data-slash-items", "dropdown:item:dropdown");
+```
+
+A field with its own `//` menu opts out of the shared one with `data-slash="off"` (Simple Table does, for its cell types).
+Search boxes (a `type="search"` input, or a placeholder that says "search") never get the menu.

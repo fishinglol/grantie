@@ -690,6 +690,8 @@ button.skip:disabled { opacity: 0.4; cursor: default; }
 .file-list button:hover .chevron { color: var(--text); }
 
 .file-list button.active .file-icon { color: var(--accent); }
+.plugin-emoji { width: 16px; font-size: 14px; line-height: 16px; text-align: center; }
+.plugin-svg { display: block; width: 16px; height: 16px; background: currentColor; -webkit-mask: center / contain no-repeat; mask: center / contain no-repeat; }
 
 .tree-new {
   display: flex;

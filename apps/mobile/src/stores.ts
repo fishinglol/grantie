@@ -2,7 +2,7 @@ import { Platform } from 'react-native';
 import { requireOptionalNativeModule } from 'expo';
 import { Directory, File, Paths } from 'expo-file-system';
 import type { IndexStore, SessionStore, StoredSession, SyncIndex } from '@granite/core-cloud';
-import type { PluginSettings } from '@granite/plugins';
+import type { IconConfig, PluginSettings } from '@granite/plugins';
 
 /**
  * Sign-in and sync bookkeeping live in the app's document directory next to, not inside, the
@@ -91,6 +91,15 @@ export const indexStore: IndexStore = {
  * Which plugins the user switched on, on this phone, and what each was allowed. Kept outside the vault on purpose: a plugin
  * that syncs in from another device must never start running (or get more permissions) without this device's owner saying so.
  */
+
+/**
+ * The icons plugins gave notes and folders, as the editor page last reported them, so the sidebar has them before a note is opened
+ * (the plugins run inside the editor's page). Only used while the same plugins are switched on (`enabled`).
+ */
+export const iconCache = {
+  load: () => readJson<{ enabled: string[]; config: IconConfig }>('plugin-icons.json'),
+  save: (value: { enabled: string[]; config: IconConfig }) => writeJson('plugin-icons.json', value),
+};
 
 export const pluginStore = {
   load: () => readJson<PluginSettings>('plugins.json'),
