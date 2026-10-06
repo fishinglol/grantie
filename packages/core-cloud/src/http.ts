@@ -29,3 +29,22 @@ export async function ensureOk(res: HttpResponse, what: string): Promise<HttpRes
   }
   throw new Error(`${what} failed (HTTP ${res.status})${detail ? `: ${detail}` : ""}`);
 }
+
+/**
+ * Wraps `http` so every request reports when it started, how long it took and how it ended, to find out where a sync spends
+ * its time. Only the method, the URL (never headers, so never the token) and the status are reported.
+ */
+export function timedHttp(http: HttpClient, log: (line: string) => void): HttpClient {
+  return async (url, init) => {
+    const started = Date.now();
+    const what = `${init?.method ?? "GET"} ${url.replace("https://www.googleapis.com/", "").replace("https://oauth2.googleapis.com/", "oauth:")}`.slice(0, 140);
+    try {
+      const res = await http(url, init);
+      log(`${new Date(started).toISOString()} ${Date.now() - started}ms ${res.status} ${what}`);
+      return res;
+    } catch (e) {
+      log(`${new Date(started).toISOString()} ${Date.now() - started}ms FAILED ${what}`);
+      throw e;
+    }
+  };
+}

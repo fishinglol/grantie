@@ -1,8 +1,9 @@
-import { Fragment, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, Fragment, lazy, type ReactNode, type RefObject, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import type { Update } from "@tauri-apps/plugin-updater";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { readFile } from "@tauri-apps/plugin-fs";
-import { basename, dirname, embedImage, join, moveFolder, noteTitle, NoteRepository, relocateLinks, renamedNoteFile, retargetNoteRefs, toPosix, windowsSafe } from "@granite/core-notes";
+import { basename, buildPdfLink, dirname, embedImage, join, moveFolder, noteTitle, NoteRepository, parsePdfLink, relocateLinks, renamedNoteFile, retargetNoteRefs, toPosix, windowsSafe, type PdfLinkTarget, type PdfSelection } from "@granite/core-notes";
 import { GoogleDriveProvider, VaultSync, merge3, type GoogleSession, type PendingDeletion, type SyncResult } from "@granite/core-cloud";
 
 import { REMOTE_FOLDER_NAME, SYNC_BACKGROUND_INTERVAL_MS, SYNC_INTERVAL_MS } from "./config";
@@ -11,6 +12,8 @@ import DeletionsDialog from "./DeletionsDialog";
 import PageMenu from "./PageMenu";
 import PanePicker from "./PanePicker";
 import PluginsDialog from "./PluginsDialog";
+import type { PdfBacklinkRef, PdfJump } from "./pages/pdf/PdfView";
+import { usePdfBacklinks } from "./pages/pdf/usePdfBacklinks";
 import { usePlugins } from "./usePlugins";
 import { http } from "./googleLogin";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -18,6 +21,7 @@ import { LiveEditor, IMAGE_FILE, type LiveEditorHandle } from "@granite/live-edi
 import { CanvasView, emptyCanvas, serializeCanvas, type CanvasHandle } from "@granite/canvas";
 import { indexStore } from "./stores";
 import { folderFs, moveFile, tauriFs } from "./tauriFs";
+import { findUpdate, installUpdate } from "./updater";
 import { ensureSampleVault, vaultDir } from "./vault";
 
 const repo = new NoteRepository(tauriFs);
@@ -27,6 +31,22 @@ const MAX_ATTACH_BYTES = 50 * 1024 * 1024;
 type AttachInput = { name: string; data: Uint8Array };
 
 const isCanvas = (p: string | null | undefined) => Boolean(p?.toLowerCase().endsWith(".canvas"));
+const isPdf = (p: string | null | undefined) => Boolean(p?.toLowerCase().endsWith(".pdf"));
+
+/** A PDF's bytes for the viewer, which hands them to its worker (and so detaches them): the browser preview's in-memory copy must survive that. */
+/** Loaded on first use: pdf.js is large and most sessions never open a PDF. */
+const PdfView = lazy(() => import("./pages/pdf/PdfView"));
+const NO_BACKLINKS: PdfBacklinkRef[] = [];
+
+const readPdf = async (p: string) => {
+  const bytes = await tauriFs.readBinaryFile(p);
+  return "__TAURI_INTERNALS__" in window ? bytes : new Uint8Array(bytes);
+};
+
+const stampPdf = async (p: string) => {
+  const s = await tauriFs.stat(p);
+  return `${s.size}:${s.modifiedMs}`;
+};
 
 /**
  * Tauri's drag-drop position is typed PhysicalPosition, but wry only reports real
@@ -90,6 +110,8 @@ export default function NoteApp({
   const path = panes[active] ?? null;
   const [status, setStatus] = useState("Starting…");
   const [busy, setBusy] = useState(false);
+  /** A newer release found on GitHub; the user menu offers to install it. */
+  const [update, setUpdate] = useState<Update | null>(null);
   const [dir, setDir] = useState<string | null>(vaultDirProp ?? null);
   const [sync, setSync] = useState<SyncState>(session ? { phase: "idle" } : { phase: "off" });
   const [showSidebar, setShowSidebar] = useState(true);
@@ -121,11 +143,20 @@ export default function NoteApp({
   /** Right-click menu on a note or folder, and the one waiting on a "Delete?" answer. */
   const [menu, setMenu] = useState<{ file: string; folder: boolean; x: number; y: number; many?: boolean } | null>(null);
   const [deleting, setDeleting] = useState<{ file: string; folder: boolean } | null>(null);
+  /** The row whose name is being edited in place, and the note or folder waiting for a "Move to…" answer. */
+  const [renaming, setRenaming] = useState<{ file: string; folder: boolean } | null>(null);
+  const [moving, setMoving] = useState<{ file: string; folder: boolean } | null>(null);
   /** Sidebar rows picked with Shift / Ctrl / Cmd + click (`d:folder`, `f:file`), and the row a Shift range starts from. */
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const pickAnchor = useRef<string | null>(null);
   const [deletingMany, setDeletingMany] = useState<string[] | null>(null);
   const [showPlugins, setShowPlugins] = useState(false);
+  /** Where a link last sent a PDF (page, passage), and a counter bumped after each save so notes are rescanned for PDF links. */
+  const [pdfJump, setPdfJump] = useState<(PdfJump & { path: string }) | null>(null);
+  const pdfJumpN = useRef(0);
+  const [savedTick, setSavedTick] = useState(0);
+  /** The note last shown in a pane: a link copied from a PDF is written relative to it when no note is beside the PDF. */
+  const lastNote = useRef<string | null>(null);
 
   // Status messages surface as a short-lived toast; routine load/auto-save chatter is skipped.
   // The timer lives in a ref, not in the effect's cleanup: a skipped "Saved …" arriving right after a message must not cancel its hiding.
@@ -138,6 +169,8 @@ export default function NoteApp({
   }, [status]);
   useEffect(() => () => void (toastTimer.current && clearTimeout(toastTimer.current)), []);
 
+  /** Folders start closed when the app opens (the person opens the ones they want); only the first scan does this. */
+  const startedClosed = useRef(false);
   const refreshVaultFiles = useCallback(async (vaultDirectory: string) => {
     try {
       const files: string[] = [];
@@ -153,7 +186,7 @@ export default function NoteApp({
             const isAssets = inAssets || e.name === "assets";
             if (!isAssets) folders.push(childRel);
             await walk(join(current, e.name), childRel, isAssets);
-          } else if (/\.(md|markdown|canvas)$/.test(e.name)) {
+          } else if (/\.(md|markdown|canvas|pdf)$/i.test(e.name)) {
             files.push(rel ? `${rel}/${e.name}` : e.name);
           } else if (IMAGE_FILE.test(e.name) && !images.has(e.name.toLowerCase())) {
             images.set(e.name.toLowerCase(), join(current, e.name));
@@ -165,6 +198,10 @@ export default function NoteApp({
       const same = <T,>(a: T[], b: T[]) => a.length === b.length && a.every((x, i) => x === b[i]);
       setVaultFiles((prev) => (same(prev, files.sort()) ? prev : files));
       setVaultFolders((prev) => (same(prev, folders.sort()) ? prev : folders));
+      if (!startedClosed.current) {
+        startedClosed.current = true;
+        setCollapsed(new Set(folders));
+      }
       setVaultImages((prev) => (prev.size === images.size && [...images].every(([k, v]) => prev.get(k) === v) ? prev : images));
     } catch {
       // ignore
@@ -189,6 +226,7 @@ export default function NoteApp({
   /** Read a note from disk into `docs`. */
   const reloadDoc = useCallback(
     async (p: string) => {
+      if (isPdf(p)) return; // a PDF is read by its viewer, never as text
       const { raw } = await repo.load(p);
       // Typed in while the file was being read: those edits win over what was on disk.
       if (!docsRef.current[p]?.dirty) putDoc(p, { text: raw, dirty: false, saved: raw });
@@ -206,6 +244,7 @@ export default function NoteApp({
         const next = [...panesRef.current];
         next[activeRef.current] = p;
         setPaneList(next);
+        setPdfJump(null);
         setStatus(`Read + parsed ${basename(p)}`);
       } catch (e) {
         setStatus(`Error: ${String(e)}`);
@@ -395,6 +434,7 @@ export default function NoteApp({
         if (now?.text === doc.text) putDoc(p, { text: now.text, dirty: false, saved: doc.text });
         else if (now) putDoc(p, { ...now, saved: doc.text });
         setStatus(`Saved ${basename(p)}`);
+        setSavedTick((t) => t + 1);
         if (dir) await refreshVaultFiles(dir);
         void runSync();
       } catch (e) {
@@ -428,12 +468,13 @@ export default function NoteApp({
   }, [docs, saveDoc]);
 
   const startCreate = useCallback(
-    (kind: "note" | "folder" | "canvas") => {
+    (kind: "note" | "folder" | "canvas", folder = activeFolder) => {
       setShowSidebar(true);
+      setActiveFolder(folder);
       setCollapsed((prev) => {
-        if (!prev.has(activeFolder)) return prev;
+        if (!prev.has(folder)) return prev;
         const next = new Set(prev);
-        next.delete(activeFolder);
+        next.delete(folder);
         return next;
       });
       setCreating(kind);
@@ -487,8 +528,8 @@ export default function NoteApp({
     return () => window.removeEventListener("keydown", onKey);
   }, [menu]);
 
-  /** Markdown notes only (the sidebar also lists canvases). */
-  const noteFiles = useMemo(() => vaultFiles.filter((f) => !isCanvas(f)), [vaultFiles]);
+  /** Markdown notes only (the sidebar also lists canvases and PDFs). */
+  const noteFiles = useMemo(() => vaultFiles.filter((f) => !isCanvas(f) && !isPdf(f)), [vaultFiles]);
   /** Vault-relative paths of the vault's images, for a canvas's "Add media". */
   const imageFiles = useMemo(
     () => (dir ? [...vaultImages.values()].filter((p) => p.startsWith(`${dir}/`)).map((p) => p.slice(dir.length + 1)).sort() : []),
@@ -498,7 +539,7 @@ export default function NoteApp({
   const plugins = usePlugins({
     vaultDir: dir,
     editor: editorRef,
-    hasNote: path !== null && !isCanvas(path),
+    hasNote: path !== null && !isCanvas(path) && !isPdf(path),
     notes: noteFiles,
     notify: setStatus,
     onWroteNote: () => {
@@ -519,6 +560,19 @@ export default function NoteApp({
       await load(join(dir, rel));
     },
   });
+
+  useEffect(() => {
+    for (const p of panes) if (p && !isPdf(p) && !isCanvas(p)) lastNote.current = p;
+  }, [panes]);
+  const readNoteText = useCallback(async (rel: string) => {
+    const abs = join(dir ?? "", rel);
+    return docsRef.current[abs]?.text ?? (await tauriFs.readTextFile(abs));
+  }, [dir]);
+  const pdfRels = useMemo(
+    () => (dir ? [...new Set(panes.filter((p): p is string => isPdf(p) && p!.startsWith(`${dir}/`)).map((p) => p.slice(dir.length + 1)))] : []),
+    [panes, dir],
+  );
+  const pdfBacklinks = usePdfBacklinks(pdfRels, noteFiles, savedTick, readNoteText);
 
   // Plugin styles reach the whole window, so they are off while a dialog shows what a plugin may do or confirms a deletion:
   // a plugin's CSS must not be able to hide or disguise those.
@@ -565,10 +619,11 @@ export default function NoteApp({
         await flushDocs((p) => p === from);
         const before = vaultFilesRef.current;
         const isOpen = panesRef.current.includes(from);
-        const text = await tauriFs.readTextFile(from);
-        const fixed = relocateLinks(text, dirname(from), dirname(to));
+        // A PDF is moved as it is: reading it as text would corrupt it.
+        const text = isPdf(from) ? null : await tauriFs.readTextFile(from);
+        const fixed = text === null ? null : relocateLinks(text, dirname(from), dirname(to));
         await moveFile(from, to);
-        if (fixed !== text) await tauriFs.writeTextFile(to, fixed);
+        if (fixed !== null && fixed !== text) await tauriFs.writeTextFile(to, fixed);
         setActiveFolder(targetFolder);
         setCollapsed((prev) => {
           if (!prev.has(targetFolder)) return prev;
@@ -674,11 +729,11 @@ export default function NoteApp({
     [dir, retarget, refreshVaultFiles, runSync],
   );
 
-  /** Move a folder (with everything in it) into `targetFolder` ("" = vault root), keeping links out of it working. */
+  /** Move a folder (with everything in it) into `targetFolder` ("" = vault root), keeping links out of it working. `newName` renames it on the way. */
   const moveFolderTo = useCallback(
-    async (folder: string, targetFolder: string) => {
+    async (folder: string, targetFolder: string, newName?: string) => {
       if (!dir) return;
-      const name = folder.slice(folder.lastIndexOf("/") + 1);
+      const name = newName ?? folder.slice(folder.lastIndexOf("/") + 1);
       const to = targetFolder ? `${targetFolder}/${name}` : name;
       if (to === folder) return;
       const from = join(dir, folder);
@@ -706,7 +761,7 @@ export default function NoteApp({
         for (const p of openInside) await reloadDoc(moved(p));
         retarget((p) => (inside(p) ? moved(p) : undefined));
         await fixNoteRefs(folder, to, true, before);
-        setStatus(`Moved ${name} → ${where}`);
+        setStatus(newName ? `Renamed to ${name}` : `Moved ${name} → ${where}`);
         void runSync();
       } catch (e) {
         setStatus(`Error moving ${name}: ${String(e)}`);
@@ -714,6 +769,47 @@ export default function NoteApp({
     },
     [dir, flushDocs, reloadDoc, retarget, refreshVaultFiles, runSync, fixNoteRefs],
   );
+
+  /** Copy a note, or a folder with everything in it, next to the original: "name copy", then "name copy 2", … */
+  const duplicate = useCallback(
+    async (file: string, folder: boolean) => {
+      if (!dir) return;
+      const parent = file.slice(0, file.lastIndexOf("/") + 1);
+      const base = file.slice(parent.length);
+      const dot = folder ? -1 : base.lastIndexOf(".");
+      const stem = dot > 0 ? base.slice(0, dot) : base;
+      const ext = dot > 0 ? base.slice(dot) : "";
+      const clone = async (from: string, to: string, isDir: boolean): Promise<void> => {
+        if (!isDir) return tauriFs.writeBinaryFile(to, await tauriFs.readBinaryFile(from));
+        await tauriFs.mkdirp(to);
+        for (const e of await tauriFs.listDir(from)) if (!e.name.startsWith(".")) await clone(join(from, e.name), join(to, e.name), e.isDirectory);
+      };
+      try {
+        let n = 1;
+        let copy = `${parent}${stem} copy${ext}`;
+        while (await tauriFs.exists(join(dir, copy))) copy = `${parent}${stem} copy ${++n}${ext}`;
+        await flushDocs((p) => p === join(dir, file) || p.startsWith(`${join(dir, file)}/`)); // the copy must hold unsaved typing too
+        await clone(join(dir, file), join(dir, copy), folder);
+        await refreshVaultFiles(dir);
+        setStatus(`Duplicated ${base} → ${copy.slice(parent.length)}`);
+        void runSync();
+      } catch (e) {
+        setStatus(`Error duplicating ${base}: ${String(e)}`);
+      }
+    },
+    [dir, flushDocs, refreshVaultFiles, runSync],
+  );
+
+  /** The inline name box of a row being renamed (right-click → Rename…). */
+  const commitRename = (raw: string) => {
+    const target = renaming;
+    setRenaming(null);
+    if (!target || !dir) return;
+    if (!target.folder) return void renameNote(raw, join(dir, target.file));
+    const name = windowsSafe(raw.trim().replace(/[\\/:*?"<>|]/g, "_"));
+    if (!name || /^\.+$/.test(name) || name === target.file.slice(target.file.lastIndexOf("/") + 1)) return;
+    void moveFolderTo(target.file, target.file.slice(0, Math.max(0, target.file.lastIndexOf("/"))), name);
+  };
 
   /** Mouse-based drag (not HTML5 DnD, which Tauri's window-level file-drop handling can swallow). */
   const beginDrag = (e: React.MouseEvent, file: string, folder = false) => {
@@ -773,7 +869,7 @@ export default function NoteApp({
   const attachFiles = useCallback(
     async (files: AttachInput[], at?: { x: number; y: number }, pane = activeRef.current) => {
       const path = panesRef.current[pane];
-      if (!path) {
+      if (!path || isPdf(path)) {
         setStatus("Open a note first to add files");
         return;
       }
@@ -1028,14 +1124,122 @@ export default function NoteApp({
     return () => window.removeEventListener("keydown", onKey);
   }, [picked]);
 
+  // Look for a new release once, shortly after start. Offline or no release yet is not worth telling anyone about.
+  useEffect(() => {
+    const t = setTimeout(() => void findUpdate().then(setUpdate, () => {}), 5000);
+    return () => clearTimeout(t);
+  }, []);
+  /** "Check for updates" finds a release; once one is known, the same item installs it and restarts. */
+  const updateApp = async () => {
+    try {
+      if (!update) {
+        setStatus("Checking for updates…");
+        const found = await findUpdate();
+        setUpdate(found);
+        setStatus(found ? `Granite ${found.version} is available` : "Granite is up to date");
+        return;
+      }
+      if (Object.values(docsRef.current).some((d) => d.dirty)) {
+        setStatus("Save your open notes before updating");
+        return;
+      }
+      await installUpdate(update, (pct) => setStatus(pct === null ? "Downloading update…" : `Downloading update… ${pct}%`));
+    } catch (e) {
+      setStatus(`Update failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
   const allCollapsed = vaultFolders.length > 0 && vaultFolders.every((f) => collapsed.has(f));
+
+  const renameBox = (indent: { paddingLeft: number }, icon: ReactNode, initial: string) => (
+    <div className="tree-new" style={indent}>
+      <span className="file-icon">{icon}</span>
+      <input
+        autoFocus
+        className="tree-input"
+        defaultValue={initial}
+        onFocus={(e) => e.currentTarget.select()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commitRename(e.currentTarget.value);
+          else if (e.key === "Escape") setRenaming(null);
+        }}
+        onBlur={() => setRenaming(null)}
+      />
+    </div>
+  );
+
+  const menuItem = (label: string, run: () => void, danger = false) => (
+    <button
+      role="menuitem"
+      className={danger ? "danger" : undefined}
+      onClick={() => {
+        setMenu(null);
+        run();
+      }}
+    >
+      {label}
+    </button>
+  );
+  const copyPath = (text: string) =>
+    void navigator.clipboard.writeText(text).then(
+      () => setStatus("Path copied"),
+      () => setStatus("Couldn't copy the path"),
+    );
+  const revealLabel = navigator.userAgent.includes("Mac") ? "Reveal in Finder" : navigator.userAgent.includes("Windows") ? "Show in Explorer" : "Show in file manager";
+  /** "Open to the right": the note goes in the other pane, splitting first when there is only one. */
+  const openToTheRight = (file: string) => {
+    const other = panesRef.current.length < 2 ? 1 : 1 - activeRef.current;
+    splitRight();
+    pickForPane(other, file);
+  };
+
+  /** A link in a note to a PDF: the PDF opens in the other pane (splitting first) at its page, with the linked passage flashing. */
+  const openPdfAt = async (t: PdfLinkTarget) => {
+    if (!dir) return;
+    const abs = join(dir, t.path);
+    if (!(await tauriFs.exists(abs))) return setStatus(`PDF not found: ${t.path}`);
+    if (!panesRef.current.includes(abs)) {
+      if (panesRef.current.length < 2) {
+        setPaneList([panesRef.current[0] ?? null, abs]);
+        setReading((r) => [r[0]!, false]);
+      } else {
+        const next = [...panesRef.current];
+        next[1 - activeRef.current] = abs;
+        setPaneList(next);
+      }
+    }
+    setPdfJump({ path: abs, page: t.page ?? 1, selection: t.selection, n: ++pdfJumpN.current });
+  };
+
+  /** A click on a link in the note shown in a pane: PDFs of the vault open here, web addresses in the browser. */
+  const openLink = (url: string, notePath: string | null) => {
+    const rel = dir && notePath ? dirname(notePath.slice(dir.length + 1)) : ".";
+    const target = /^https?:\/\//i.test(url) ? null : parsePdfLink(url, rel === "." ? "" : rel);
+    if (target) void openPdfAt(target);
+    else void openUrl(url);
+  };
+
+  /** "Copy link" on a passage of the PDF in `pane`: a Markdown link, relative to the note beside it (or the last note shown). */
+  const copyPdfLink = (pdfPath: string, pane: number, page: number, selection: PdfSelection) => {
+    if (!dir) return;
+    const beside = panesRef.current[1 - pane];
+    const note = beside && !isPdf(beside) && !isCanvas(beside) ? beside : lastNote.current;
+    const noteDir = note ? dirname(note.slice(dir.length + 1)) : ".";
+    const link = buildPdfLink({ pdf: pdfPath.slice(dir.length + 1), fromDir: noteDir === "." ? "" : noteDir, page, selection, label: `${basename(pdfPath)}, p.${page}` });
+    void navigator.clipboard.writeText(link).then(
+      () => setStatus("Link copied"),
+      () => setStatus("Couldn't copy the link"),
+    );
+  };
 
   const renderDir = (rel: string, depth: number): ReactNode[] => {
     const rows: ReactNode[] = [];
-    const indent = { paddingLeft: 10 + depth * 14 };
+    const indent = { paddingLeft: 10 + depth * TREE_STEP };
+    // `--depth` feeds the indent-guide lines drawn by `.file-list li::before`.
+    const guides = { "--depth": depth } as CSSProperties;
     if (creating && rel === activeFolder) {
       rows.push(
-        <li key="__new" className="tree-new" style={indent}>
+        <li key="__new" className="tree-new" style={{ ...indent, ...guides }}>
           <span className="file-icon">{creating === "folder" ? <FolderIcon /> : creating === "canvas" ? <CanvasIcon /> : <FileIcon />}</span>
           <input
             autoFocus
@@ -1056,10 +1260,14 @@ export default function NoteApp({
       rows.push(
         <li
           key={`d:${folder}`}
+          style={guides}
           data-drop={folder}
           className={[drag?.over === folder ? "drop-target" : "", drag?.file === folder || (drag?.count && picked.has(`d:${folder}`)) ? "dragging" : "", picked.has(`d:${folder}`) ? "picked" : ""].join(" ").trim()}
           onContextMenu={(e) => openMenu(e, `d:${folder}`, folder, true)}
         >
+          {renaming?.folder && renaming.file === folder ? (
+            renameBox(indent, <FolderIcon />, folder.slice(folder.lastIndexOf("/") + 1))
+          ) : (
           <button
             style={indent}
             title={folder}
@@ -1076,10 +1284,11 @@ export default function NoteApp({
               });
             }}
           >
-            <span className="chevron">{isCollapsed ? "▸" : "▾"}</span>
+            <span className={isCollapsed ? "chevron" : "chevron open"}><ChevronIcon /></span>
             <span className="file-icon"><FolderIcon /></span>
             <span className="file-name">{folder.slice(folder.lastIndexOf("/") + 1)}</span>
           </button>
+          )}
         </li>,
       );
       if (!isCollapsed) rows.push(...renderDir(folder, depth + 1));
@@ -1090,10 +1299,14 @@ export default function NoteApp({
       rows.push(
         <li
           key={`f:${file}`}
+          style={guides}
           data-drop={tree.parentOf(file)}
           className={[isActive ? "active" : "", drag?.file === file || (drag?.count && picked.has(`f:${file}`)) ? "dragging" : "", picked.has(`f:${file}`) ? "picked" : ""].join(" ").trim()}
           onContextMenu={(e) => openMenu(e, `f:${file}`, file, false)}
         >
+          {renaming && !renaming.folder && renaming.file === file ? (
+            renameBox(indent, <RowIcon file={file} />, noteTitle(file.slice(file.lastIndexOf("/") + 1)))
+          ) : (
           <button
             style={indent}
             onMouseDown={(e) => beginDrag(e, file)}
@@ -1106,10 +1319,11 @@ export default function NoteApp({
             className={isActive ? "active" : ""}
           >
             <span className="chevron" />
-            <span className="file-icon">{isCanvas(file) ? <CanvasIcon /> : <FileIcon />}</span>
+            <span className="file-icon"><RowIcon file={file} /></span>
             <span className="file-name">{noteTitle(file.slice(file.lastIndexOf("/") + 1))}</span>
             {docs[fullPath]?.dirty && <span className="dirty-dot" title="Unsaved changes" />}
           </button>
+          )}
         </li>,
       );
     }
@@ -1120,7 +1334,7 @@ export default function NoteApp({
     <div className={drag ? "app is-dragging" : "app"}>
       {drag && (
         <div className="drag-ghost" style={{ left: drag.x + 12, top: drag.y + 12 }}>
-          {drag.folder ? <FolderIcon /> : isCanvas(drag.file) ? <CanvasIcon /> : <FileIcon />}
+          {drag.folder ? <FolderIcon /> : <RowIcon file={drag.file} />}
           <span>
             {drag.count ? `${drag.count} items` : drag.folder ? drag.file.slice(drag.file.lastIndexOf("/") + 1) : noteTitle(drag.file.slice(drag.file.lastIndexOf("/") + 1))}
           </span>
@@ -1186,6 +1400,8 @@ export default function NoteApp({
               onOpenNote={openNote}
               onOpenVault={onOpenVaultSetup}
               onOpenPlugins={() => setShowPlugins(true)}
+              updateVersion={update?.version ?? null}
+              onUpdate={() => void updateApp()}
             />
           </aside>
         )}
@@ -1224,10 +1440,10 @@ export default function NoteApp({
                   <>
                     {p && (
                       <PageMenu
-                        commands={isCanvas(p) ? [] : plugins.commands.filter((c) => c.page)}
+                        commands={isCanvas(p) || isPdf(p) ? [] : plugins.commands.filter((c) => c.page)}
                         onRun={(c) => void plugins.run(c)}
                         onOpenPlugins={() => setShowPlugins(true)}
-                        buttons={isCanvas(p) ? [] : plugins.buttons}
+                        buttons={isCanvas(p) || isPdf(p) ? [] : plugins.buttons}
                         onButton={(b) => {
                           setActive(i); // the plugin works on the active pane's note
                           plugins.openPanel(b.pluginId);
@@ -1240,7 +1456,20 @@ export default function NoteApp({
                         onDelete={() => dir && setDeleting({ file: p.slice(dir.length + 1), folder: false })}
                       />
                     )}
-                    {p && dir && isCanvas(p) ? (
+                    {p && dir && isPdf(p) ? (
+                      <Suspense fallback={null}>
+                      <PdfView
+                        key={p}
+                        file={p}
+                        read={readPdf}
+                        stamp={stampPdf}
+                        backlinks={pdfBacklinks[p.slice(dir.length + 1)] ?? NO_BACKLINKS}
+                        jump={pdfJump?.path === p ? pdfJump : null}
+                        onCopyLink={(page, sel) => copyPdfLink(p, i, page, sel)}
+                        onOpenNote={openToTheRight}
+                      />
+                      </Suspense>
+                    ) : p && dir && isCanvas(p) ? (
                       <CanvasView
                         key={p}
                         ref={canvasRefs[i]}
@@ -1267,7 +1496,7 @@ export default function NoteApp({
                         value={p ? (docs[p]?.text ?? "") : ""}
                         notePath={p}
                         toUrl={convertFileSrc}
-                        onOpenLink={(url) => void openUrl(url)}
+                        onOpenLink={(url) => openLink(url, p)}
                         onChange={(text, changedPath) => (changedPath ?? p) && editDoc((changedPath ?? p)!, text)}
                       />
                     )}
@@ -1290,20 +1519,73 @@ export default function NoteApp({
           <div
             className="context-menu"
             role="menu"
-            style={{ left: Math.min(menu.x, window.innerWidth - 170), top: Math.min(menu.y, window.innerHeight - 50) }}
+            style={{ left: Math.min(menu.x, window.innerWidth - 220), top: Math.min(menu.y, window.innerHeight - (menu.many ? 50 : menu.folder ? 350 : 300)) }}
             onClick={(e) => e.stopPropagation()}
           >
-            <button
-              role="menuitem"
-              className="danger"
-              onClick={() => {
+            {!menu.many && !menu.folder && menuItem("Open to the right", () => openToTheRight(menu.file))}
+            {!menu.many && menu.folder && (
+              <>
+                {menuItem("New note", () => startCreate("note", menu.file))}
+                {menuItem("New folder", () => startCreate("folder", menu.file))}
+                {menuItem("New canvas", () => startCreate("canvas", menu.file))}
+              </>
+            )}
+            {!menu.many && (
+              <>
+                <div className="context-sep" />
+                {menuItem("Duplicate", () => void duplicate(menu.file, menu.folder))}
+                {menuItem(menu.folder ? "Move folder to…" : "Move file to…", () => setMoving({ file: menu.file, folder: menu.folder }))}
+                <div className="context-sub">
+                  <button role="menuitem" aria-haspopup="menu">
+                    Copy path <span>›</span>
+                  </button>
+                  <div className="context-menu sub" role="menu">
+                    {menuItem("Path from vault folder", () => copyPath(menu.file))}
+                    {menuItem("Full path", () => copyPath(join(dir ?? "", menu.file)))}
+                  </div>
+                </div>
+                {menuItem(revealLabel, () => void revealItemInDir(join(dir ?? "", menu.file)).catch((e) => setStatus(`Error: ${String(e)}`)))}
+                <div className="context-sep" />
+                {menuItem("Rename…", () => setRenaming({ file: menu.file, folder: menu.folder }))}
+              </>
+            )}
+            {menuItem(
+              menu.many ? `Delete ${picked.size} items` : "Delete",
+              () => {
                 if (menu.many) setDeletingMany([...picked]);
                 else setDeleting({ file: menu.file, folder: menu.folder });
-                setMenu(null);
-              }}
-            >
-              {menu.many ? `Delete ${picked.size} items` : "Delete"}
-            </button>
+              },
+              true,
+            )}
+          </div>
+        </div>
+      )}
+      {moving && (
+        <div className="modal-backdrop" onClick={() => setMoving(null)}>
+          <div className="modal-card move-card" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.key === "Escape" && setMoving(null)}>
+            <h2>Move “{noteTitle(moving.file.slice(moving.file.lastIndexOf("/") + 1))}” to…</h2>
+            <ul className="move-list">
+              {["", ...vaultFolders]
+                .filter((t) => t !== tree.parentOf(moving.file) && !(moving.folder && (t === moving.file || t.startsWith(`${moving.file}/`))))
+                .map((t) => (
+                  <li key={t}>
+                    <button
+                      style={{ paddingLeft: 10 + (t ? t.split("/").length : 0) * 14 }}
+                      onClick={() => {
+                        const { file, folder } = moving;
+                        setMoving(null);
+                        void (folder ? moveFolderTo : moveNote)(file, t);
+                      }}
+                    >
+                      <FolderIcon />
+                      <span>{t ? t.slice(t.lastIndexOf("/") + 1) : "Vault root"}</span>
+                    </button>
+                  </li>
+                ))}
+            </ul>
+            <div className="modal-actions">
+              <button autoFocus onClick={() => setMoving(null)}>Cancel</button>
+            </div>
           </div>
         </div>
       )}
@@ -1352,6 +1634,8 @@ function UserMenu({
   onOpenNote,
   onOpenVault,
   onOpenPlugins,
+  updateVersion,
+  onUpdate,
 }: {
   session: GoogleSession | null;
   sync: SyncState;
@@ -1362,6 +1646,9 @@ function UserMenu({
   onOpenNote: () => void;
   onOpenVault: () => void;
   onOpenPlugins: () => void;
+  /** Version of a newer release that can be installed, if one was found. */
+  updateVersion: string | null;
+  onUpdate: () => void;
 }) {
   const name = session ? (session.user.email ?? "Google Drive") : "Local vault";
   const item = (icon: ReactNode, label: string, onClick: () => void, opts: { disabled?: boolean; danger?: boolean } = {}) => (
@@ -1394,6 +1681,7 @@ function UserMenu({
         {item(<FolderIcon />, "Open note…", onOpenNote, { disabled: busy })}
         {item(<ImportIcon />, "Vault / Import…", onOpenVault)}
         {item(<PuzzleIcon />, "Plugins", onOpenPlugins)}
+        {item(<SyncIcon />, updateVersion ? `Update to ${updateVersion} and restart` : "Check for updates", onUpdate)}
         {session && (
           <>
             <div className="user-sep" />
@@ -1427,6 +1715,9 @@ function describeSync(sync: SyncState): string {
   return "";
 }
 
+/** Sidebar indent per folder level in px; `.file-list` in App.css draws its guide lines from the same number. */
+const TREE_STEP = 18;
+
 const svgProps = {
   width: 16,
   height: 16,
@@ -1441,6 +1732,9 @@ const svgProps = {
 const FILE_PATH = "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z M14 3v5h5";
 const FOLDER_PATH = "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z";
 
+const ChevronIcon = () => (
+  <svg {...svgProps} strokeWidth={2.5}><path d="M9 6l6 6-6 6" /></svg>
+);
 const FileIcon = () => (
   <svg {...svgProps}><path d={FILE_PATH} /></svg>
 );
@@ -1456,6 +1750,10 @@ const NewFolderIcon = () => (
 const CanvasIcon = () => (
   <svg {...svgProps}><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /></svg>
 );
+const PdfIcon = () => (
+  <svg {...svgProps}><path d={FILE_PATH} /><path d="M8 14h8M8 17h5" /></svg>
+);
+const RowIcon = ({ file }: { file: string }) => (isCanvas(file) ? <CanvasIcon /> : isPdf(file) ? <PdfIcon /> : <FileIcon />);
 const CollapseAllIcon = () => (
   <svg {...svgProps}><path d="M7 20l5-5 5 5M7 4l5 5 5-5" /></svg>
 );

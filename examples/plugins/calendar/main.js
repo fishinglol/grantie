@@ -319,10 +319,29 @@ function mountCalendar(body, source, block) {
   const open = (path) => {
     if (typeof granite.vault.open !== "function") return granite.notice("Update the Granite app to open notes from the calendar");
     const started = Date.now();
-    granite.vault.open(path, { beside: true }).then(
-      () => (Date.now() - started > 1000 ? load() : undefined),
-      (e) => granite.notice(String(e.message || e)),
-    );
+    const tryOpen = (p) =>
+      granite.vault.open(p, { beside: true }).then(
+        () => (Date.now() - started > 1000 ? load() : undefined),
+        async (e) => {
+          // The note may have been renamed since this pill was drawn (e.g. by editing its title, which renames
+          // the file): refresh, and if exactly one note now carries the same date property, it's almost
+          // certainly this one — follow it, the same way Popup follows a note renamed out from under a card.
+          const stale = notes.find((n) => n.path === p);
+          if (stale) {
+            try {
+              const fresh = await readNotes();
+              const same = fresh.filter((n) => n.path !== p && n.props[cfg.date] === stale.props[cfg.date]);
+              notes = fresh;
+              render();
+              if (same.length === 1) return tryOpen(same[0].path);
+            } catch {
+              // No list: fall through to the notice below.
+            }
+          }
+          granite.notice(String(e.message || e));
+        },
+      );
+    tryOpen(path);
   };
   async function createNote(day) {
     if (creating || !parseDay(day)) return;

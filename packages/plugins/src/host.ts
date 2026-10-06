@@ -573,6 +573,9 @@ export class PluginHost {
   #onBlockCaret(block: BlockFrame, raw: unknown): void {
     const event = checkCaretEvent(raw);
     if (!event || !this.wantsCaret()) return;
+    // A block kept alive hidden behind another pane/sheet (`display:none`) can still hold a stale `activeElement` and
+    // report a caret nobody sees; it must never claim or drop `#caretBlock`, or the overlay jumps to its position.
+    if (block.container.getClientRects?.().length === 0) return;
     if (event.type === "move" && event.caret) this.#caretBlock = { block, caret: event.caret, selecting: event.selecting };
     else if (this.#caretBlock?.block !== block) return; // old news from a block the caret already left
     else if (event.type === "move") this.#caretBlock = null;

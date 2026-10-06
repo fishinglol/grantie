@@ -34,6 +34,15 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYzRDZENTYwRjA1NkFDNzMKUldSenJGYndZTlhXODhVdTVrZitzV0NOdisreFpQNE96RUM0RlBad3l4N2NVeS94M3F0Zis1QmsK",
+      "endpoints": [
+        "https://github.com/fishinglol/grantie/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

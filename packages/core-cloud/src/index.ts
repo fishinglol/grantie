@@ -17,7 +17,7 @@ export { VaultSync, listLocalFiles } from "./syncEngine.ts";
 export { merge3 } from "./merge3.ts";
 export { mimeTypeFor } from "./mime.ts";
 export { emptyIndex } from "./types.ts";
-export { ensureOk } from "./http.ts";
+export { ensureOk, timedHttp } from "./http.ts";
 
 export type { Pkce } from "./pkce.ts";
 export type { DeviceCode, GoogleAuthConfig, TokenSet, UserInfo } from "./googleAuth.ts";

@@ -34,14 +34,14 @@ export const BLOCK_CARET_SCRIPT = String.raw`
       return { caret: { x: rc.left, y: rc.top, width: charWidth(el), height: rc.height || 16 }, selecting: !sel.isCollapsed };
     }
     var cs2 = getComputedStyle(el), mirror = document.createElement("div"), mark = document.createElement("span");
-    ["fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "borderTopWidth", "borderRightWidth", "borderLeftWidth", "boxSizing"].forEach(function (k) { mirror.style[k] = cs2[k]; });
+    ["fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "borderTopWidth", "borderRightWidth", "borderLeftWidth", "boxSizing", "textAlign"].forEach(function (k) { mirror.style[k] = cs2[k]; });
     var b = el.getBoundingClientRect();
-    mirror.style.cssText += ";position:fixed;visibility:hidden;top:0;left:0;overflow:hidden;white-space:" + (el.tagName === "TEXTAREA" ? "pre-wrap" : "pre") + ";word-wrap:break-word;width:" + b.width + "px";
+    mirror.style.cssText += ";position:fixed;visibility:hidden;top:0;left:0;overflow:hidden;white-space:" + (el.tagName === "TEXTAREA" ? "pre-wrap" : "pre") + ";word-wrap:break-word;width:" + el.clientWidth + "px";
     mirror.textContent = el.value.slice(0, el.selectionEnd);
     mark.textContent = "​";
     mirror.appendChild(mark);
     document.body.appendChild(mirror);
-    var x = b.left + mark.offsetLeft - el.scrollLeft, y = b.top + mark.offsetTop - el.scrollTop, h = mark.offsetHeight || 16;
+    var x = b.left + el.clientLeft + mark.offsetLeft - el.scrollLeft, y = b.top + el.clientTop + mark.offsetTop - el.scrollTop, h = mark.offsetHeight || 16;
     mirror.remove();
     x = Math.max(b.left, Math.min(x, b.right));
     y = Math.max(b.top, Math.min(y, b.bottom - h));

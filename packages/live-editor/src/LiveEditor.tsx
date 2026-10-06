@@ -28,7 +28,7 @@ import {
   WidgetType,
 } from "@codemirror/view";
 import katex from "katex";
-import { dirname, IMAGE_FILE, join, toggleFormat, type InlineFormat } from "@granite/core-notes";
+import { dirname, IMAGE_FILE, join, normalize, toggleFormat, type InlineFormat } from "@granite/core-notes";
 import { findMath, type MathSpan } from "./math.ts";
 import { openImageViewer } from "./imageViewer";
 import NoteTitle from "./NoteTitle";
@@ -665,7 +665,7 @@ function linkUrlAt(state: EditorState, pos: number): string | null {
  * Anything else the user does (typing, moving the cursor, Escape) dismisses the offer. A click on a chip opens its address
  * (Ctrl/Cmd-click for any other link) through `openLink`, when the app gave one.
  */
-function linkChips(getBlocks: () => BlockRenderer | null, getOpenLink: () => ((url: string) => void) | undefined) {
+function linkChips(getBlocks: () => BlockRenderer | null, getOpenLink: () => ((url: string) => void) | undefined, tapOpensPdf: () => boolean) {
   const field = StateField.define<ChipSuggestion | null>({
     create: () => null,
     update(value, tr) {
@@ -769,9 +769,13 @@ function linkChips(getBlocks: () => BlockRenderer | null, getOpenLink: () => ((u
       click(event, view) {
         const el = event.target instanceof Element ? event.target.closest(".cm-chip, .cm-link") : null;
         const open = getOpenLink();
-        if (!el || !open || !view.state.selection.main.empty || (!el.classList.contains("cm-chip") && !(event.metaKey || event.ctrlKey))) return false;
+        if (!el || !open || !view.state.selection.main.empty) return false;
         const url = linkUrlAt(view.state, view.posAtDOM(el));
-        if (!url || !/^https?:\/\//i.test(url)) return false;
+        // Web addresses, and links to a PDF of the vault (the app opens those in a pane).
+        const toPdf = !!url && /^[^:]*\.pdf(#.*)?$/i.test(url);
+        if (!url || !(/^https?:\/\//i.test(url) || toPdf)) return false;
+        // A chip opens on a click; any other link on Ctrl/Cmd-click, or, where there is no Ctrl/Cmd (a phone), a tap on a link to a PDF.
+        if (!el.classList.contains("cm-chip") && !(event.metaKey || event.ctrlKey) && !(toPdf && tapOpensPdf())) return false;
         open(url);
         return true;
       },
@@ -1020,7 +1024,7 @@ const HEADING = /^ATXHeading([1-6])$/;
 function resolveImageSrc(src: string, baseDir: string, toUrl: (path: string) => string): string {
   if (/^(https?:|data:|blob:)/.test(src)) return src;
   try {
-    return toUrl(join(baseDir, src));
+    return toUrl(normalize(join(baseDir, src))); // `../assets/x.png` from a note in a subfolder: Tauri refuses a path with `..`
   } catch {
     return src;
   }
@@ -1220,13 +1224,15 @@ function buildDecorations(state: EditorState, ctx: PreviewContext): DecorationSe
     }
   }
   const overlapsMath = (from: number, to: number) => maths.some((m) => from < m.to && to > m.from);
+  // Math wholly inside a node (`**Transpose $A^T$**`) leaves it alone; math cut by its edge (`x_1 … x_2`) makes it TeX, not Markdown.
+  const cutsMath = (from: number, to: number) => maths.some((m) => from < m.to && to > m.from && !(from <= m.from && m.to <= to));
 
   syntaxTree(state).iterate({
     enter: (node) => {
       if (node.from < skipBefore) return node.to <= skipBefore ? false : undefined;
       if (inTable(node.from, node.to) || inEmbed(node.from, node.to)) return false;
       const name = node.name;
-      if (overlapsMath(node.from, node.to) && INLINE_NODES.has(name)) return false;
+      if (cutsMath(node.from, node.to) && INLINE_NODES.has(name)) return false;
 
       const heading = HEADING.exec(name);
       if (heading) {
@@ -1444,13 +1450,15 @@ export interface LiveEditorProps {
   toUrl: (path: string) => string;
   /** Draws the fenced blocks plugins have registered (a spreadsheet, say) in place. */
   blocks?: BlockRenderer;
-  /** Open a web address in the system browser (a click on a link chip). Without it, links stay text. */
+  /** Open a link on a click: a web address in the system browser, or a link to a PDF of the vault. Without it, links stay text. */
   onOpenLink?: (url: string) => void;
+  /** A plain tap (not Ctrl/Cmd-click) on a link to a PDF opens it: for a phone. */
+  tapOpensPdf?: boolean;
   /** The text changed by typing or a plugin block. `notePath` is the note that editor belongs to (it can differ from the one showing: a hidden editor's plugin may still save). */
   onChange: (value: string, notePath?: string) => void;
 }
 
-export default function LiveEditor({ ref, title, readOnly = false, value, embeds, notePath, toUrl, blocks, onOpenLink, onChange }: LiveEditorProps) {
+export default function LiveEditor({ ref, title, readOnly = false, value, embeds, notePath, toUrl, blocks, onOpenLink, tapOpensPdf = false, onChange }: LiveEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const readingRef = useRef(new Compartment());
@@ -1466,6 +1474,8 @@ export default function LiveEditor({ ref, title, readOnly = false, value, embeds
   blocksRef.current = blocks;
   const openLinkRef = useRef(onOpenLink);
   openLinkRef.current = onOpenLink;
+  const tapPdfRef = useRef(tapOpensPdf);
+  tapPdfRef.current = tapOpensPdf;
   onChangeRef.current = onChange;
   baseDirRef.current = notePath ? dirname(notePath) : "";
 
@@ -1525,7 +1535,7 @@ export default function LiveEditor({ ref, title, readOnly = false, value, embeds
           dropField,
           pluginInput(() => blocksRef.current ?? null),
           slashMenu(() => blocksRef.current ?? null),
-          linkChips(() => blocksRef.current ?? null, () => openLinkRef.current),
+          linkChips(() => blocksRef.current ?? null, () => openLinkRef.current, () => tapPdfRef.current),
           remoteCursors,
           caretEvents(() => {
             const b = blocksRef.current;

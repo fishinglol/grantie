@@ -314,6 +314,7 @@ digit, so "$5 and $10" stays text; `\$` is a dollar) and `$$…$$` (display, may
 code, tables, embeds and the properties box; a span the cursor touches shows as tinted raw TeX (`cm-math-src`), otherwise a `MathWidget`
 (KaTeX `renderToString`, `trust: false`, cached per TeX) replaces it — a block widget when `$$…$$` fills its lines, inline otherwise.
 Markdown syntax nodes that overlap math (`INLINE_NODES`: emphasis, links, …) are skipped, because `x_1 … x_2` is TeX, not emphasis.
+**Table cells** are not in the editor's math pass (`inTable`): `TableWidget` → `renderInline` runs `findMath` itself, blanks the spans (so `*` `_` in TeX aren't emphasis; not inside `` `code` ``) before the Markdown pattern, and draws them with `renderMath` (`appendWithMath`). A cell's math is always inline.
 
 ## Pattern: a rule about "this note" must not use `.live-editor:has(...)`
 `LiveEditor` keeps the editors of the last 4 notes alive, hidden, inside one `.live-editor`, and `:has()` sees hidden ones: a whole-page
@@ -321,4 +322,27 @@ sheet in any recently open note used to strip every note's margins. Scope such r
 
 ## Pattern: manifest `setup` and `soon`
 `setup` = numbered "Before you start" steps on a plugin's Store page; `soon: true` = listed but not installable (SOON button, install refused on both apps).
+
+## Pattern: native interactive table widget in LiveEditor
+Tables (both standard GFM markdown tables and fenced ```` ```simple-table ```` blocks) are rendered directly inside `@granite/live-editor` using a native CodeMirror `TableWidget extends WidgetType`:
+- **No iframe / postMessage overhead**: Replaces the isolated iframe approach of `simple-table`, eliminating caret coordinate drift (the 48px gap from mirror measurement) and split-pane resize focus destruction.
+- **Pure TS Table Logic (`table.ts`)**: `parseTable`, `serializeTable`, `blankTable`, `parseTsv`. Escaped pipes (`\|`) and dropdown comments (`<!-- dropdowns ... -->`) round-trip cleanly.
+- **Interactive DOM (`createInteractiveTableDOM`)**: Cell `<textarea>` inputs with auto-grow height, keyboard navigation (`Tab`/`Shift+Tab`, `Enter`, arrows), TSV clipboard pasting from Excel/Google Sheets, dropdown badge chips with palette colors, checkboxes (`☑`/`☐`), and note/web links.
+- **CodeMirror integration**: `TableWidget` specifies `ignoreEvent() { return true; }` so cell typing is untouched by CodeMirror. Document updates are debounced with `input.table`. Raw markdown view toggles cleanly via `rawTableField` and `toggleRawTable` effect.
+
+## Pattern: PDF viewer last-read page position persistence (desktop)
+The desktop PDF viewer (`apps/desktop/src/pages/pdf/PdfView.tsx`) persists and restores the user's reading position:
+- **Storage (`pdfState.ts`)**: Keyed synchronously in `localStorage` via `granite:pdf-page:<file>`. Scoped per PDF file, fast, synchronous, and immune to async write interruptions during window close.
+- **Restoration**: On PDF load, once page sizes and layout offsets (`tops`) are calculated, if no explicit backlink `jump` is requested, automatically scrolls to `getSavedPdfPage(file)` and initializes the toolbar page counter.
+- **Thresholded Save**: In `onScroll`, saves to `localStorage` only when the active page number actually changes (`page !== lastSavedPageRef.current`), avoiding high-frequency I/O. Guarded by `restoredRef.current` so the initial mount at page 1 never overwrites a saved page.
+- **Flush on Exit**: `currentRef.current` is saved on component unmount (closing PDF pane, switching notes) and on `window.beforeunload` (quitting the app). Explicit backlink jumps take precedence and update the saved page.
+
+## Pattern: PDF viewer dark theme (desktop)
+The PDF theme is a view-only filter, never a re-render: `.pdf-dark` on `.pdf-view` applies `filter: invert(1) hue-rotate(180deg)` to the page `<canvas>` only. The text layer, selection and link marks are separate DOM on top, so they keep working. Anything drawn with `mix-blend-mode: multiply` over the page (the backlink marks) must be overridden for dark (`screen`). The choice is one global `localStorage` flag (`granite:pdf-dark`), not per file, read with `getPdfDark()` as the `useState` initializer.
+
+## Pattern: PDF document cache (desktop)
+`PdfView` remounts whenever the pane switches note, so anything expensive must live outside it. `loadedPdfs` (module scope in `PdfView.tsx`) keeps the parsed `PDFDocumentProxy` and every page's size for the last 3 PDFs. Rules: acquire/release with a `users` count (never destroy a document some view still shows; a replaced or evicted one is destroyed when its last user releases it), and reuse only when the file's `stamp` (`size:modifiedMs`) matches, so a PDF changed by sync is re-read. Anything new that holds a PDF must go through `acquire`/`release`, not call `getDocument` itself.
+
+## Note: native table pattern is reverted (2026-10-05)
+The "native interactive table widget" pattern is **not active**: `LiveEditor` uses the old static `TableWidget` for pipe tables and the Simple Table plugin for ```` ```simple-table ````. `table.ts` is dead code kept on purpose; `packages/live-editor/native-table.patch` brings the wiring back.
 

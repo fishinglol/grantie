@@ -147,6 +147,7 @@ _Last updated: 2026-09-25_
         Verified: desktop + phone delete flows in the browser preview; `expo export` bundles.
   - [ ] Not run against real Drive / on devices. Known: two devices both starting with a different `welcome.md`
         produce a "(Drive copy …)" conflict file (now deletable). Identical files that were never synced still conflict.
+- **Sync catch-up speed (2026-10-05)**: `GoogleDriveProvider.listVault` = one paged `files.list` + paths rebuilt from parent ids instead of one request per folder (was ~29 serial round trips per full sync for 26 folders). `test/googleDrive.test.ts`, core-cloud 82 pass. [ ] Not timed on the real Drive / two devices; needs desktop rebuild + phone `npm run ship`. See `activeContext.md`.
 - **`apps/mobile` v0.2 — phone version of the desktop UI** (branch `feat/mobile-live-editor`)
   - [x] New shared package `packages/live-editor` (`@granite/live-editor`): the CodeMirror live-preview
         editor + image viewer + CSS, moved out of `apps/desktop`. Platform-neutral: `toUrl` prop turns a
@@ -771,3 +772,31 @@ End-to-end encrypted transport (`src/relay.ts`, `server/room.mjs`), Cloudflare W
 ## 2026-09-27 — close / delete for a note opened from a Popup card (desktop + phone)
 User (Thai) could not close or delete the note a Popup card opens. Desktop: `PageMenu` shows a ✕ (was the split icon) once split, and its ⋯ menu gets "Close this pane" (only when split) and "Delete note" (red, uses the existing `DeleteDialog`). Phone: the open-beside sheet (`editor-web/main.tsx` `Sheet`) gets a ⋯ menu with "Close" and "Delete note"; delete is a new page -> app `vault` op `delete` (`PluginVaultRequest`), which `App.tsx` `askDelete` confirms with an Alert and resolves `true` once the file is gone, then the sheet closes (its unsaved edit is dropped first). Plugins cannot reach that op (the host adapter only maps read/write/list/open).
 Checked: `tsc` clean for mobile and the editor page (desktop only the old `vite.config.ts` error), `npm run build:editor`, desktop in the browser preview (✕, menu, delete dialog). **Not verified:** the phone sheet itself (the nested plugin frame could not be driven in the Expo web preview), a real phone, the real Tauri window.
+
+## 2026-10-04 — Native Interactive Table Widget in LiveEditor (`@granite/live-editor`)
+User reported cursor misalignment (48px coordinate gap) and split pane / tab 2 focus loss & row/column distortion in the iframe-based `simple-table` plugin. Replaced with a native CodeMirror widget:
+- **`packages/live-editor/src/table.ts`**: Pure TS parser/serializer (`parseTable`, `serializeTable`, `blankTable`, `parseTsv`) + `createInteractiveTableDOM`. Native auto-growing `<textarea>` cells, keyboard navigation (`Tab`/`Shift+Tab`, `Enter`, arrows), TSV clipboard pasting (Excel/Google Sheets), dropdown tags with palette colors (`<!-- dropdowns ... -->`), note links, web links, and checkboxes (`☑`/`☐`). Row/column controls (`+ Row ↓`, `+ Column →`, delete column `×` on header, delete row `×` on body rows, `</>` toggle raw markdown, `Delete table`).
+- **`packages/live-editor/src/LiveEditor.tsx`**: `TableWidget extends WidgetType` mounts `createInteractiveTableDOM` with `ignoreEvent() { return true; }`. Seamlessly intercepts both standard GFM pipe tables and fenced ```` ```simple-table ```` blocks. Debounced document updates via `input.table`. `rawTableField` and `toggleRawTable` effect allow editing raw markdown.
+- **`packages/plugins/src/blockCaret.ts`, `host.ts`**: Fixed client offset calculation (`el.clientLeft`, `el.clientTop`, `el.clientWidth`) and guarded against hidden background panes claiming carets.
+- **Tests**: Live-editor 18/18 tests pass (`test/table.test.ts`), plugins 176/176 tests pass.
+
+## 2026-10-04 — PDF Viewer: Last-Read Page Position Persistence (`apps/desktop`)
+User requested that when viewing a PDF, the page position is remembered so that closing the PDF tab/pane or leaving/quitting the app restores the reader to the last-read page:
+- **`apps/desktop/src/pages/pdf/pdfState.ts`**: `pdfStorageKey(file)`, `getSavedPdfPage(file)`, `savePdfPage(file, page)`, `clearSavedPdfPage(file)`. Keyed in `localStorage` by `granite:pdf-page:<file>`. Fast, synchronous, persists across app restarts in Tauri WebKit / WebView2.
+- **`apps/desktop/src/pages/pdf/PdfView.tsx`**: On load, once layout offsets (`tops`) are ready, restores scroll position and toolbar page counter to `getSavedPdfPage(file)` (unless an explicit backlink jump was requested). In `onScroll`, saves to `localStorage` only on page boundary change (`page !== lastSavedPageRef.current`), guarded by `restoredRef.current`. Flushes current page on unmount (closing PDF pane, switching notes) and on `window.beforeunload` (quitting the app).
+- **Tests**: 5/5 unit tests pass (`apps/desktop/test/pdfState.test.ts`).
+
+## 2026-10-05 — Native Table Widget reverted (`packages/live-editor`)
+- Back to the pre-2026-10-04 tables (static pipe-table widget + Simple Table plugin). Native code kept unused in `src/table.ts`; `native-table.patch` re-applies the `LiveEditor.tsx` + CSS part. The "Native Interactive Table Widget" entry below is superseded.
+
+## 2026-10-04 — PDF Viewer: Faster Return To A PDF (`apps/desktop`)
+- Parsed document + page sizes of the last 3 PDFs are cached (`loadedPdfs` in `PdfView.tsx`), validated by `size:mtime`. Coming back to a PDF after another note: 2.5 s -> ~0.4 s on a 400-page test file. First open unchanged.
+
+## 2026-10-04 — PDF Viewer: Dark Theme Toggle (`apps/desktop`)
+- Toolbar button ☾/☀ in `PdfView.tsx` switches a PDF between the normal and a dark theme (CSS `invert + hue-rotate` on the page canvas, `pdf-dark` class). The choice is global, kept in `localStorage` (`granite:pdf-dark`) by `getPdfDark` / `setPdfDark` in `pdfState.ts`. Highlights switch from `multiply` to `screen` on dark.
+- Checked: `tsc -b` clean, pdfState tests 6/6, browser preview toggle + persistence. Not checked: highlight colours on a dark page, the real app (needs rebuild).
+
+## 2026-10-04 — Desktop Application Release Build (`apps/desktop`)
+- Packaged release binary via Tauri: `npm --workspace=desktop run tauri build -- --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'`.
+- Successfully generated macOS application bundle at `apps/desktop/src-tauri/target/release/bundle/macos/Granite.app` (Rust release profile `[optimized]`, 6m 17s).
+

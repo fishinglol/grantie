@@ -5,5 +5,5 @@
     "allowImportingTsExtensions": true
   },
   "include": ["**/*.ts", "**/*.tsx"],
-  "exclude": ["node_modules", "editor-web"]
+  "exclude": ["node_modules", "editor-web", "pdf-web"]
 }

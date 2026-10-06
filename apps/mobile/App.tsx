@@ -4,9 +4,9 @@ import { StatusBar } from 'expo-status-bar';
 import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import * as Updates from 'expo-updates';
-import { IMAGE_FILE, basename, dirname, embedImage, join, moveFolder, noteTitle, relocateLinks, renamedNoteFile, retargetNoteRefs } from '@granite/core-notes';
+import { IMAGE_FILE, basename, dirname, embedImage, join, moveFolder, noteTitle, parsePdfLink, relocateLinks, renamedNoteFile, retargetNoteRefs, windowsSafe } from '@granite/core-notes';
 import { PLUGINS_DIR, discoverPlugins, readPluginCode, reportInstall, reviewApprovals, safeNotePath, safeVaultPath, withPlugin, type CommandInfo, type HeaderButton, type InstalledPlugin } from '@granite/plugins';
-import { GoogleDriveProvider, VaultSync, merge3, type DeviceCode, type GoogleSession, type PendingDeletion } from '@granite/core-cloud';
+import { GoogleDriveProvider, VaultSync, merge3, timedHttp, type DeviceCode, type GoogleSession, type PendingDeletion } from '@granite/core-cloud';
 import { emptyCanvas, serializeCanvas } from '@granite/canvas/format';
 
 import { expoFs } from './src/expoFs';
@@ -18,12 +18,14 @@ import { VAULT_DIR, ensureSampleVault, scanVault, type VaultScan } from './src/v
 import { colors } from './src/theme';
 import NoteList from './src/components/NoteList';
 import NoteScreen, { EmptyNote } from './src/components/NoteScreen';
+import PdfScreen, { MAX_PDF_BYTES } from './src/components/PdfScreen';
 import ActionSheet from './src/components/ActionSheet';
 import Sidebar from './src/components/Sidebar';
 import DeviceSignIn from './src/components/DeviceSignIn';
 import FolderPicker from './src/components/FolderPicker';
 import PluginsSheet from './src/components/PluginsSheet';
 import { nameOf, parentOf } from './src/tree';
+import { followPdfNote, readPdfNotes, rememberPdfNote } from './src/pdfNotes';
 import { CATALOG, loadCatalog, type CatalogPlugin } from './src/catalog';
 import Toast from './src/components/Toast';
 import Icon from './src/components/Icon';
@@ -41,6 +43,8 @@ const PAGE_ICONS: Record<string, ComponentProps<typeof Icon>['name']> = {
   excel: 'table-large',
 };
 const isCanvas = (rel: string) => rel.toLowerCase().endsWith('.canvas');
+const isPdf = (rel: string) => rel.toLowerCase().endsWith('.pdf');
+
 
 async function readBytes(uri: string): Promise<Uint8Array> {
   if (isWeb) return new Uint8Array(await (await fetch(uri)).arrayBuffer());
@@ -141,6 +145,15 @@ export default function App() {
   const rescanPlugins = useRef<() => Promise<void>>(async () => undefined);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * The currently open PDF: vault-relative path, raw bytes (null = loading/error), and any load error.
+   * Non-null only when a PDF is the active view; cleared when a note or canvas is opened.
+   */
+  const [openPdfRel, setOpenPdfRel] = useState<string | null>(null);
+  const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
+  const [pdfLoadError, setPdfLoadError] = useState<string | null>(null);
+  /** The page a note's link asked for; `n` changes per request. */
+  const [pdfJump, setPdfJump] = useState<{ page: number; n: number } | null>(null);
 
   const say = useCallback((message: string) => {
     setToast(message);
@@ -224,6 +237,8 @@ export default function App() {
   const openNote = useCallback(
     async (rel: string) => {
       try {
+        // Guard: never read a PDF as text.
+        if (isPdf(rel)) { await openPdf(rel); return; }
         await flush(); // finish saving the note we are leaving
         const text = await fs.readTextFile(join(VAULT_DIR, rel));
         openRel.current = rel;
@@ -232,13 +247,67 @@ export default function App() {
         savedText.current = text;
         setDirty(false);
         setOpen({ rel, text });
+        setOpenPdfRel(null);
+        setPdfBytes(null);
+        setPdfLoadError(null);
         setDocId((d) => d + 1);
         setSidebar(false);
       } catch (err) {
         say(`Error: ${String(err)}`);
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [flush, say],
+  );
+
+  /**
+   * Open a PDF for reading. Never calls readTextFile.
+   * Reads the binary, enforces MAX_PDF_BYTES cap, then shows PdfScreen.
+   */
+  const openPdf = useCallback(
+    async (rel: string) => {
+      try {
+        await flush(); // save any open note first
+        setOpen(null);
+        setOpenPdfRel(rel);
+        setPdfJump(null);
+        setPdfBytes(null);
+        setPdfLoadError(null);
+        setSidebar(false);
+
+        const absPath = join(VAULT_DIR, rel);
+        const stat = await fs.stat(absPath).catch(() => ({ size: 0, modifiedMs: 0 }));
+        const size = stat.size ?? 0;
+
+        if (size > MAX_PDF_BYTES) {
+          setPdfLoadError(
+            `This PDF is ${Math.round(size / 1024 / 1024)} MB. The reader supports PDFs up to ${Math.round(MAX_PDF_BYTES / 1024 / 1024)} MB.`,
+          );
+          return;
+        }
+
+        const bytes = await fs.readBinaryFile(absPath);
+        setPdfBytes(bytes);
+      } catch (err) {
+        setPdfLoadError(`Could not open PDF: ${String(err)}`);
+      }
+    },
+    [flush],
+  );
+
+  /** A tap on a link to a PDF in the note `fromRel` (desktop's `[x.pdf, p.3](Folder/x.pdf#page=3&…)`): open the PDF at that page. Its highlighted passage is not shown on the phone. */
+  const openPdfLink = useCallback(
+    async (url: string, fromRel: string) => {
+      const target = parsePdfLink(url, dirname(fromRel));
+      if (!target) return;
+      if (!(await fs.exists(join(VAULT_DIR, target.path)))) {
+        say(`PDF not found: ${target.path}`);
+        return;
+      }
+      if (openPdfRel !== target.path) await openPdf(target.path);
+      setPdfJump(target.page ? { page: target.page, n: Date.now() } : null);
+    },
+    [openPdf, openPdfRel, say],
   );
 
   // A published update is used as soon as it is downloaded, not only after the next restart: save the open note, then reload.
@@ -275,7 +344,7 @@ export default function App() {
       session
         ? new VaultSync({
             fs,
-            provider: new GoogleDriveProvider(http, () => session.accessToken()),
+            provider: new GoogleDriveProvider(timedHttp(http, (line) => console.log(`[sync-timing] ${line}`)), () => session.accessToken()),
             vaultDir: VAULT_DIR,
             remoteFolderName: REMOTE_FOLDER_NAME,
             indexStore,
@@ -315,7 +384,7 @@ export default function App() {
           const touched = result.items.some(
             (i) => i.path === rel && !i.error && (i.action === 'download' || i.action === 'merge' || i.action === 'delete-local'),
           );
-          if (rel && touched && pending.current !== null && !isCanvas(rel)) {
+          if (rel && touched && pending.current !== null && !isCanvas(rel) && !isPdf(rel)) {
             // Typed while syncing: merge that with the new copy instead of dropping either (the merged text is saved and synced next).
             const disk = await fs.readTextFile(join(VAULT_DIR, rel)).catch(() => null);
             const typed = pending.current;
@@ -325,7 +394,7 @@ export default function App() {
               editor.current?.setText(merged);
               onChange(merged);
             }
-          } else if (rel && touched && pending.current === null) {
+          } else if (rel && touched && pending.current === null && !isPdf(rel)) {
             const text = await fs.readTextFile(join(VAULT_DIR, rel)).catch(() => null);
             // Typed while the file was being read: those edits win, and reloading would wipe them.
             if (text !== null && pending.current !== null) {
@@ -341,6 +410,8 @@ export default function App() {
               openRel.current = null;
               setOpen(null);
             }
+          } else if (openPdfRel && result.items.some((i) => i.path === openPdfRel && !i.error && (i.action === 'download' || i.action === 'delete-local'))) {
+            void openPdf(openPdfRel);
           }
         }
         if (result.failed > 0) say(`Sync: ${result.failed} file(s) failed`);
@@ -440,6 +511,12 @@ export default function App() {
           setOpen(null);
           setSidebar(true);
         }
+        if (openPdfRel === rel) {
+          setOpenPdfRel(null);
+          setPdfBytes(null);
+          setPdfLoadError(null);
+          setSidebar(true);
+        }
         await fs.removeFile(join(VAULT_DIR, rel));
         await refresh();
         say(`Deleted ${basename(rel)}`);
@@ -493,6 +570,7 @@ export default function App() {
           openRel.current = to;
           setOpen((o) => o && { ...o, rel: to });
         }
+        await followPdfNote(fs, VAULT_DIR, rel, to); // a PDF's note button keeps opening this note
         await refresh();
         await fixNoteRefs(rel, to, false, before);
         say(`Renamed to ${noteTitle(next)}`);
@@ -691,16 +769,26 @@ export default function App() {
         if (await fs.exists(dest)) return say(`"${name}" already exists in ${folder ? basename(folder) : 'the vault'}`);
         if (openRel.current === rel) await flush();
         const before = scanRef.current.notes;
-        const text = await fs.readTextFile(from);
         await fs.moveFile(from, dest);
-        const fixed = relocateLinks(text, dirname(from), dirname(dest));
-        if (fixed !== text) await fs.writeTextFile(dest, fixed);
-        if (openRel.current === rel) {
-          openRel.current = to;
-          latest.current = fixed;
-          setOpen({ rel: to, text: fixed });
-          setDocId((d) => d + 1);
+        await followPdfNote(fs, VAULT_DIR, rel, to); // a PDF and its note stay paired
+        if (!isPdf(rel)) {
+          // Rewrite relative links inside the moved note (images, other notes).
+          const text = await fs.readTextFile(dest);
+          const fixed = relocateLinks(text, dirname(from), dirname(dest));
+          if (fixed !== text) await fs.writeTextFile(dest, fixed);
+          if (openRel.current === rel) {
+            openRel.current = to;
+            latest.current = fixed;
+            setOpen({ rel: to, text: fixed });
+            setDocId((d) => d + 1);
+          }
+        } else if (openPdfRel === rel) {
+          // PDF moved: update the active PDF path and clear bytes so it reloads.
+          setOpenPdfRel(to);
+          setPdfBytes(null);
+          setPdfLoadError(null);
         }
+
         await refresh();
         await fixNoteRefs(rel, to, false, before);
         say(`Moved to ${folder ? basename(folder) : 'the vault'}`);
@@ -818,10 +906,61 @@ export default function App() {
 
   const shareNote = () => Share.share({ message: latest.current }).catch(() => say('Sharing is not available here'));
 
+  /**
+   * Ensure the linked note for a PDF exists (creates it on first call) and return its vault-relative path.
+   * The note goes in the same folder as the PDF, named "Note PDF – <stem>.md".
+   * The user can rename it afterwards via the sheet's editable heading.
+   */
+  const openPdfNote = useCallback(async (pdfRel: string): Promise<string> => {
+    const folder = parentOf(pdfRel);
+    const stem = basename(pdfRel).replace(/\.pdf$/i, '');
+    const safeName = windowsSafe(stem.trim());
+    const noteName = `Note PDF \u2013 ${safeName}.md`;
+    const noteRel = folder ? `${folder}/${noteName}` : noteName;
+    // The note this PDF already has, even if it was renamed since; otherwise the default name.
+    const known = (await readPdfNotes(fs, VAULT_DIR))[pdfRel];
+    if (known && (await fs.exists(join(VAULT_DIR, known)))) return known;
+    const noteAbs = join(VAULT_DIR, noteRel);
+    // Only create if missing — never overwrite.
+    if (!(await fs.exists(noteAbs))) {
+      await fs.writeTextFile(noteAbs, '');
+      await refresh();
+    }
+    await rememberPdfNote(fs, VAULT_DIR, pdfRel, noteRel);
+    return noteRel;
+  }, [refresh]);
+
+  const readPdfNote = useCallback(async (noteRel: string): Promise<string> => {
+    return fs.readTextFile(join(VAULT_DIR, noteRel)).catch(() => '');
+  }, []);
+
+  const writePdfNote = useCallback(async (noteRel: string, text: string): Promise<void> => {
+    await fs.writeTextFile(join(VAULT_DIR, noteRel), text);
+  }, []);
+
+  /** The sheet's heading renames the note like any other note (same checks, notices and link fixes); the old path when it did not happen. */
+  const renamePdfNote = useCallback(async (noteRel: string, newTitle: string): Promise<string> => (await renameFile(noteRel, newTitle)) ?? noteRel, [renameFile]);
+
   return (
     <View style={styles.screen}>
       <StatusBar style="light" />
-      {open ? (
+      {openPdfRel ? (
+        <PdfScreen
+          key={openPdfRel}
+          rel={openPdfRel}
+          absPath={join(VAULT_DIR, openPdfRel)}
+          bytes={pdfBytes}
+          loadError={pdfLoadError}
+          onOpenSidebar={() => setSidebar(true)}
+          onOpenMenu={() => setMenu(true)}
+          openPdfNote={openPdfNote}
+          readNote={readPdfNote}
+          writeNote={writePdfNote}
+          renameNote={renamePdfNote}
+          say={say}
+          jump={pdfJump}
+        />
+      ) : open ? (
         <NoteScreen
           ref={editor}
           // A note is shown by the page that is already loaded; a canvas (or moving between a note and a canvas) rebuilds it.
@@ -839,7 +978,7 @@ export default function App() {
           onSwipeRight={() => setSidebar(true)}
           plugins={runningPlugins}
           onNotice={say}
-          onOpenUrl={(url) => /^https?:\/\//i.test(url) && void Linking.openURL(url)}
+          onOpenUrl={(url) => (/^https?:\/\//i.test(url) ? void Linking.openURL(url) : void openPdfLink(url, open.rel))}
           onVault={pluginVault}
           onPluginCommands={setPluginCommands}
           onPluginButtons={setPluginButtons}
@@ -866,11 +1005,12 @@ export default function App() {
         <EmptyNote onOpenSidebar={() => setSidebar(true)} />
       )}
 
+
       <Sidebar open={sidebar} onClose={() => setSidebar(false)}>
         <NoteList
           notes={scan.notes}
           folders={scan.folders}
-          selected={open?.rel ?? null}
+          selected={openPdfRel ?? open?.rel ?? null}
           title={email ? (isOfflineNow ? `${email} · Offline` : email) : 'Local vault'}
           syncing={syncing}
           onOpen={openNote}
@@ -885,13 +1025,15 @@ export default function App() {
         visible={menu}
         onClose={() => setMenu(false)}
         groups={[
-          [
-            { label: 'Add image', icon: 'image-outline', onPress: addImage },
-            { label: 'Move file', icon: 'folder-move-outline', onPress: () => setPicking(true) },
-            { label: 'Share note', icon: 'share-variant-outline', onPress: shareNote },
-          ],
+          openPdfRel
+            ? [{ label: 'Move file', icon: 'folder-move-outline', onPress: () => setPicking(true) }]
+            : [
+                { label: 'Add image', icon: 'image-outline', onPress: addImage },
+                { label: 'Move file', icon: 'folder-move-outline', onPress: () => setPicking(true) },
+                { label: 'Share note', icon: 'share-variant-outline', onPress: shareNote },
+              ],
           // Plugin actions for the whole page ("Turn this page into a sheet").
-          ...(pluginCommands.some((c) => c.page) && !(open && isCanvas(open.rel))
+          ...(pluginCommands.some((c) => c.page) && !(open && isCanvas(open.rel)) && !openPdfRel
             ? [
                 pluginCommands
                   .filter((c) => c.page)
@@ -902,7 +1044,7 @@ export default function App() {
                   })),
               ]
             : []),
-          [{ label: 'Delete file', icon: 'trash-can-outline', danger: true, onPress: () => open && askDelete(open.rel) }],
+          [{ label: 'Delete file', icon: 'trash-can-outline', danger: true, onPress: () => (openPdfRel ? askDelete(openPdfRel) : open && askDelete(open.rel)) }],
         ]}
       />
       <ActionSheet
@@ -922,13 +1064,13 @@ export default function App() {
         onPick={(target) => movingFolder && void moveFolderTo(movingFolder, target)}
         onClose={() => setMovingFolder(null)}
       />
-      {open && (
+      {(open || openPdfRel) && (
         <FolderPicker
           visible={picking}
-          noteName={noteTitle(basename(open.rel))}
-          current={parentOf(open.rel)}
+          noteName={openPdfRel ? basename(openPdfRel) : noteTitle(basename(open!.rel))}
+          current={parentOf((openPdfRel ?? open?.rel)!)}
           folders={scan.folders}
-          onPick={(folder) => void moveNote(open.rel, folder)}
+          onPick={(folder) => void moveNote((openPdfRel ?? open!.rel), folder)}
           onClose={() => setPicking(false)}
         />
       )}

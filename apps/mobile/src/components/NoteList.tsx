@@ -1,9 +1,18 @@
-import { Fragment, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { PanResponder, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { colors } from '../theme';
 import { noteTitle } from '@granite/core-notes';
 import { nameOf, parentOf, visibleRows } from '../tree';
 import Icon from './Icon';
+
+/** One thin vertical line per ancestor folder, drawn over a row (rows touch, so the lines read as continuous). */
+const Guides = ({ depth }: { depth: number }) => (
+  <>
+    {Array.from({ length: depth }, (_, k) => (
+      <View key={k} pointerEvents="none" style={[styles.guide, { left: k * STEP + GUIDE_X }]} />
+    ))}
+  </>
+);
 
 export interface NoteListProps {
   notes: string[];
@@ -25,6 +34,10 @@ export interface NoteListProps {
 
 /** Every row is this tall, so the row under a finger is plain arithmetic. */
 const ROW = 52;
+/** Indent per folder level, and the chevron's box; the guide lines sit under each ancestor's chevron (row padding 16 + half the box). */
+const STEP = 20;
+const CHEVRON = 22;
+const GUIDE_X = 16 + CHEVRON / 2;
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /**
@@ -34,6 +47,13 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
  */
 export default function NoteList({ notes, folders, selected, title, syncing, onOpen, onCreate, onMove, onFolderMenu, onOpenSettings }: NoteListProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Folders start closed when the app opens (the first time the vault's folders arrive); the person opens the ones they want.
+  const closedAtStart = useRef(false);
+  useEffect(() => {
+    if (closedAtStart.current || folders.length === 0) return;
+    closedAtStart.current = true;
+    setCollapsed(new Set(folders));
+  }, [folders]);
   /** Folder new notes/folders land in: the last one tapped, "" = vault root. */
   const [tapped, setActiveFolder] = useState('');
   /** A folder that was moved or deleted no longer counts as the target for new notes. */
@@ -110,7 +130,7 @@ export default function NoteList({ notes, folders, selected, title, syncing, onO
       onSubmitEditing={commit}
       placeholder={creating === 'note' ? 'Note name' : creating === 'canvas' ? 'Canvas name' : 'Folder name'}
       placeholderTextColor={colors.textFaint}
-      style={[styles.input, { marginLeft: depth * 16 }]}
+      style={[styles.input, { marginLeft: depth * STEP }]}
       returnKeyType="done"
     />
   );
@@ -143,39 +163,51 @@ export default function NoteList({ notes, folders, selected, title, syncing, onO
           {rows.map((row) =>
             row.kind === 'folder' ? (
               <Fragment key={row.rel}>
+                <View>
                 <Pressable
                   onPress={() => toggle(row.rel)}
                   onLongPress={() => onFolderMenu(row.rel)}
                   delayLongPress={350}
-                  style={({ pressed }) => [styles.row, { marginLeft: row.depth * 16 }, dragging?.over === row.rel && styles.dropTarget, pressed && styles.pressed]}
+                  style={({ pressed }) => [styles.row, { marginLeft: row.depth * STEP }, dragging?.over === row.rel && styles.dropTarget, pressed && styles.pressed]}
                 >
+                  <Icon name={row.open ? 'chevron-down' : 'chevron-right'} size={CHEVRON} color={colors.textDim} />
                   <Icon name={row.open ? 'folder-open-outline' : 'folder-outline'} size={22} color={activeFolder === row.rel ? colors.accent : colors.textDim} />
                   <Text style={[styles.label, activeFolder === row.rel && { color: colors.accent }]} numberOfLines={1}>
                     {nameOf(row.rel)}
                   </Text>
+                  {/* Same menu as a long-press (move / delete), but you can see it is there. */}
+                  <Pressable onPress={() => onFolderMenu(row.rel)} hitSlop={8} accessibilityLabel="Folder menu" style={styles.more}>
+                    <Icon name="dots-horizontal" size={22} color={colors.textDim} />
+                  </Pressable>
                 </Pressable>
+                <Guides depth={row.depth} />
+                </View>
                 {creating && inputUnder === row.rel && nameInput(row.depth + 1)}
               </Fragment>
             ) : (
+              <View key={row.rel}>
               <Pressable
-                key={row.rel}
                 onPress={() => onOpen(row.rel)}
                 onLongPress={(e) => startDrag(row.rel, e.nativeEvent.pageX, e.nativeEvent.pageY)}
                 delayLongPress={350}
                 onPressOut={() => setTimeout(() => !panning.current && drag.current && endDrag(), 60)}
                 style={({ pressed }) => [
                   styles.row,
-                  { marginLeft: row.depth * 16 },
+                  { marginLeft: row.depth * STEP },
                   selected === row.rel && styles.selected,
                   dragging?.note === row.rel && styles.lifted,
                   pressed && styles.pressed,
                 ]}
               >
+                <View style={{ width: CHEVRON }} />
                 {row.rel.toLowerCase().endsWith('.canvas') && <Icon name="view-grid-outline" size={20} color={colors.textDim} />}
+                {row.rel.toLowerCase().endsWith('.pdf') && <Icon name="file-pdf-box" size={20} color={colors.textDim} />}
                 <Text style={[styles.label, { marginLeft: 4 }]} numberOfLines={1}>
                   {noteTitle(nameOf(row.rel))}
                 </Text>
               </Pressable>
+              <Guides depth={row.depth} />
+              </View>
             ),
           )}
           {creating && inputUnder === '' && nameInput()}
@@ -251,6 +283,8 @@ const styles = StyleSheet.create({
   selected: { backgroundColor: colors.panel },
   pressed: { backgroundColor: colors.panelHover },
   label: { color: colors.text, fontSize: 20, flex: 1 },
+  guide: { position: 'absolute', top: 0, bottom: 0, width: 1, backgroundColor: colors.textFaint, opacity: 0.8 },
+  more: { padding: 6, marginRight: -8 },
   empty: { color: colors.textFaint, padding: 16, fontSize: 15 },
   input: {
     color: colors.text,

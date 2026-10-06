@@ -1,0 +1,470 @@
+diff --git a/packages/live-editor/src/LiveEditor.tsx bpackages/live-editor/src/LiveEditor.tsx
+index 219e2dd..39c6707 100644
+--- a/packages/live-editor/src/LiveEditor.tsx
++++ bpackages/live-editor/src/LiveEditor.tsx
+@@ -34,6 +34,7 @@ import { openImageViewer } from "./imageViewer";
+ import NoteTitle from "./NoteTitle";
+ import { caretEvents, type CaretEvent } from "./caret.ts";
+ import { Remote, remoteCursors, SyncSession, type SyncPort } from "./sync.ts";
++import { createInteractiveTableDOM } from "./table.ts";
+ 
+ export { IMAGE_FILE };
+ 
+@@ -343,24 +344,7 @@ function splitRow(line: string): string[] {
+   return cells.map((c) => c.trim());
+ }
+ 
+-const INLINE = /`([^`]+)`|\*\*(.+?)\*\*|~~(.+?)~~|\*(.+?)\*|\[([^\]]*)\]\(([^)\s]+)\)/g;
+-
+-/** Tiny inline-Markdown renderer for table cells (code, bold, italic, strike, links). */
+-function renderInline(text: string, parent: HTMLElement) {
+-  let last = 0;
+-  for (const m of text.matchAll(INLINE)) {
+-    if (m.index! > last) parent.append(text.slice(last, m.index));
+-    const el = document.createElement(m[1] != null ? "code" : m[2] != null ? "strong" : m[3] != null ? "del" : m[4] != null ? "em" : "span");
+-    if (m[1] != null) el.textContent = m[1];
+-    else if (m[5] != null) {
+-      el.className = "cm-link";
+-      el.textContent = m[5];
+-    } else renderInline((m[2] ?? m[3] ?? m[4])!, el);
+-    parent.append(el);
+-    last = m.index! + m[0].length;
+-  }
+-  if (last < text.length) parent.append(text.slice(last));
+-}
++
+ 
+ /**
+  * Lets plugins draw fenced blocks (```sheet … ```) inside the note. The app builds one (`BlockBridge` from
+@@ -891,44 +875,104 @@ class BlockWidget extends WidgetType {
+   }
+ }
+ 
++const tableMounts = new WeakMap<HTMLElement, ReturnType<typeof createInteractiveTableDOM>>();
++
++export const toggleRawTable = StateEffect.define<number>();
++export const rawTableField = StateField.define<Set<number>>({
++  create: () => new Set<number>(),
++  update(set, tr) {
++    let next = set;
++    for (const e of tr.effects) {
++      if (e.is(toggleRawTable)) {
++        next = new Set(next);
++        if (next.has(e.value)) next.delete(e.value);
++        else next.add(e.value);
++      }
++    }
++    return next;
++  },
++});
++
+ class TableWidget extends WidgetType {
+   constructor(
+     readonly source: string,
+-    readonly enterPos: number,
++    readonly rangeFrom: number,
++    readonly rangeTo: number,
++    readonly isFenced: boolean,
++    readonly getOpenLink?: () => ((url: string) => void) | undefined,
+   ) {
+     super();
+   }
+   eq(other: TableWidget) {
+-    return other.source === this.source && other.enterPos === this.enterPos;
++    return (
++      other.source === this.source &&
++      other.rangeFrom === this.rangeFrom &&
++      other.rangeTo === this.rangeTo &&
++      other.isFenced === this.isFenced
++    );
+   }
+   toDOM(view: EditorView) {
+-    const [head, delim, ...body] = this.source.split("\n");
+-    const align = splitRow(delim ?? "").map((c) => (/^:-*:$/.test(c) ? "center" : /-:$/.test(c) ? "right" : "left"));
+-    const table = document.createElement("table");
+-    table.className = "cm-table";
+-    const addRow = (line: string, tag: "th" | "td", parent: HTMLElement) => {
+-      const tr = document.createElement("tr");
+-      splitRow(line).forEach((cell, i) => {
+-        const el = document.createElement(tag);
+-        el.style.textAlign = align[i] ?? "left";
+-        renderInline(cell, el);
+-        tr.append(el);
+-      });
+-      parent.append(tr);
+-    };
+-    const thead = table.createTHead();
+-    addRow(head ?? "", "th", thead);
+-    const tbody = table.createTBody();
+-    for (const line of body) if (line.trim()) addRow(line, "td", tbody);
+-    const wrap = document.createElement("div");
+-    wrap.className = "cm-table-wrap";
+-    wrap.append(table);
+-    wrap.addEventListener("mousedown", (e) => {
+-      e.preventDefault();
+-      view.dispatch({ selection: { anchor: this.enterPos } });
+-      view.focus();
++    const handle = createInteractiveTableDOM(this.source, {
++      onSave: (text) => this.write(view, handle.dom, text),
++      onRemove: () => this.write(view, handle.dom, null),
++      onEditAsText: () => {
++        view.dispatch({
++          effects: toggleRawTable.of(this.rangeFrom),
++          selection: { anchor: this.rangeFrom },
++          scrollIntoView: true,
++        });
++        view.focus();
++      },
++      onOpenNote: (path) => {
++        const open = this.getOpenLink?.();
++        if (open) open(path.startsWith("note:") ? path : `note:${path}`);
++      },
++      onOpenLink: (url) => {
++        const open = this.getOpenLink?.();
++        if (open) open(url);
++        else window.open(url, "_blank");
++      },
+     });
+-    return wrap;
++    tableMounts.set(handle.dom, handle);
++    return handle.dom;
++  }
++  updateDOM(dom: HTMLElement) {
++    const handle = tableMounts.get(dom);
++    if (!handle) return false;
++    handle.update(this.source);
++    return true;
++  }
++  destroy(dom: HTMLElement) {
++    tableMounts.get(dom)?.destroy();
++    tableMounts.delete(dom);
++  }
++  ignoreEvent() {
++    return true;
++  }
++  private write(view: EditorView, dom: HTMLElement, text: string | null) {
++    const { doc } = view.state;
++    if (this.isFenced) {
++      const found = fenceRanges(doc, view.posAtDOM(dom));
++      if (!found) return;
++      const changes =
++        text === null
++          ? { from: found.whole.from, to: Math.min(found.whole.to + 1, doc.length), insert: "" }
++          : found.empty
++            ? { from: found.inner.from, insert: `${text}\n` }
++            : { from: found.inner.from, to: found.inner.to, insert: text };
++      view.dispatch({ changes, userEvent: "input.table" });
++    } else {
++      const pos = view.posAtDOM(dom);
++      const curLine = doc.lineAt(pos).number;
++      const tables = findTables(view.state, Math.max(1, curLine - 2));
++      const found = tables.find((t) => t.from <= pos && t.to >= pos) || tables[0];
++      if (!found) return;
++      const changes =
++        text === null
++          ? { from: found.from, to: Math.min(found.to + 1, doc.length), insert: "" }
++          : { from: found.from, to: found.to, insert: text };
++      view.dispatch({ changes, userEvent: "input.table" });
++    }
+   }
+ }
+ 
+@@ -1102,6 +1146,7 @@ interface PreviewContext {
+   toUrl: (path: string) => string;
+   /** Plugin block renderer, when the app has one. */
+   getBlocks: () => BlockRenderer | null;
++  getOpenLink?: () => ((url: string) => void) | undefined;
+ }
+ 
+ /** `![[image.png]]` / `![[image.png|300]]` embeds whose image can be found in the vault. */
+@@ -1170,16 +1215,19 @@ function buildDecorations(state: EditorState, ctx: PreviewContext): DecorationSe
+     }
+   }
+ 
++  const rawTables = state.field(rawTableField, false) ?? new Set<number>();
+   const tables = findTables(state, fm ? doc.lineAt(fm.to).number + 1 : 1);
+   for (const t of tables) {
+-    // Raw while the cursor is inside the table. The very end of the last row doesn't count, so a
+-    // freshly pasted table (cursor left right after it) shows rendered, and typing a new last row keeps it live.
+-    const editing = ranges.some((r) => r.from < t.to && (r.to > t.from || r.from === t.from));
+-    if (editing) {
++    const touchesTable = ranges.some((r) => r.from <= t.to && r.to >= t.from);
++    const showRaw = rawTables.has(t.from) && touchesTable;
++    if (showRaw) {
+       for (let n = t.first; n <= t.last; n++) out.push(lineDeco("cm-table-line").range(doc.line(n).from));
+     } else {
+       out.push(
+-        Decoration.replace({ widget: new TableWidget(doc.sliceString(t.from, t.to), t.from), block: true }).range(t.from, t.to),
++        Decoration.replace({
++          widget: new TableWidget(doc.sliceString(t.from, t.to), t.from, t.to, false, () => ctx.getOpenLink?.()),
++          block: true,
++        }).range(t.from, t.to),
+       );
+     }
+     if (t.ruleLine != null) {
+@@ -1320,6 +1368,24 @@ function buildDecorations(state: EditorState, ctx: PreviewContext): DecorationSe
+           const renderer = ctx.getBlocks();
+           const info = node.node.getChild("CodeInfo");
+           const lang = info ? doc.sliceString(info.from, info.to).trim().split(/\s+/)[0]! : "";
++          if (lang === "simple-table") {
++            const start = doc.line(first);
++            const end = doc.line(last);
++            const touchesBlock = ranges.some((r) => r.from <= end.to && r.to >= start.from);
++            const showRaw = rawTables.has(start.from) && touchesBlock;
++            if (showRaw) {
++              for (let n = first; n <= last; n++) {
++                const cls = n === first ? "cm-codeblock cm-codeblock-first" : n === last ? "cm-codeblock cm-codeblock-last" : "cm-codeblock";
++                out.push(lineDeco(cls).range(doc.line(n).from));
++              }
++              return false;
++            }
++            const textNode = node.node.getChild("CodeText");
++            const src = textNode ? doc.sliceString(textNode.from, textNode.to) : "";
++            const widget = new TableWidget(src, start.from, end.to, true, () => ctx.getOpenLink?.());
++            out.push(Decoration.replace({ widget, block: true }).range(start.from, end.to));
++            return false;
++          }
+           if (renderer && lang && node.node.getChildren("CodeMark").length >= 2 && renderer.langs().includes(lang)) {
+             const start = doc.line(first);
+             const end = doc.line(last);
+@@ -1385,7 +1451,12 @@ function livePreview(ctx: PreviewContext) {
+     create: (state) => buildDecorations(state, ctx),
+     update(deco, tr) {
+       // The parser works in the background, so also rebuild when it has caught up (a long note would stay half-styled).
+-      if (tr.docChanged || tr.selection || syntaxTree(tr.state) !== syntaxTree(tr.startState) || tr.effects.some((e) => e.is(refresh) || e.is(setSel))) {
++      if (
++        tr.docChanged ||
++        tr.selection ||
++        syntaxTree(tr.state) !== syntaxTree(tr.startState) ||
++        tr.effects.some((e) => e.is(refresh) || e.is(setSel) || e.is(toggleRawTable))
++      ) {
+         return buildDecorations(tr.state, ctx);
+       }
+       return deco;
+@@ -1531,7 +1602,9 @@ export default function LiveEditor({ ref, title, readOnly = false, value, embeds
+             resolveEmbed: (name) => embedsRef.current.get(name.toLowerCase()) ?? null,
+             toUrl: (path) => toUrlRef.current(path),
+             getBlocks: () => blocksRef.current ?? null,
++            getOpenLink: () => openLinkRef.current,
+           }),
++          rawTableField,
+           dropField,
+           pluginInput(() => blocksRef.current ?? null),
+           slashMenu(() => blocksRef.current ?? null),
+diff --git a/packages/live-editor/src/live-editor.css bpackages/live-editor/src/live-editor.css
+index 590db4e..59f2c9e 100644
+--- a/packages/live-editor/src/live-editor.css
++++ bpackages/live-editor/src/live-editor.css
+@@ -219,7 +219,7 @@
+ }
+ 
+ /* Tables */
+-.live-editor .cm-table-wrap { overflow-x: auto; margin: 8px 0; cursor: text; }
++.live-editor .cm-table-wrap { overflow-x: auto; margin: 8px 0; }
+ .live-editor .cm-table { border-collapse: collapse; font-size: 0.95em; }
+ .live-editor .cm-table th,
+ .live-editor .cm-table td { border: 1px solid var(--panel-hover); padding: 6px 12px; vertical-align: top; }
+@@ -238,6 +238,203 @@
+   padding: 0 14px;
+ }
+ 
++/* Native Interactive Tables */
++.live-editor .cm-native-table {
++  overflow-x: auto;
++  margin: 10px 0;
++  position: relative;
++}
++.live-editor .cm-native-table-grid {
++  border-collapse: collapse;
++  width: 100%;
++  font-size: 14px;
++  table-layout: auto;
++}
++.live-editor .cm-native-table-grid th,
++.live-editor .cm-native-table-grid td {
++  padding: 0;
++  border: 1px solid var(--panel-hover, #3a4055);
++}
++.live-editor .cm-table-cell {
++  position: relative;
++  vertical-align: top;
++  background: var(--bg-card, transparent);
++  transition: background 0.1s ease;
++}
++.live-editor .cm-table-cell.cm-table-hd {
++  background: color-mix(in srgb, var(--text, #e6e9f0) 6%, transparent);
++}
++.live-editor .cm-table-cell.cm-focused {
++  background: color-mix(in srgb, var(--accent, #e8935f) 8%, transparent);
++  outline: 1.5px solid var(--accent, #e8935f);
++  outline-offset: -1px;
++  z-index: 1;
++}
++.live-editor .cm-table-input {
++  display: block;
++  width: 100%;
++  min-width: 90px;
++  margin: 0;
++  padding: 6px 10px;
++  border: 0;
++  background: transparent;
++  color: var(--text, #e6e9f0);
++  font: inherit;
++  font-size: 14px;
++  line-height: 1.5;
++  resize: none;
++  overflow: hidden;
++  outline: none;
++  box-sizing: border-box;
++}
++.live-editor .cm-table-input.cm-table-input-hd {
++  font-weight: 600;
++  color: var(--h, #ffffff);
++}
++.live-editor .cm-table-input::placeholder {
++  color: var(--text-dim, #8b93a7);
++  opacity: 0.6;
++}
++.live-editor .cm-table-cell.cm-table-last .cm-table-input {
++  padding-right: 24px;
++}
++.live-editor .cm-table-input.cm-has-badge {
++  color: transparent;
++  caret-color: var(--text, #e6e9f0);
++}
++.live-editor .cm-table-input.cm-has-badge:focus {
++  color: var(--text, #e6e9f0);
++}
++.live-editor .cm-table-input.cm-has-badge:focus ~ .cm-table-chip,
++.live-editor .cm-table-input.cm-has-badge:focus ~ .cm-table-checkbox {
++  display: none;
++}
++.live-editor .cm-table-chip {
++  position: absolute;
++  left: 8px;
++  top: 5px;
++  display: inline-flex;
++  align-items: center;
++  max-width: calc(100% - 16px);
++  padding: 1px 8px;
++  border-radius: 999px;
++  font-size: 12px;
++  font-weight: 500;
++  line-height: 20px;
++  white-space: nowrap;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  pointer-events: none;
++}
++.live-editor .cm-table-note-chip,
++.live-editor .cm-table-link-chip {
++  background: var(--panel, #1f2330);
++  color: var(--accent, #e8935f);
++  cursor: pointer;
++  pointer-events: auto;
++  border: 1px solid var(--border, #3a4055);
++}
++.live-editor .cm-table-note-chip:hover,
++.live-editor .cm-table-link-chip:hover {
++  background: var(--panel-hover, #2a2f3e);
++  text-decoration: underline;
++}
++.live-editor .cm-table-checkbox {
++  position: absolute;
++  left: 8px;
++  top: 4px;
++  font-size: 18px;
++  line-height: 24px;
++  cursor: pointer;
++  user-select: none;
++}
++.live-editor .cm-table-del-col {
++  position: absolute;
++  top: 2px;
++  right: 2px;
++  width: 18px;
++  height: 18px;
++  padding: 0;
++  border: 0;
++  border-radius: 50%;
++  background: transparent;
++  color: var(--text-dim, #8b93a7);
++  font-size: 14px;
++  line-height: 18px;
++  text-align: center;
++  cursor: pointer;
++  opacity: 0;
++  transition: opacity 0.15s ease, background 0.15s ease;
++}
++.live-editor .cm-table-del-row {
++  position: absolute;
++  top: 50%;
++  right: 2px;
++  transform: translateY(-50%);
++  width: 18px;
++  height: 18px;
++  padding: 0;
++  border: 0;
++  border-radius: 50%;
++  background: transparent;
++  color: var(--text-dim, #8b93a7);
++  font-size: 14px;
++  line-height: 18px;
++  text-align: center;
++  cursor: pointer;
++  opacity: 0;
++  transition: opacity 0.15s ease, background 0.15s ease;
++}
++.live-editor .cm-table-del-col:hover,
++.live-editor .cm-table-del-row:hover {
++  background: var(--panel-hover, #3a4055);
++  color: var(--text, #e6e9f0);
++}
++.live-editor .cm-native-table:hover .cm-table-del-col,
++.live-editor .cm-native-table:hover .cm-table-del-row,
++.live-editor .cm-native-table:focus-within .cm-table-del-col,
++.live-editor .cm-native-table:focus-within .cm-table-del-row {
++  opacity: 0.65;
++}
++.live-editor .cm-table-foot {
++  display: flex;
++  align-items: center;
++  gap: 6px;
++  padding-top: 6px;
++}
++.live-editor .cm-table-grow {
++  flex: 1;
++}
++.live-editor .cm-table-tools {
++  display: flex;
++  align-items: center;
++  gap: 6px;
++  opacity: 0;
++  transition: opacity 0.15s ease;
++}
++.live-editor .cm-native-table:hover .cm-table-tools,
++.live-editor .cm-native-table:focus-within .cm-table-tools {
++  opacity: 1;
++}
++.live-editor .cm-table-btn {
++  padding: 3px 10px;
++  border: 0;
++  border-radius: 6px;
++  background: transparent;
++  color: var(--text-dim, #8b93a7);
++  font-size: 12px;
++  font-family: inherit;
++  cursor: pointer;
++  transition: background 0.15s ease, color 0.15s ease;
++}
++.live-editor .cm-table-btn:hover {
++  background: var(--panel-hover, #3a4055);
++  color: var(--text, #e6e9f0);
++}
++.live-editor .cm-table-btn-del:hover {
++  color: #ff6b6b;
++}
++
+ /* Full-window image viewer */
+ .img-viewer {
+   position: fixed;
