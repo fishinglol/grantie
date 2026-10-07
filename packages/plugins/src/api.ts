@@ -257,6 +257,11 @@ export interface GraniteApi {
      * phone opens it full screen with a button back to the page you came from.
      */
     open(path: string, options?: { beside?: boolean }): Promise<void>;
+    /**
+     * API 10, blocks only: `handler` is called (no arguments, no data) when the vault's list of notes changes: a note was created, renamed,
+     * deleted or synced in. Call `list()` to see what changed. Edits inside a note do not fire it. The phone app does not call it yet.
+     */
+    onChange(handler: () => void): void;
   };
   /** Show a short message. No permission needed. */
   notice(message: string): void;

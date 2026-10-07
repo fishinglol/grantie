@@ -611,13 +611,19 @@ function mountCalendar(body, source, block) {
     render();
   }
 
-  // Notes are read once per mount, so a rename / edit made elsewhere (e.g. the other half of a split) left stale pills whose files no longer
-  // exist. Re-read when the pointer comes back or the window refocuses; redraw only if something actually changed.
+  // Notes are read once per mount, so a rename / delete / edit made elsewhere left stale pills whose files no longer exist. The app tells
+  // us when the list of notes changes (granite.vault.onChange, API 10: desktop); everywhere else, and for edits to a note's date, re-read
+  // when the pointer comes back or the window refocuses. Redraws only if something actually changed.
   let refreshing = false;
+  let again = false;
   let refreshedAt = 0;
   const signature = (list) => JSON.stringify(list.map((n) => [n.path, n.props]).sort());
-  async function refresh() {
-    if (refreshing || !loaded || Date.now() - refreshedAt < 1500) return;
+  async function refresh(now) {
+    if (!loaded || (!now && Date.now() - refreshedAt < 1500)) return;
+    if (refreshing) {
+      again = again || now;
+      return;
+    }
     refreshing = true;
     try {
       const fresh = await readNotes();
@@ -630,12 +636,23 @@ function mountCalendar(body, source, block) {
     } finally {
       refreshedAt = Date.now();
       refreshing = false;
+      if (again) {
+        again = false;
+        void refresh(true);
+      }
     }
   }
-  document.addEventListener("pointerover", () => void refresh());
-  window.addEventListener("focus", () => void refresh());
+  let changeTimer = 0;
+  if (typeof granite.vault.onChange === "function") {
+    granite.vault.onChange(() => {
+      clearTimeout(changeTimer);
+      changeTimer = setTimeout(() => void refresh(true), 250);
+    });
+  }
+  document.addEventListener("pointerover", () => void refresh(false));
+  window.addEventListener("focus", () => void refresh(false));
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) void refresh();
+    if (!document.hidden) void refresh(false);
   });
 
   build();

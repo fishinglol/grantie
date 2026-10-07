@@ -853,3 +853,10 @@ User: renaming a note left the calendar pill unchanged, and clicking it said the
 fallback in `open()` only follows a rename when exactly one note shares the date (two notes on Oct 8 -> no follow). Fix (`examples/plugins/calendar/main.js`, `refresh()`): re-read the notes on
 `pointerover` / window `focus` / `visibilitychange` (throttled 1.5 s, one in flight), redraw only if the path/props signature changed. Plugin tests 186 pass. **Not run in the real app**;
 an installed copy in a vault stays 1.2.1 until UPDATE in the Store; phone: `npm run build:editor` in `apps/mobile` (catalog regenerated).
+
+### Calendar 1.3.0 + plugin API 10: live refresh (2026-10-07)
+User: the 1.2.2 refresh worked but only after a delay (it waits for the pointer). **API 10**: `granite.vault.onChange(handler)` (blocks only, no permission, no data): `PluginHost.notesChanged()` posts `vault-changed`
+to every block frame; desktop `usePlugins` calls it in an effect on `notes` (the vault's note list, so after rename / delete / create / sync). Edits inside a note do NOT fire it (date edits still need the
+pointer / focus refresh). Calendar listens (250 ms debounce, `refresh(true)` bypasses the 1.5 s throttle, one more pass if an event arrives mid-read) and feature-detects, so older hosts keep the pointer refresh.
+**Phone: not wired** (`editor-web/main.tsx` is not told when the app's note list changes). Verified in a browser harness with a fake vault (delete + rename redrew with no pointer event); plugin tests 187, `tsc -b` desktop + mobile clean.
+**Needs a new desktop build** (`Granite.app` installed is older, no `onChange`); the plugin copy in `GraniteVault-new` is 1.3.0 already.

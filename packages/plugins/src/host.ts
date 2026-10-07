@@ -82,7 +82,7 @@ function bootstrapHtml(network: boolean, block: boolean, connect: string[] = [],
   const csp = `default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'${styled ? "; style-src 'unsafe-inline'; img-src data:" : ""}${network || connect.length > 0 ? `; connect-src ${[...(network ? ["https:", "wss:"] : []), ...connect].join(" ")}` : ""}`;
   return `<!doctype html><meta http-equiv="Content-Security-Policy" content="${csp}">${block ? "<style>html,body{margin:0;background:transparent}</style>" : overlay ? "<style>html,body{margin:0;background:transparent;overflow:hidden}</style>" : ui ? "<style>html,body{margin:0;background:var(--panel);color:var(--text);font:14px system-ui,sans-serif}</style>" : ""}<script>
 (function () {
-  var host = window.parent, pending = {}, seq = 0, commands = {}, isBlock = false, blockFns = {}, blockHandle = null, triggers = {}, pasteFn = null, items = {}, linkTitles = {}, syncHandler = null, panelFn = null, panelHandle = null, isOverlay = false, overlayFn = null, caretFn = null, optionsFn = null;
+  var host = window.parent, pending = {}, seq = 0, commands = {}, isBlock = false, blockFns = {}, blockHandle = null, triggers = {}, pasteFn = null, items = {}, linkTitles = {}, syncHandler = null, panelFn = null, panelHandle = null, isOverlay = false, overlayFn = null, caretFn = null, optionsFn = null, vaultFns = [];
   function applyVars(vars) { for (var k in vars) document.documentElement.style.setProperty(k, vars[k]); }
   function send(m) { host.postMessage(m, "*"); }
   function call(method, args) {
@@ -177,7 +177,8 @@ function bootstrapHtml(network: boolean, block: boolean, connect: string[] = [],
       list: function () { return call("vault.list", []); },
       read: function (p) { return call("vault.read", [p]); },
       write: function (p, t) { return call("vault.write", [p, t]); },
-      open: function (p, o) { return call("vault.open", [p, !!(o && o.beside)]); }
+      open: function (p, o) { return call("vault.open", [p, !!(o && o.beside)]); },
+      onChange: function (f) { if (typeof f === "function") vaultFns.push(f); }
     }),
     notice: function (m) { send({ k: "call", n: 0, method: "notice", args: [String(m)] }); }
   });
@@ -238,6 +239,10 @@ function bootstrapHtml(network: boolean, block: boolean, connect: string[] = [],
     } else if (m.k === "caret-options") {
       try { if (optionsFn) optionsFn(m.options); }
       catch (err) { send({ k: "error", message: String(err && err.message || err) }); }
+    } else if (m.k === "vault-changed") {
+      vaultFns.forEach(function (f) {
+        try { f(); } catch (err) { send({ k: "error", message: String(err && err.message || err) }); }
+      });
     } else if (m.k === "sync") {
       try { if (syncHandler) syncHandler(m.event); }
       catch (err) { send({ k: "error", message: String(err && err.message || err) }); }
@@ -601,6 +606,11 @@ export class PluginHost {
     if (e.type !== "scroll" || !at || !at.caret) return;
     this.#sendCaret(this.#inWindow(at.block, { type: "move", caret: at.caret, selecting: at.selecting, scroll: true }));
   };
+
+  /** The vault's list of notes changed (created, renamed, deleted, synced in): tell block frames that listen with `vault.onChange`. */
+  notesChanged(): void {
+    for (const b of this.#blocks) b.frame.contentWindow?.postMessage({ k: "vault-changed" }, "*");
+  }
 
   /** Whether block frames should report their caret, and hide their own (as the plugin hid the note's, with `editor.setStyle`). */
   #tellBlocksCaret(): void {
