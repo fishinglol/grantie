@@ -847,3 +847,9 @@ Desktop 0.1.4 = 0.1.3 + the `//` menu fix for plugin frames (PR #22: no text `Ch
 
 ## 2026-10-03 — release 0.1.5 (first release with the in-app updater)
 Desktop 0.1.5 = 0.1.4 + in-app auto-update (PR #29: **Check for updates** in the sidebar user menu, signed update files, `latest.json` on the release) + sidebar indent guide lines and bigger chevrons (desktop and phone). Version bumped in `apps/desktop/package.json`, `apps/desktop/src-tauri/tauri.conf.json` and the `apps/desktop` entry of `package-lock.json`; tag `v0.1.5` on the merge commit of the bump PR. **First tag build that signs and runs the `update-manifest` job: check the release has `Granite-Mac.app.tar.gz(.sig)`, `Granite-Windows-Setup.exe.sig` and `latest.json`.** Installed copies up to 0.1.4 have no updater: install 0.1.5 by hand once; from then on the app offers the next release itself. The Android app is not part of this release (no `.apk` attached).
+
+### Calendar 1.2.2: stale pills after a rename (2026-10-07)
+User: renaming a note left the calendar pill unchanged, and clicking it said the note never existed. Cause: Calendar read the vault once per mount (and on ↻); the stale-path
+fallback in `open()` only follows a rename when exactly one note shares the date (two notes on Oct 8 -> no follow). Fix (`examples/plugins/calendar/main.js`, `refresh()`): re-read the notes on
+`pointerover` / window `focus` / `visibilitychange` (throttled 1.5 s, one in flight), redraw only if the path/props signature changed. Plugin tests 186 pass. **Not run in the real app**;
+an installed copy in a vault stays 1.2.1 until UPDATE in the Store; phone: `npm run build:editor` in `apps/mobile` (catalog regenerated).

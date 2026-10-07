@@ -611,6 +611,33 @@ function mountCalendar(body, source, block) {
     render();
   }
 
+  // Notes are read once per mount, so a rename / edit made elsewhere (e.g. the other half of a split) left stale pills whose files no longer
+  // exist. Re-read when the pointer comes back or the window refocuses; redraw only if something actually changed.
+  let refreshing = false;
+  let refreshedAt = 0;
+  const signature = (list) => JSON.stringify(list.map((n) => [n.path, n.props]).sort());
+  async function refresh() {
+    if (refreshing || !loaded || Date.now() - refreshedAt < 1500) return;
+    refreshing = true;
+    try {
+      const fresh = await readNotes();
+      if (signature(fresh) !== signature(notes)) {
+        notes = fresh;
+        render();
+      }
+    } catch {
+      // Keep what is drawn; the ↻ button reports errors.
+    } finally {
+      refreshedAt = Date.now();
+      refreshing = false;
+    }
+  }
+  document.addEventListener("pointerover", () => void refresh());
+  window.addEventListener("focus", () => void refresh());
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) void refresh();
+  });
+
   build();
   void load();
 
