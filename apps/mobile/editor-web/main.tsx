@@ -553,6 +553,7 @@ function Page() {
         }) } : undefined}
         toUrl={toUrl}
         onOpenLink={openLink}
+        tapOpensPdf
         onChange={onChange}
       />
       <FormatBar onFormat={(kind) => (document.activeElement?.closest(".sheet") ? sheetEditor : editor).current?.format(kind)} />

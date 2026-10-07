@@ -22,7 +22,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
 };
 
 /** Version of the plugin API this app implements. A plugin can require a minimum. */
-export const API_VERSION = 9;
+export const API_VERSION = 10;
 
 export interface PluginManifest {
   /** Lower-case letters, digits and dashes; also the plugin's folder name. */

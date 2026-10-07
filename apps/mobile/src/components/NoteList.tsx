@@ -1,4 +1,4 @@
-import { Fragment, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { PanResponder, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { colors } from '../theme';
 import { noteTitle } from '@granite/core-notes';
@@ -53,6 +53,13 @@ const pluginEmoji = (icons: IconConfig, q: IconQuery): string | null => resolveI
 
 export default function NoteList({ notes, folders, selected, icons, title, syncing, onOpen, onCreate, onMove, onFolderMenu, onOpenSettings }: NoteListProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Folders start closed when the app opens (the first time the vault's folders arrive); the person opens the ones they want.
+  const closedAtStart = useRef(false);
+  useEffect(() => {
+    if (closedAtStart.current || folders.length === 0) return;
+    closedAtStart.current = true;
+    setCollapsed(new Set(folders));
+  }, [folders]);
   /** Folder new notes/folders land in: the last one tapped, "" = vault root. */
   const [tapped, setActiveFolder] = useState('');
   /** A folder that was moved or deleted no longer counts as the target for new notes. */
@@ -181,6 +188,10 @@ export default function NoteList({ notes, folders, selected, icons, title, synci
                   <Text style={[styles.label, activeFolder === row.rel && { color: colors.accent }]} numberOfLines={1}>
                     {nameOf(row.rel)}
                   </Text>
+                  {/* Same menu as a long-press (move / delete), but you can see it is there. */}
+                  <Pressable onPress={() => onFolderMenu(row.rel)} hitSlop={8} accessibilityLabel="Folder menu" style={styles.more}>
+                    <Icon name="dots-horizontal" size={22} color={colors.textDim} />
+                  </Pressable>
                 </Pressable>
                 <Guides depth={row.depth} />
                 </View>
@@ -206,6 +217,7 @@ export default function NoteList({ notes, folders, selected, icons, title, synci
                   const canvas = row.rel.toLowerCase().endsWith('.canvas');
                   const emoji = pluginEmoji(icons, { kind: canvas ? 'canvas' : 'note', path: row.rel });
                   if (emoji) return <Text style={styles.emoji}>{emoji}</Text>;
+                  if (row.rel.toLowerCase().endsWith('.pdf')) return <Icon name="file-pdf-box" size={20} color={colors.textDim} />;
                   return canvas ? <Icon name="view-grid-outline" size={20} color={colors.textDim} /> : null;
                 })()}
                 <Text style={[styles.label, { marginLeft: 4 }]} numberOfLines={1}>
@@ -291,6 +303,7 @@ const styles = StyleSheet.create({
   label: { color: colors.text, fontSize: 20, flex: 1 },
   emoji: { fontSize: 18, width: 22, textAlign: 'center' },
   guide: { position: 'absolute', top: 0, bottom: 0, width: 1, backgroundColor: colors.textFaint, opacity: 0.8 },
+  more: { padding: 6, marginRight: -8 },
   empty: { color: colors.textFaint, padding: 16, fontSize: 15 },
   input: {
     color: colors.text,

@@ -69,3 +69,11 @@ test("moveFolder moves notes, images, subfolders and empty folders, and removes 
   assert.ok(dirs.has("/v/Work/Ideas/empty"));
   assert.equal([...files.keys(), ...dirs].some((k) => k.startsWith("/v/Ideas")), false);
 });
+
+test("moveFolder leaves hidden files (.DS_Store) behind instead of failing halfway", async () => {
+  const { fs, files } = memFs({ "/v/Ideas/a.md": "hi", "/v/Ideas/.DS_Store": "junk" });
+  await moveFolder(fs, "/v/Ideas", "/v/Work/Ideas");
+  assert.equal(files.get("/v/Work/Ideas/a.md"), "hi");
+  assert.equal(files.has("/v/Work/Ideas/.DS_Store"), false);
+  assert.equal(files.has("/v/Ideas/.DS_Store"), false); // removed with the old folder
+});

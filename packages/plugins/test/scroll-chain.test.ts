@@ -110,3 +110,16 @@ test("a garbled dy does nothing", async () => {
   dom.from(block, { k: "block-scroll", dy: "nope" });
   assert.equal(scroller.scrollTop, 10);
 });
+
+test("notesChanged tells the block frames, and only those", async () => {
+  const { host, dom, start, call } = setup();
+  const frame = start();
+  await call(frame, "blocks.register", "board");
+  const container = { append() {}, parentElement: null } as unknown as HTMLElement;
+  host.mountBlock("board", container, "", { save() {}, remove() {}, edit() {} });
+  const block = dom.frames[dom.frames.length - 1];
+  const count = (f: any) => f.contentWindow.posted.filter((m: any) => m.k === "vault-changed").length;
+  host.notesChanged();
+  assert.equal(count(block), 1);
+  assert.equal(count(frame), 0);
+});

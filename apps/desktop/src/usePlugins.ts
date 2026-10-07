@@ -43,6 +43,9 @@ export function usePlugins({ vaultDir, editor, hasNote, notes, notify, onWroteNo
   const latest = useRef({ hasNote, notes, notify, onWroteNote, openNote });
   latest.current = { hasNote, notes, notify, onWroteNote, openNote };
 
+  // Tell block frames when the vault's list of notes changes (after a rename / delete / create / sync).
+  useEffect(() => host.current?.notesChanged(), [notes]);
+
   useEffect(() => {
     if (!vaultDir) return;
     /** The open note's live-session port (it follows the note showing in the active pane). */

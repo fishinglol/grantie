@@ -234,14 +234,17 @@ export class VaultSync {
     const index = (await this.#indexStore.load()) ?? emptyIndex();
     /** A device that has never synced a file: it only copies what Drive has, it never cleans anything up. */
     const freshDevice = Object.keys(index.files).length === 0;
-    const folderId = await this.#provider.ensureVaultFolder(this.#folderName, index.folderId);
+    // Independent of each other, so one round trip instead of two. The token is still taken before the listing below.
+    const [folderId, { token: changesToken }] = await Promise.all([
+      this.#provider.ensureVaultFolder(this.#folderName, index.folderId),
+      this.#provider.changesSince(undefined),
+    ]);
     // A different Drive folder (the old one was trashed, or this is another account) means the
     // records describe files that aren't there. Trusting them would read as "everything was
     // deleted remotely", so start over instead.
     if (index.folderId !== folderId) index.files = {};
     index.folderId = folderId;
-    // Taken before listing, so a change that lands during this sync is caught by the next poll.
-    const { token: changesToken } = await this.#provider.changesSince(undefined);
+    // (`changesToken` was taken before listing, so a change that lands during this sync is caught by the next poll.)
 
     await this.#fs.mkdirp(this.#vaultDir);
     const local = await listLocalFiles(this.#fs, this.#vaultDir);

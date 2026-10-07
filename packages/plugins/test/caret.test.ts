@@ -329,6 +329,28 @@ test("a block that had the caret and goes away (the note changed under it) takes
   assert.deepEqual(told().at(-1), { type: "move", caret: null, selecting: false, scroll: false });
 });
 
+test("a hidden block (kept alive behind another pane or sheet) never claims or drops the caret", async () => {
+  const { host, dom, block, told } = await withBlock();
+  dom.from(block, { k: "block-caret", event: { type: "move", caret: at(10, 5), selecting: false, scroll: false } });
+  // A second "table" block mounts hidden (its container reports no client rects, as a `display:none` kept-alive
+  // pane's would) and fires a stray report, the way every loaded block does when `caret-want` re-broadcasts on boot.
+  const hiddenContainer = { append() {}, classList: { remove() {} }, getClientRects: () => [] } as unknown as HTMLElement;
+  host.mountBlock("table", hiddenContainer, "", { save() {}, remove() {}, edit() {} });
+  const hidden = dom.frames.at(-1)!;
+  hidden.getBoundingClientRect = () => ({ left: 999, top: 999 });
+  dom.from(hidden, { k: "boot" });
+  dom.from(hidden, { k: "block-caret", event: { type: "move", caret: at(1, 1), selecting: false, scroll: false } });
+  assert.deepEqual(told().at(-1), { type: "move", caret: at(110, 205), selecting: false, scroll: false }); // still the visible block's
+  dom.from(hidden, { k: "block-caret", event: { type: "move", caret: null, selecting: false, scroll: false } }); // its own "gone"
+  assert.deepEqual(told().at(-1), { type: "move", caret: at(110, 205), selecting: false, scroll: false }); // unaffected
+});
+
+test("the caret mirror of a text field copies its alignment and inner width (a centred table header)", async () => {
+  const { block } = await withBlock();
+  assert.match(block.srcdoc, /"boxSizing", "textAlign"/);
+  assert.match(block.srcdoc, /width:" \+ el\.clientWidth/);
+});
+
 test("blocks hide their own caret when the plugin hid the note's", async () => {
   const { host, block } = await withBlock();
   (globalThis as any).document.querySelector = (sel: string) => (sel === ".live-editor .cm-content" ? {} : null);

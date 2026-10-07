@@ -37,7 +37,6 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
-// @ts-expect-error process is a nodejs global
 var host = process.env.TAURI_DEV_HOST;
 var workspaceRoot = path.resolve(__dirname, "../..");
 // https://vite.dev/config/
@@ -47,7 +46,7 @@ export default defineConfig(function () { return __awaiter(void 0, void 0, void 
                 plugins: [react()],
                 // The `@granite/*` workspace packages are shipped as raw TS source.
                 resolve: { preserveSymlinks: false },
-                optimizeDeps: { exclude: ["@granite/core-notes", "@granite/core-cloud"] },
+                optimizeDeps: { exclude: ["@granite/core-notes", "@granite/core-cloud", "@granite/live-editor", "@granite/plugins"] },
                 // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
                 //
                 // 1. prevent Vite from obscuring rust errors

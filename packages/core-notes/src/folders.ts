@@ -23,6 +23,9 @@ export async function moveFolder(fs: FolderFs, from: string, to: string): Promis
   async function walk(src: string, dest: string): Promise<void> {
     await fs.mkdirp(dest);
     for (const entry of await fs.listDir(src)) {
+      // Hidden files (macOS `.DS_Store`, ...) stay behind and go with the old folder: the desktop's file scope forbids touching them,
+      // and one refused rename would leave the move half done.
+      if (entry.name.startsWith(".")) continue;
       const s = join(src, entry.name);
       const d = join(dest, entry.name);
       if (entry.isDirectory) {

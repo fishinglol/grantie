@@ -9,6 +9,15 @@ const UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
 const FOLDER_MIME = "application/vnd.google-apps.folder";
 const FILE_FIELDS = "id,name,mimeType,modifiedTime,size";
 
+interface DriveItem {
+  id: string;
+  name: string;
+  mimeType: string;
+  modifiedTime: string;
+  size?: string;
+  parents?: string[];
+}
+
 /** Escape a value for a Drive `q` query string literal. */
 function q(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
@@ -48,13 +57,14 @@ export class GoogleDriveProvider implements CloudProvider {
     return ensureOk(await this.#http(url, { ...init, headers }), what);
   }
 
-  async #listChildren(parentId: string): Promise<Array<{ id: string; name: string; mimeType: string; modifiedTime: string; size?: string }>> {
-    const out: Array<{ id: string; name: string; mimeType: string; modifiedTime: string; size?: string }> = [];
+  /** Everything this app can see in the Drive, not trashed, whichever vault it is in (the caller picks out its own). */
+  async #listAll(): Promise<DriveItem[]> {
+    const out: DriveItem[] = [];
     let pageToken: string | undefined;
     do {
       const params = new URLSearchParams({
-        q: `'${q(parentId)}' in parents and trashed = false`,
-        fields: `nextPageToken, files(${FILE_FIELDS})`,
+        q: "trashed = false",
+        fields: `nextPageToken, files(${FILE_FIELDS},parents)`,
         pageSize: "1000",
         spaces: "drive",
       });
@@ -108,23 +118,35 @@ export class GoogleDriveProvider implements CloudProvider {
     // Start from a clean map, so a folder trashed elsewhere isn't remembered (or reused for uploads).
     this.#folders.clear();
     this.#folders.set("", folderId);
+    // One listing of everything (drive.file only shows our own files), paths rebuilt from the parent ids. Walking the
+    // folders one request at a time cost a round trip per folder, in every sync, which made a 25-folder vault take
+    // tens of seconds to catch up.
+    const items = await this.#listAll();
+    const byId = new Map(items.map((i) => [i.id, i]));
+    /** Vault-relative path of an item, or null when it is not inside this vault. */
+    const known = new Map<string, string | null>([[folderId, ""]]);
+    const pathOf = (id: string): string | null => {
+      if (known.has(id)) return known.get(id)!;
+      known.set(id, null); // a parent loop ends here
+      const item = byId.get(id);
+      const above = item?.parents?.[0] === undefined ? null : pathOf(item.parents[0]);
+      const path = item === undefined || above === null ? null : above ? `${above}/${item.name}` : item.name;
+      known.set(id, path);
+      return path;
+    };
     const files: RemoteFile[] = [];
-    const queue: Array<{ id: string; prefix: string }> = [{ id: folderId, prefix: "" }];
-    while (queue.length > 0) {
-      const { id, prefix } = queue.shift()!;
-      for (const child of await this.#listChildren(id)) {
-        const path = prefix ? `${prefix}/${child.name}` : child.name;
-        if (child.mimeType === FOLDER_MIME) {
-          this.#folders.set(path, child.id);
-          queue.push({ id: child.id, prefix: path });
-        } else {
-          files.push({
-            id: child.id,
-            path,
-            modifiedTime: child.modifiedTime,
-            size: child.size === undefined ? undefined : Number(child.size),
-          });
-        }
+    for (const item of items) {
+      const path = pathOf(item.id);
+      if (path === null || item.id === folderId) continue;
+      if (item.mimeType === FOLDER_MIME) {
+        this.#folders.set(path, item.id);
+      } else {
+        files.push({
+          id: item.id,
+          path,
+          modifiedTime: item.modifiedTime,
+          size: item.size === undefined ? undefined : Number(item.size),
+        });
       }
     }
     return files;

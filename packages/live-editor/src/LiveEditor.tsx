@@ -691,7 +691,7 @@ function linkUrlAt(state: EditorState, pos: number): string | null {
  * Anything else the user does (typing, moving the cursor, Escape) dismisses the offer. A click on a chip opens its address
  * (Ctrl/Cmd-click for any other link) through `openLink`, when the app gave one.
  */
-function linkChips(getBlocks: () => BlockRenderer | null, getOpenLink: () => ((url: string) => void) | undefined) {
+function linkChips(getBlocks: () => BlockRenderer | null, getOpenLink: () => ((url: string) => void) | undefined, tapOpensPdf: () => boolean) {
   const field = StateField.define<ChipSuggestion | null>({
     create: () => null,
     update(value, tr) {
@@ -795,9 +795,13 @@ function linkChips(getBlocks: () => BlockRenderer | null, getOpenLink: () => ((u
       click(event, view) {
         const el = event.target instanceof Element ? event.target.closest(".cm-chip, .cm-link") : null;
         const open = getOpenLink();
-        if (!el || !open || !view.state.selection.main.empty || (!el.classList.contains("cm-chip") && !(event.metaKey || event.ctrlKey))) return false;
+        if (!el || !open || !view.state.selection.main.empty) return false;
         const url = linkUrlAt(view.state, view.posAtDOM(el));
-        if (!url || !/^https?:\/\//i.test(url)) return false;
+        // Web addresses, and links to a PDF of the vault (the app opens those in a pane).
+        const toPdf = !!url && /^[^:]*\.pdf(#.*)?$/i.test(url);
+        if (!url || !(/^https?:\/\//i.test(url) || toPdf)) return false;
+        // A chip opens on a click; any other link on Ctrl/Cmd-click, or, where there is no Ctrl/Cmd (a phone), a tap on a link to a PDF.
+        if (!el.classList.contains("cm-chip") && !(event.metaKey || event.ctrlKey) && !(toPdf && tapOpensPdf())) return false;
         open(url);
         return true;
       },
@@ -1472,13 +1476,15 @@ export interface LiveEditorProps {
   toUrl: (path: string) => string;
   /** Draws the fenced blocks plugins have registered (a spreadsheet, say) in place. */
   blocks?: BlockRenderer;
-  /** Open a web address in the system browser (a click on a link chip). Without it, links stay text. */
+  /** Open a link on a click: a web address in the system browser, or a link to a PDF of the vault. Without it, links stay text. */
   onOpenLink?: (url: string) => void;
+  /** A plain tap (not Ctrl/Cmd-click) on a link to a PDF opens it: for a phone. */
+  tapOpensPdf?: boolean;
   /** The text changed by typing or a plugin block. `notePath` is the note that editor belongs to (it can differ from the one showing: a hidden editor's plugin may still save). */
   onChange: (value: string, notePath?: string) => void;
 }
 
-export default function LiveEditor({ ref, title, readOnly = false, value, embeds, notePath, toUrl, blocks, onOpenLink, onChange }: LiveEditorProps) {
+export default function LiveEditor({ ref, title, readOnly = false, value, embeds, notePath, toUrl, blocks, onOpenLink, tapOpensPdf = false, onChange }: LiveEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const readingRef = useRef(new Compartment());
@@ -1494,6 +1500,8 @@ export default function LiveEditor({ ref, title, readOnly = false, value, embeds
   blocksRef.current = blocks;
   const openLinkRef = useRef(onOpenLink);
   openLinkRef.current = onOpenLink;
+  const tapPdfRef = useRef(tapOpensPdf);
+  tapPdfRef.current = tapOpensPdf;
   onChangeRef.current = onChange;
   baseDirRef.current = notePath ? dirname(notePath) : "";
 
@@ -1553,7 +1561,7 @@ export default function LiveEditor({ ref, title, readOnly = false, value, embeds
           dropField,
           pluginInput(() => blocksRef.current ?? null),
           slashMenu(() => blocksRef.current ?? null),
-          linkChips(() => blocksRef.current ?? null, () => openLinkRef.current),
+          linkChips(() => blocksRef.current ?? null, () => openLinkRef.current, () => tapPdfRef.current),
           remoteCursors,
           caretEvents(() => {
             const b = blocksRef.current;

@@ -319,10 +319,29 @@ function mountCalendar(body, source, block) {
   const open = (path) => {
     if (typeof granite.vault.open !== "function") return granite.notice("Update the Granite app to open notes from the calendar");
     const started = Date.now();
-    granite.vault.open(path, { beside: true }).then(
-      () => (Date.now() - started > 1000 ? load() : undefined),
-      (e) => granite.notice(String(e.message || e)),
-    );
+    const tryOpen = (p) =>
+      granite.vault.open(p, { beside: true }).then(
+        () => (Date.now() - started > 1000 ? load() : undefined),
+        async (e) => {
+          // The note may have been renamed since this pill was drawn (e.g. by editing its title, which renames
+          // the file): refresh, and if exactly one note now carries the same date property, it's almost
+          // certainly this one — follow it, the same way Popup follows a note renamed out from under a card.
+          const stale = notes.find((n) => n.path === p);
+          if (stale) {
+            try {
+              const fresh = await readNotes();
+              const same = fresh.filter((n) => n.path !== p && n.props[cfg.date] === stale.props[cfg.date]);
+              notes = fresh;
+              render();
+              if (same.length === 1) return tryOpen(same[0].path);
+            } catch {
+              // No list: fall through to the notice below.
+            }
+          }
+          granite.notice(String(e.message || e));
+        },
+      );
+    tryOpen(path);
   };
   async function createNote(day) {
     if (creating || !parseDay(day)) return;
@@ -591,6 +610,50 @@ function mountCalendar(body, source, block) {
     loaded = true;
     render();
   }
+
+  // Notes are read once per mount, so a rename / delete / edit made elsewhere left stale pills whose files no longer exist. The app tells
+  // us when the list of notes changes (granite.vault.onChange, API 10: desktop); everywhere else, and for edits to a note's date, re-read
+  // when the pointer comes back or the window refocuses. Redraws only if something actually changed.
+  let refreshing = false;
+  let again = false;
+  let refreshedAt = 0;
+  const signature = (list) => JSON.stringify(list.map((n) => [n.path, n.props]).sort());
+  async function refresh(now) {
+    if (!loaded || (!now && Date.now() - refreshedAt < 1500)) return;
+    if (refreshing) {
+      again = again || now;
+      return;
+    }
+    refreshing = true;
+    try {
+      const fresh = await readNotes();
+      if (signature(fresh) !== signature(notes)) {
+        notes = fresh;
+        render();
+      }
+    } catch {
+      // Keep what is drawn; the ↻ button reports errors.
+    } finally {
+      refreshedAt = Date.now();
+      refreshing = false;
+      if (again) {
+        again = false;
+        void refresh(true);
+      }
+    }
+  }
+  let changeTimer = 0;
+  if (typeof granite.vault.onChange === "function") {
+    granite.vault.onChange(() => {
+      clearTimeout(changeTimer);
+      changeTimer = setTimeout(() => void refresh(true), 250);
+    });
+  }
+  document.addEventListener("pointerover", () => void refresh(false));
+  window.addEventListener("focus", () => void refresh(false));
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) void refresh(false);
+  });
 
   build();
   void load();
