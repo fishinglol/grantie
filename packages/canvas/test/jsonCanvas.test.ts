@@ -60,3 +60,38 @@ test("group helpers", () => {
   assert.deepEqual(groupsFirst(c.nodes).map((n) => n.id), ["g1", "a1", "f1"]);
   assert.deepEqual(boundsOf(c.nodes.filter((n) => n.type !== "group"), 10), { x: -10, y: -10, width: 570, height: 220 });
 });
+
+test("drawing node survives a parse → serialize round-trip", () => {
+  const raw = JSON.stringify({
+    nodes: [
+      { id: "d1", type: "drawing", x: 10, y: 20, width: 80, height: 40, points: [[0, 0], [10, 20]], stroke: { width: 3, kind: "marker" } },
+    ],
+    edges: [],
+  });
+  const c = parseCanvas(raw);
+  assert.equal(c.nodes.length, 1);
+  assert.equal(c.nodes[0]!.type, "drawing");
+  const back = parseCanvas(serializeCanvas(c));
+  assert.equal(back.nodes.length, 1);
+  assert.deepEqual(back.nodes[0], c.nodes[0]);
+});
+
+test("an Obsidian canvas without drawings is unchanged after parse+serialize", () => {
+  const c = parseCanvas(obsidian);
+  const back = parseCanvas(serializeCanvas(c));
+  assert.equal(back.nodes.length, c.nodes.length);
+  assert.equal(back.edges.length, c.edges.length);
+  assert.ok(back.nodes.every((n) => n.type !== "drawing"));
+});
+
+test("groupsFirst puts groups first, drawings last", () => {
+  const nodes = [
+    { id: "d1", type: "drawing" as const, x: 0, y: 0, width: 1, height: 1, points: [] as [number, number][], stroke: { width: 3, kind: "marker" as const } },
+    { id: "g1", type: "group" as const, x: 0, y: 0, width: 100, height: 100 },
+    { id: "t1", type: "text" as const, x: 0, y: 0, width: 100, height: 50, text: "hi" },
+  ];
+  const ordered = groupsFirst(nodes);
+  assert.equal(ordered[0]!.id, "g1");
+  assert.equal(ordered[1]!.id, "t1");
+  assert.equal(ordered[2]!.id, "d1");
+});

@@ -41,7 +41,17 @@ export interface GroupNode extends NodeBase {
   background?: string;
   backgroundStyle?: "cover" | "ratio" | "repeat";
 }
-export type CanvasNode = TextNode | FileNode | LinkNode | GroupNode;
+export interface DrawingNode extends NodeBase {
+  type: "drawing";
+  /** SVG points relative to the node's top-left, as [[x,y], ...]. */
+  points: [number, number][];
+  stroke: {
+    /** px. */
+    width: number;
+    kind: "marker" | "highlighter" | "washi" | "eraser";
+  };
+}
+export type CanvasNode = TextNode | FileNode | LinkNode | GroupNode | DrawingNode;
 
 export interface CanvasEdge {
   id: string;
@@ -88,7 +98,7 @@ export function parseCanvas(text: string): CanvasData {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("not a canvas file");
   const { nodes, edges } = raw as { nodes?: unknown; edges?: unknown };
   const list = (v: unknown) => (Array.isArray(v) ? v.filter((x) => x && typeof x === "object" && typeof x.id === "string") : []);
-  const cleanNodes = list(nodes).filter((n) => ["text", "file", "link", "group"].includes(n.type)) as CanvasNode[];
+  const cleanNodes = list(nodes).filter((n) => ["text", "file", "link", "group", "drawing"].includes(n.type)) as CanvasNode[];
   const ids = new Set(cleanNodes.map((n) => n.id));
   // An edge to a node that isn't there can't be drawn; Obsidian drops those too.
   const cleanEdges = (list(edges) as CanvasEdge[]).filter((e) => ids.has(e.fromNode) && ids.has(e.toNode));
@@ -119,9 +129,13 @@ export function nodesInGroup(data: CanvasData, group: CanvasNode): CanvasNode[] 
   );
 }
 
-/** Groups first, so they are painted under the cards they hold. Keeps the order within each kind. */
+/** Groups first (painted under), drawings last (on top). Keeps the order within each kind. */
 export function groupsFirst(nodes: CanvasNode[]): CanvasNode[] {
-  return [...nodes.filter((n) => n.type === "group"), ...nodes.filter((n) => n.type !== "group")];
+  return [
+    ...nodes.filter((n) => n.type === "group"),
+    ...nodes.filter((n) => n.type !== "group" && n.type !== "drawing"),
+    ...nodes.filter((n) => n.type === "drawing"),
+  ];
 }
 
 /** The box around `nodes`, with `pad` all round (for "Create group"). */

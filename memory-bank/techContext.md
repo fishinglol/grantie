@@ -78,11 +78,19 @@
 
 ## `apps/mobile` (Expo)
 - Deps: `expo-file-system` (new API: `File` / `Directory` / `Paths`),
-  `expo-image-picker`, `expo-document-picker`, `@granite/core-notes`.
+  `expo-image-picker`, `expo-document-picker`, `react-native-webview`, `@granite/core-notes`.
   Web preview also needs `react-dom`, `react-native-web`, `@expo/metro-runtime`.
 - Commands: `npx expo start` (Expo Go), `npm run web` (browser preview, in-memory
   FS), `npx expo export --platform ios|android` (bundle check without a device),
-  `npx tsc --noEmit`.
+  `npm run build:editor` (builds `editorHtml.ts`, `pluginCatalog.ts`, and `pdfHtml.ts`),
+  `npm run ship` (builds editor/pdf and publishes OTA update via `eas update --channel preview --platform android`),
+  `npx tsc -b`.
+- `pdfHtml.ts` generation: `node scripts/build-pdf.mjs` runs Vite to bundle `pdf-web/` (including `pdfjs-dist/legacy/build/pdf.mjs`), inlines CSS & JS into `src/pdfHtml.ts` (~1.7 MB) loaded directly by `react-native-webview` with bridge communication.
+- PDF & Note persistence in vault `.granite/`:
+  - `.granite/pdf-pages.json`: `Record<string, number>` storing last read page per PDF.
+  - `.granite/last-open.json`: `{ "rel": "<path>" }` storing last active note or PDF.
+  - `.granite/pdf-notes.json`: `Record<string, string>` pairing PDF to its companion Markdown note.
+  - `.granite/pdf-bookmarks.json`: `Record<string, number[]>` storing bookmarked pages.
 - `expo-file-system` new API is mostly **synchronous** (`file.write()`,
   `file.textSync()`, `dir.create()`); async variants exist too.
 - `conflict_cleaner/` (Python) and the JS workspace coexist as independent build

@@ -25,7 +25,20 @@ import DeviceSignIn from './src/components/DeviceSignIn';
 import FolderPicker from './src/components/FolderPicker';
 import PluginsSheet from './src/components/PluginsSheet';
 import { nameOf, parentOf } from './src/tree';
-import { followPdfNote, readPdfNotes, rememberPdfNote } from './src/pdfNotes';
+import {
+  followPdfBookmarks,
+  followPdfNote,
+  followPdfPage,
+  getLinkedPdfNote,
+  getPdfSavedPage,
+  readLastOpenFile,
+  readPdfBookmarks,
+  readPdfNotes,
+  rememberLastOpenFile,
+  rememberPdfNote,
+  rememberPdfPage,
+  togglePdfBookmark,
+} from './src/pdfNotes';
 import { CATALOG, loadCatalog, type CatalogPlugin } from './src/catalog';
 import Toast from './src/components/Toast';
 import Icon from './src/components/Icon';
@@ -255,6 +268,7 @@ export default function App() {
         setPdfLoadError(null);
         setDocId((d) => d + 1);
         setSidebar(false);
+        rememberLastOpenFile(fs, VAULT_DIR, rel).catch(() => undefined);
       } catch (err) {
         say(`Error: ${String(err)}`);
       }
@@ -277,6 +291,7 @@ export default function App() {
         setPdfBytes(null);
         setPdfLoadError(null);
         setSidebar(false);
+        rememberLastOpenFile(fs, VAULT_DIR, rel).catch(() => undefined);
 
         const absPath = join(VAULT_DIR, rel);
         const stat = await fs.stat(absPath).catch(() => ({ size: 0, modifiedMs: 0 }));
@@ -328,15 +343,25 @@ export default function App() {
     })();
   }, [flush]);
 
-  // First launch: make sure there is a vault, list it, and open the welcome note.
+  // Launch: make sure there is a vault, list it, and restore last open file (or welcome note).
   useEffect(() => {
     ensureSampleVault(fs)
       .then(async (welcome) => {
         await refresh();
+        const lastFile = await readLastOpenFile(fs, VAULT_DIR);
+        if (lastFile && (await fs.exists(join(VAULT_DIR, lastFile)))) {
+          if (isPdf(lastFile)) {
+            await openPdf(lastFile);
+            return;
+          } else {
+            await openNote(lastFile);
+            return;
+          }
+        }
         if (welcome) await openNote(welcome);
       })
       .catch((err) => say(`Error: ${String(err)}`));
-  }, [refresh, openNote, say]);
+  }, [refresh, openNote, openPdf, say]);
 
   useEffect(() => {
     restoreGoogleSession().then(setSession, () => undefined);
@@ -483,6 +508,7 @@ export default function App() {
     const back = isWeb
       ? null
       : BackHandler.addEventListener('hardwareBackPress', () => {
+          if (openPdfRel) return false;
           if (!sidebar || !openRel.current) return false;
           setSidebar(false);
           return true;
@@ -574,6 +600,8 @@ export default function App() {
           setOpen((o) => o && { ...o, rel: to });
         }
         await followPdfNote(fs, VAULT_DIR, rel, to); // a PDF's note button keeps opening this note
+        await followPdfPage(fs, VAULT_DIR, rel, to);
+        await followPdfBookmarks(fs, VAULT_DIR, rel, to);
         await refresh();
         await fixNoteRefs(rel, to, false, before);
         say(`Renamed to ${noteTitle(next)}`);
@@ -778,6 +806,8 @@ export default function App() {
         const before = scanRef.current.notes;
         await fs.moveFile(from, dest);
         await followPdfNote(fs, VAULT_DIR, rel, to); // a PDF and its note stay paired
+        await followPdfPage(fs, VAULT_DIR, rel, to);
+        await followPdfBookmarks(fs, VAULT_DIR, rel, to);
         if (!isPdf(rel)) {
           // Rewrite relative links inside the moved note (images, other notes).
           const text = await fs.readTextFile(dest);
@@ -918,6 +948,11 @@ export default function App() {
    * The note goes in the same folder as the PDF, named "Note PDF – <stem>.md".
    * The user can rename it afterwards via the sheet's editable heading.
    */
+  /**
+   * Ensure the linked note for a PDF exists (creates it on first call) and return its vault-relative path.
+   * The note goes in the same folder as the PDF, named "Note PDF – <stem>.md".
+   * The user can rename it afterwards via the sheet's editable heading.
+   */
   const openPdfNote = useCallback(async (pdfRel: string): Promise<string> => {
     const folder = parentOf(pdfRel);
     const stem = basename(pdfRel).replace(/\.pdf$/i, '');
@@ -936,6 +971,60 @@ export default function App() {
     await rememberPdfNote(fs, VAULT_DIR, pdfRel, noteRel);
     return noteRel;
   }, [refresh]);
+
+  const createPdfNote = useCallback(
+    async (pdfRel: string, customTitle?: string): Promise<string> => {
+      const folder = parentOf(pdfRel);
+      let noteName: string;
+      if (customTitle && customTitle.trim()) {
+        const clean = windowsSafe(customTitle.trim());
+        noteName = clean.endsWith('.md') ? clean : `${clean}.md`;
+      } else {
+        const stem = basename(pdfRel).replace(/\.pdf$/i, '');
+        const safeName = windowsSafe(stem.trim());
+        let candidate = `Note PDF \u2013 ${safeName}.md`;
+        let count = 1;
+        while (await fs.exists(join(VAULT_DIR, folder ? `${folder}/${candidate}` : candidate))) {
+          candidate = `Note PDF \u2013 ${safeName} (${count++}).md`;
+        }
+        noteName = candidate;
+      }
+      const noteRel = folder ? `${folder}/${noteName}` : noteName;
+      const noteAbs = join(VAULT_DIR, noteRel);
+      if (!(await fs.exists(noteAbs))) {
+        await fs.writeTextFile(noteAbs, '');
+        await refresh();
+      }
+      await rememberPdfNote(fs, VAULT_DIR, pdfRel, noteRel);
+      return noteRel;
+    },
+    [refresh],
+  );
+
+  const linkExistingNote = useCallback(async (pdfRel: string, noteRel: string): Promise<void> => {
+    await rememberPdfNote(fs, VAULT_DIR, pdfRel, noteRel);
+  }, []);
+
+  const getLinkedNote = useCallback(async (pdfRel: string): Promise<string | null> => {
+    return getLinkedPdfNote(fs, VAULT_DIR, pdfRel);
+  }, []);
+
+  const readBookmarks = useCallback(async (pdfRel: string): Promise<number[]> => {
+    const map = await readPdfBookmarks(fs, VAULT_DIR);
+    return map[pdfRel] || [];
+  }, []);
+
+  const toggleBookmark = useCallback(async (pdfRel: string, page: number): Promise<number[]> => {
+    return togglePdfBookmark(fs, VAULT_DIR, pdfRel, page);
+  }, []);
+
+  const readPdfPage = useCallback(async (pdfRel: string): Promise<number | null> => {
+    return getPdfSavedPage(fs, VAULT_DIR, pdfRel);
+  }, []);
+
+  const savePdfPage = useCallback(async (pdfRel: string, page: number): Promise<void> => {
+    await rememberPdfPage(fs, VAULT_DIR, pdfRel, page);
+  }, []);
 
   const readPdfNote = useCallback(async (noteRel: string): Promise<string> => {
     return fs.readTextFile(join(VAULT_DIR, noteRel)).catch(() => '');
@@ -961,9 +1050,17 @@ export default function App() {
           onOpenSidebar={() => setSidebar(true)}
           onOpenMenu={() => setMenu(true)}
           openPdfNote={openPdfNote}
+          createPdfNote={createPdfNote}
+          linkExistingNote={linkExistingNote}
+          getLinkedNote={getLinkedNote}
+          vaultNotes={scan.notes.filter((r) => /\.(md|markdown)$/i.test(r))}
           readNote={readPdfNote}
           writeNote={writePdfNote}
           renameNote={renamePdfNote}
+          readBookmarks={readBookmarks}
+          toggleBookmark={toggleBookmark}
+          readSavedPage={readPdfPage}
+          savePage={savePdfPage}
           say={say}
           jump={pdfJump}
         />
