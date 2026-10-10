@@ -18,8 +18,9 @@ export interface EnexNote {
 /** Cross-platform base64 decoder (Node.js + browser/webview). */
 export function decodeBase64(base64Str: string): Uint8Array {
   const clean = base64Str.replace(/\s+/g, "");
-  if (typeof Buffer !== "undefined") {
-    return new Uint8Array(Buffer.from(clean, "base64"));
+  const NodeBuffer = (globalThis as unknown as { Buffer?: { from: (s: string, enc: string) => ArrayLike<number> } }).Buffer;
+  if (NodeBuffer) {
+    return new Uint8Array(NodeBuffer.from(clean, "base64"));
   }
   const binary = atob(clean);
   const bytes = new Uint8Array(binary.length);

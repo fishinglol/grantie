@@ -346,3 +346,44 @@ The PDF theme is a view-only filter, never a re-render: `.pdf-dark` on `.pdf-vie
 ## Note: native table pattern is reverted (2026-10-05)
 The "native interactive table widget" pattern is **not active**: `LiveEditor` uses the old static `TableWidget` for pipe tables and the Simple Table plugin for ```` ```simple-table ````. `table.ts` is dead code kept on purpose; `packages/live-editor/native-table.patch` brings the wiring back.
 
+## Pattern: canvas whiteboard tools & drawings (.canvas format extension)
+The canvas supports a FigJam-style whiteboard layer on top of Obsidian-style JSON Canvas 1.0:
+- **Freehand strokes (`DrawingNode`)**: New node type `"drawing"` in `nodes` (`jsonCanvas.ts`), allowed in `parseCanvas`. Properties: `points` (relative to `x`/`y`), `stroke: { width, kind: "marker" | "highlighter" | "washi" | "eraser" }`. Rendered with `perfect-freehand` as SVG paths. Highlighters use `opacity: 0.4` and `mix-blend-mode: screen`. Washi uses a striped SVG `<pattern>`.
+- **Shapes (`ShapeCard`)**: Stored as `type: "text"` nodes with `styleAttributes: { shape: "<name>" }` so Obsidian shows the text content. Pure SVG path generators in `draw.ts` (drawer shapes: rect, ellipse, diamond, triangle, triangle-down, pill, cylinder; More shapes: pentagon, octagon, cross, arrow-left, arrow-right, chevron, star, speech-bubble).
+- **Stickies (`StickyCard`)**: Stored as `type: "text"` nodes with `styleAttributes: { sticky: true }` and pastel `color`.
+- **Connectors**: `styleAttributes: { path: "curved" | "elbow" | "straight" | "line" }` on edges, drawn using React Flow's `getBezierPath`, `getSmoothStepPath`, or `getStraightPath`.
+- **Minimap & Controls**: Bottom-right `<MiniMap />` styled for dark theme, with `-`, `+`, fit, and help controls.
+- **Not verified**: The real Tauri desktop window, real phone hardware (Samsung SM-A356E, Expo Go), Apple Pencil/stylus pressure variation, and whether Obsidian preserves `"drawing"` nodes upon saving.
+
+## Pattern: Mobile PDF Reader (Single-Page Google Play Books Mode & Immersive Shell)
+The mobile PDF reader (`apps/mobile/pdf-web/`, `apps/mobile/src/components/PdfScreen.tsx`) provides an e-book style reading UX:
+- **Single-page card carousel (`main.ts`, `reader.css`)**: Horizontal CSS scroll-snap (`scroll-snap-type: x mandatory`). Each page is a full-viewport card (`100vw × 100vh`) with header (`Page N`, `%`), scrollable card body, and footer (`p. N of M`, `%`).
+- **3-Zone Tap Navigation**: Left 15% turns page back, right 15% turns page forward, center 70% toggles reader controls (`toggle-controls`). Swiping right on page 1 opens the vault sidebar (`swipe-right`).
+- **Lazy Rendering & Viewport Preloading**: `IntersectionObserver` with `rootMargin: '0px 200% 0px 200%'` triggers PDF.js render only when approaching viewport. Eagerly loads neighboring pages (`page - 1`, `page + 1`) during active scroll. Wrapped in `try...catch` fallback for engine compatibility.
+- **Immersive Controls**: Top navigation bar (back to sidebar, title, search, display settings, bookmarks, menu) and bottom bar (Table of Contents, draggable scrubber slider, chevrons, page indicator).
+- **Orange FAB Note Linking & Action Sheet**: Tapping floating action button allows opening existing linked note, creating a new note (`Note PDF – <stem>.md`), or picking any existing Markdown note in the vault via searchable picker. Saved into `.granite/pdf-notes.json`.
+- **Hardware Back Button Safety**: React Native `BackHandler` consumes Android back event to close open sheets/modals or open the sidebar instead of exiting the app.
+
+## Pattern: Mobile PDF Reading Position & Active File Persistence
+- **Storage**:
+  - Saved PDF page numbers are stored in `.granite/pdf-pages.json` as a map `Record<string, number>` (`rememberPdfPage`, `getPdfSavedPage` in `pdfNotes.ts`).
+  - Last active open file is stored in `.granite/last-open.json` as `{ "rel": "<path>" }` (`rememberLastOpenFile`, `readLastOpenFile`).
+  - Stored inside vault `.granite/` so progress synchronizes cleanly across devices and survives app updates.
+- **Instant Restore (`instant: true`)**:
+  - On PDF load, `PdfScreen` fetches the saved page and dispatches `postToWeb({ type: 'goto', page, instant: true })`.
+  - In `pdf-web/main.ts`, `instant: true` uses `container.scrollTo({ left, behavior: 'auto' })` instead of `'smooth'`, preventing visible scrolling animations across multiple pages on startup.
+- **Debounced Save & AppState Flush**:
+  - During reading, page updates are debounced by 500ms (`schedulePageSave`).
+  - Auto-flushes immediately on unmount and on `AppState` transitions to `'background'` or `'inactive'`, guaranteeing no lost progress when the app is switched or closed.
+- **File Move & Rename Propagation**:
+  - Renaming or moving notes/PDFs calls `followPdfPage` and `followPdfBookmarks` to preserve reading state across file system path changes.
+
+## Pattern: Desktop Zero-Flicker Double-Buffering & Focal-Point Trackpad Zoom
+The desktop PDF viewer (`apps/desktop/src/pages/pdf/PdfView.tsx`) eliminates rendering flicker and provides smooth trackpad zooming:
+- **Zero-Flicker Double-Buffering**: PDF.js renders asynchronously into offscreen `scratchCanvas` and `scratchText` containers. Upon render completion, an atomic synchronous swap replaces the visible canvas and text layer, eliminating intermediate white flashes.
+- **Hardware Acceleration & Containment**: Canvas elements utilize CSS `transform: translateZ(0); -webkit-backface-visibility: hidden;` and `contain: layout style paint;` for GPU layer compositing.
+- **Focal-Point Cursor Zooming**: Trackpad pinch and wheel zooms scale relative to the mouse cursor position (`ratio = newScale / oldScale; scrollLeft = (scrollLeft + mouseX) * ratio - mouseX`).
+- **Debounced Heavy Render**: Scale changes update CSS transforms immediately via `requestAnimationFrame` while debouncing PDF.js canvas rerendering by 300ms (with a 3% change threshold), keeping zooming smooth.
+
+
+

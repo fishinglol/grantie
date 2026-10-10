@@ -1,6 +1,159 @@
 # Active Context
 
-_Last updated: 2026-10-05 (sync catch-up: one Drive listing). Earlier: 2026-10-05 (native table reverted). Earlier: 2026-10-05 (PDF dark theme tweaks, phone PDF links). Earlier: 2026-10-04 (PDF faster return). Earlier: 2026-10-04 (PDF dark theme). Earlier: 2026-10-04 (PDF last read page persistence). Earlier: 2026-10-04 (native interactive table widget); 2026-10-03 (mobile PDF phase 1); 2026-10-03 (PDF desktop viewer + updater v0.1.5); 2026-10-02 (updater + sidebar indent guides); 2026-09-28 (plugins coexistence); see `progress.md`)_
+_Last updated: 2026-10-10 (Mobile PDF Page & File Persistence Shipped to EAS Update; Instant Scroll Jump & AppState Auto-flush)_
+
+## Session 2026-10-10 (part 4) — Mobile PDF Page & File Persistence System Shipped
+User requested: When reading a PDF on phone, quitting the app or switching to another note/file should remember the exact page read, and reopening the app or returning to the PDF should open straight to that page rather than resetting to page 1 or welcome note.
+- **Persistence Engine (`apps/mobile/src/pdfNotes.ts`)**:
+  - `rememberPdfPage(fs, vaultDir, pdfRel, page)` & `readPdfPages(fs, vaultDir)`: persists page progress map to `.granite/pdf-pages.json`.
+  - `getPdfSavedPage(fs, vaultDir, pdfRel)`: returns saved 1-based page number.
+  - `followPdfPage(fs, vaultDir, from, to)`: migrates page progress when a PDF is renamed or moved.
+  - `rememberLastOpenFile(fs, vaultDir, rel)` & `readLastOpenFile(fs, vaultDir)`: persists last active file to `.granite/last-open.json`.
+- **Instant Restore & Web Reader Navigation (`apps/mobile/pdf-web/main.ts`)**:
+  - Updated `goToPage(n: number, instant: boolean = false)`: uses `container.scrollTo({ left, behavior: instant ? 'auto' : 'smooth' })`.
+  - Updated `pendingGoto: { page: number; instant: boolean } | null` and inbound `goto` message payload with `instant?: boolean`.
+  - Rebuilt via `npm run build:editor` (`pdfHtml.ts` regenerated).
+- **Auto-Save & AppState Flushing (`apps/mobile/src/components/PdfScreen.tsx`)**:
+  - Reads saved page on mount and performs instant jump on WebView `ready`.
+  - Tracks `currentPageRef` with a 500ms debounce save (`schedulePageSave`).
+  - Immediately flushes page save (`flushPageSave`) when unmounting and on `AppState` transitions to `'background'` or `'inactive'` (hard-kill / task-switch safety).
+- **Startup File Restore (`apps/mobile/App.tsx`)**:
+  - On launch, `readLastOpenFile` checks the last opened note or PDF. If it exists in the vault, it reopens it directly instead of resetting to `welcome.md`.
+  - `openNote` and `openPdf` update `rememberLastOpenFile`.
+  - `renameFile` and `moveNote` update both page and bookmark tracking via `followPdfPage` and `followPdfBookmarks`.
+- **Verified & Shipped**:
+  - `npx tsc -b apps/mobile apps/desktop`: 0 errors (clean).
+  - **Published to EAS preview channel**:
+    - Update Group ID: `b39fb5ae-9daf-4571-9056-e0335115c221`
+    - Android Update ID: `01a12411-66ce-7db6-a82f-412af8369a1f`
+    - EAS Dashboard: `https://expo.dev/accounts/fais12/projects/mobile/updates/b39fb5ae-9daf-4571-9056-e0335115c221`
+
+## Session 2026-10-10 (part 2) — Mobile PDF Reader (Single-Page Google Play Books Mode, Note Choice, Back Button Fix)
+User requested mobile PDF reader enhancements matching 3 screenshots and Google Play Books UX:
+- **Single-Page Mode (`apps/mobile/pdf-web/main.ts`, `reader.css`)**:
+  - Replaced continuous vertical page scroll with single-page horizontal snap carousel (`scroll-snap-type: x mandatory`).
+  - Each page renders as a full-viewport card (`100vw` × `100vh`) with header (`Page N`, `%`), scrollable body, and Google Play Books style footer (`p. 10 of 233`, `7%`).
+  - Tap navigation: left 15% taps turn page back, right 15% taps turn page forward, center 70% tap toggles reader controls (`toggle-controls`).
+  - Swiping right on page 1 opens the vault sidebar (`swipe-right`).
+- **Google Play Books Immersive Controls (`PdfScreen.tsx`)**:
+  - Single tap toggles both top and bottom bars smoothly.
+  - **Top Bar**: Back button `←` (returns to sidebar), book title (truncated), Search (`magnify`), Display options (`format-letter-case`), Bookmark toggle (`bookmark`), and Menu (`dots-vertical`).
+  - **Bottom Bar**: Table of Contents (`format-list-bulleted`), responsive drag scrubber slider with chevron step buttons (`‹`, `›`), and page indicator `10 / 233`.
+  - **Modals**:
+    - Contents & Bookmarks modal: "สารบัญ" tab (outline tree with indentation & active chapter bullet) and "ที่คั่นหน้า" tab (bookmarked pages with jump and delete actions).
+    - Display options modal: Font size stepper (`A-` / `A+`), Font family (System, Serif, Mono), Theme picker (Dark, Sepia, Light).
+    - Search modal: Search input with debounced querying, page snippet previews with highlighted search matches, and one-tap page jumping.
+- **Orange FAB Note Linking & Creation Choice (`PdfScreen.tsx`, `pdfNotes.ts`, `App.tsx`)**:
+  - Tapping orange floating note button (`fab`) opens an action sheet:
+    - "เปิดโน้ตที่เชื่อมโยงอยู่" (Open current linked note)
+    - "สร้างไฟล์ใหม่" (Create new note `Note PDF – <stem>.md`)
+    - "เอาไฟล์เดิมใน Vault มาเขียนแทน" (Choose existing note from vault)
+  - Added Note Picker modal listing all Markdown notes in the vault with real-time filter search. Tapping links the chosen note to the PDF and saves into `.granite/pdf-notes.json`.
+  - Added switch note button inside the note bottom sheet header.
+- **Android Back Button Interception (`PdfScreen.tsx`, `App.tsx`)**:
+  - Added `BackHandler` hardwareBackPress listener in `PdfScreen.tsx` that consumes the back event (`return true`):
+    - When note bottom sheet is open: closes ONLY the note sheet (flushes autosave), does NOT exit the app.
+    - When note picker, action sheet, TOC, search, or display modal is open: closes that modal.
+    - When controls are showing: hides controls.
+    - When reading: opens sidebar safely instead of exiting the app.
+- **Verified**:
+  - `npx tsc -b apps/mobile apps/desktop`: 0 errors (clean).
+  - `npm run build:editor` in `apps/mobile`: `pdfHtml.ts` (1712 KB) generated successfully.
+  - `node --test packages/core-notes/test/*.test.ts apps/desktop/test/*.test.ts`: 100/100 tests pass.
+
+## Session 2026-10-10 — PDF Book Reading Mode (Two-Page Spread, Scrubber & Popovers)
+User requested e-book reader mode for PDFs (Google Play Books style) with two-page book spreads, bottom scrubber, and popovers for Contents/Bookmarks, Display options, and Search:
+- **Two-Page Book Spread (`PdfView.tsx`, `PdfView.css`)**:
+  - Displays facing pages side-by-side (e.g. `142–143 / 233`) with responsive scale fitting and center book spine shadow. Page 1 is displayed as single cover page.
+  - Sizing dynamically adapts to window dimensions without horizontal overflow.
+  - Previous/next navigation advances/steps back by 2 pages in spread mode.
+  - ArrowLeft/PageUp and ArrowRight/PageDown keyboard shortcuts.
+- **Bottom Scrubber Bar (`PdfScrubber.tsx`, `PdfView.css`)**:
+  - Full-width draggable progress slider with filled blue progress.
+  - Quick page jump, chevron navigation buttons (`‹` `›`), and spread/page indicator (`142–143 / 233` or `142 / 233`).
+- **Header Toolbar (`PdfToolbar.tsx`, `PdfView.css`)**:
+  - Truncated book title with tooltip.
+  - Action icons: Fullscreen (`⛶`), Search (`🔍`), Display options (`A`), Contents/Bookmarks (`☰`), Bookmark toggle (`🔖`), and Dark theme (`☀`/`☾`).
+- **Contents & Bookmarks Popover (`PdfContentsModal.tsx`, `pdfOutline.ts`)**:
+  - "Contents" tab: Table of contents tree parsed from PDF outline (`doc.getOutline()`), resolving destinations to 1-based page numbers with active chapter bullet (`●`) and highlight.
+  - "Bookmarks" tab: Lists user-bookmarked pages with jump links and delete buttons. Persisted in `localStorage` under `granite:pdf-bookmarks:<file>`.
+- **Display Options Popover (`PdfDisplayModal.tsx`, `pdfState.ts`, `PdfReflowView.tsx`)**:
+  - Dark theme toggle switch.
+  - Page layout segmented buttons: Single page (`[ A ]`), Two-page spread (`[ 📖 ]`), Continuous scroll (`[ 📄 ]`).
+  - View mode toggle: Original PDF Vector Pages (Canvas) ↔ Text Reflow Book Reader.
+  - Typography settings for Reflow Reader: Font family (Georgia, Merriweather, System, Monospace), Font size stepper (`[ T ] 100% [ T ]`), Line height stepper (`75%`, `100%`, etc.), and Justify alignment (Left vs Justified).
+- **Search in Book Popover (`PdfSearchModal.tsx`, `pdfSearch.ts`)**:
+  - Text search with debouncing and cancellation (`AbortSignal`).
+  - Contextual snippet matching with highlighted terms and page numbers.
+- **Zero-Flicker Double-Buffering & Smooth Zooming (`PdfView.tsx`, `PdfView.css`)**:
+  - Eliminated text flickering and canvas blink: Removed `canvas.style.visibility = "hidden"` and early `text.replaceChildren()`. Implemented double-buffered rendering into offscreen canvas (`scratchCanvas`) and text layer container (`scratchText`), performing an atomic synchronous swap once PDF.js completes rendering. Previous content stays visible during background renders.
+  - Debounced heavy PDF.js render scale (150ms) while keeping immediate visual GPU scaling via CSS width/height and text layer CSS `transform: scale(scale / renderScale)`.
+  - Batch wheel and pinch zoom via `requestAnimationFrame` with continuous zoom factor.
+- **Trackpad Horizontal & Vertical Panning (`PdfView.tsx`, `PdfView.css`)**:
+  - Fixed WebKit trackpad horizontal scroll bug: Changed `.pdf-reader-surface` from flex to `display: block; overflow: auto; overflow-x: auto; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;`.
+  - Changed stage from `margin: auto; width: max-content;` to `width: fit-content; min-width: 100%; min-height: 100%; box-sizing: border-box; padding: 24px;` — eliminates negative margin clipping so both left and right spread pages are 100% reachable.
+  - Added drag-to-pan hand tool with `grab`/`grabbing` cursor when zoomed in (`userZoom > 1.02`), plus automatic center-preserving focal point zoom.
+- **Verified**:
+  - `node --test apps/desktop/test/pdfState.test.ts apps/desktop/test/pdfOutline.test.ts packages/core-notes/test/pdfText.test.ts`: 25/25 tests pass.
+  - `npx tsc -b apps/desktop`: 0 errors (clean).
+  - `npm --workspace=desktop run build`: production bundle built successfully.
+  - `npm --workspace=desktop run tauri build -- --bundles app`: Granite.app bundled and launched.
+
+User requested FigJam-style whiteboard tools and toolbar for Granite's canvas, followed by a full icon redesign for clean, intuitive, and beautiful whiteboard tools, and final production builds.
+- **Branch**: `feat/canvas-whiteboard` branched off `feat/mobile-pdf`.
+- **Format**: Added `DrawingNode` type to `packages/canvas/src/jsonCanvas.ts` and allowed `"drawing"` in `parseCanvas`. Preserves unknown fields on round-trips. Updated `groupsFirst` to paint drawings on top.
+- **Pure Helpers & Path Builders (`packages/canvas/src/draw.ts`)**:
+  - `strokeBox`: bounding box calculation + relative point offset.
+  - `smoothPath`: quadratic Bézier smoothing through midpoints.
+  - `simplify`: point distance thinning based on tolerance (1.5px).
+  - `hitsStroke`: point & segment distance hit testing for eraser.
+  - Shape SVG generators: drawer shapes (`rect`, `ellipse`, `diamond`, `triangle`, `triangle-down`, `pill`, `cylinder`) and "More shapes" basic set (`pentagon`, `octagon`, `cross`, `arrow-left`, `arrow-right`, `chevron`, `star`, `speech-bubble`).
+- **Canvas Board (`packages/canvas/src/CanvasView.tsx`)**:
+  - Main bottom-center toolbar in FigJam order: Select (V), Hand (H), Pen (M), Sticky (S), Shape (X), Text (T), Section (⇧S), Table, Widgets (puzzle popover), Plus (file/media/link card).
+  - Pen drawer: marker, highlighter (screen blend mode), washi tape (striped pattern), eraser (point hit-testing delete elements in 1 undo step), 2 width variants (3px/8px), 8 preset colours + rainbow native color picker. Powered by `perfect-freehand`.
+  - Shapes drawer: connector styles (curved, elbow, straight, line), 7 drawer shapes, and "More shapes" button.
+  - More Shapes panel: right side drawer with search, recents, connector shortcuts, and full basic shapes grid.
+  - Sticky card: square text card, filled pastel background, no border.
+  - Shape card: SVG outline with centered LiveEditor text.
+  - Sections: group nodes with title chip (`Section N`), drag-to-draw size placement.
+  - Minimap: bottom-right `<MiniMap />` with zoom in/out, fit, and help buttons.
+  - Keyboard shortcuts: V, H, M, S, T, X, R, O, ⇧S, Esc to select, Cmd/Ctrl+Z undo/redo.
+- **Icon Redesign (`packages/canvas/src/CanvasView.tsx` & `packages/canvas/src/canvas.css`)**:
+  - Replaced crude retro polygons with clean, modern Lucide / FigJam vector icons:
+    - **Select**: Modern sleek vector pointer arrow (`MousePointer2`).
+    - **Hand**: Clean, recognizable open palm (`Lucide Hand`).
+    - **Pen / Marker**: Sleek angled drawing marker (`Lucide Pencil/Pen`).
+    - **Highlighter**: Chisel-tipped marker with highlight stroke underneath (`Lucide Highlighter`).
+    - **Washi Tape**: Distinctive tape spool / dispenser roll (`Lucide Tape`).
+    - **Eraser**: Angled rubber eraser with rubbing bevel on surface (`Lucide Eraser`).
+    - **Sticky Note**: Classic Post-it note with folded bottom-right peel corner.
+    - **Shapes**: Intersecting rounded square and circle.
+    - **Text**: Legible serif typography 'T'.
+    - **Section**: Framed container with title header chip.
+    - **Table**: Symmetrical 3×3 grid table.
+    - **Connectors**: Unified `ConnectorGlyph` component with start dots, clean paths (straight, curved, elbow, plain), and sharp arrowheads across ShapesDrawer, MoreShapesPanel, and SelectionMenu.
+    - **Pen Widths**: Clean horizontal stroke width indicators (2.5px fine vs 6.5px bold).
+    - **Selection Menu**: Crisp `Trash2`, `Palette`, `Focus`, `Pencil`, `ExternalLink`, `Section Frame`, `ArrowLeftRight`, and `ConnectorGlyph`.
+    - **UI Toolbar Styling**: Modern glassmorphism pill (`backdrop-filter: blur(20px)`, dark translucent background, subtle border, smooth hover/active scaling and glow).
+- **Performance Optimization (lag fix)**:
+  - Removed `useViewport()` subscription from `Board` which was re-rendering the entire board and all cards on every single pan/zoom frame.
+  - Refactored `DrawOverlay` to manage live drawing via direct DOM `pathRef.current.setAttribute("d", ...)` with zero React `setState` calls during stroke drag (runs at locked 60-120fps with zero reconciliation overhead).
+  - Throttled stroke point sampling with Euclidean distance threshold (< 2.5px), reducing stroke point density by ~60-70%.
+  - Memoized all card components (`DrawingCard`, `ShapeCard`, `StickyCard`, `TextCard`, `FileCard`, `LinkCard`, `GroupCard`, `LinkView`) via `React.memo` and memoized SVG paths (`useMemo`).
+  - Passed stable `nodes` array reference to `<ReactFlow>` instead of inline `.map(...)` calls that were thrashing React Flow's node cache.
+  - Prevented continuous `commit()` / disk serialization during section drag resize (only commits on pointer up).
+- **Copy, Paste & Duplicate (`packages/canvas/src/CanvasView.tsx`)**:
+  - `⌘C` / `Ctrl+C` copy, `⌘V` / `Ctrl+V` paste, `⌘D` / `Ctrl+D` duplicate for selected cards, shapes, drawings, and sections.
+  - Dedicated "Duplicate (⌘D)" button added to the `SelectionMenu` toolbar.
+  - Subgraph cloning handles connected edges (remaps node IDs and updates `fromNode`/`toNode` references) and contained section child nodes.
+  - Paste handles both internal canvas nodes (with incremental +30px offset) and external clipboard content (creates link card for URLs, or note card for plain text).
+  - Protected by input/textarea/contentEditable typing guards.
+- **Verified & Built**:
+  - `npm test --workspace=@granite/canvas`: 27/27 tests pass.
+  - `npx tsc -b apps/desktop apps/mobile`: clean (0 errors).
+  - `npm run build:editor` in `apps/mobile`: generates `editorHtml.ts` (1685 KB) cleanly.
+  - `npm run build` in `apps/desktop`: `tsc && vite build` succeeded in 5.47s.
+  - Production macOS Desktop Application: `Granite.app` bundled and updated in `apps/desktop/src-tauri/target/release/bundle/macos/Granite.app`.
 
 ## Session 2026-10-05 (night) — sync took 1+ minute to show the other device's edits (desktop <-> phone)
 User (Thai): after writing on one device, the other (app opened fresh, or already open) needed at least a minute to show it.

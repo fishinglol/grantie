@@ -1,12 +1,36 @@
-import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 // The legacy build: the macOS 13 WebView (Safari 16) lacks language features the modern build assumes.
 import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist/legacy/build/pdf.mjs";
 import workerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
-import type { PdfSelection } from "@granite/core-notes";
+import { basename, type PdfSelection } from "@granite/core-notes";
 import { bindTextLayer } from "./textSelection";
-import { getPdfDark, getSavedPdfPage, savePdfPage, setPdfDark } from "./pdfState";
+import {
+  getPdfDark,
+  getPdfLayout,
+  getPdfReadingMode,
+  getPdfTypography,
+  getSavedBookmarks,
+  getSavedPdfPage,
+  saveBookmarks,
+  savePdfPage,
+  setPdfDark,
+  setPdfLayout,
+  setPdfReadingMode,
+  setPdfTypography,
+  toggleBookmark,
+  type PdfLayoutMode,
+  type PdfReadingMode,
+  type PdfTypography,
+} from "./pdfState";
+import { extractPdfOutline, type PdfTocItem } from "./pdfOutline";
+import { PdfToolbar } from "./PdfToolbar";
+import { PdfContentsModal } from "./PdfContentsModal";
+import { PdfDisplayModal } from "./PdfDisplayModal";
+import { PdfSearchModal } from "./PdfSearchModal";
+import { PdfScrubber } from "./PdfScrubber";
+import { PdfReflowView } from "./PdfReflowView";
 import "./PdfView.css";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -40,7 +64,8 @@ interface Props {
 const GAP = 12;
 const PAD = 16;
 const MIN_SCALE = 0.25;
-const MAX_SCALE = 4;
+/** Backing-store budget per page canvas. Zoomed in on a retina screen a page would otherwise be 20M+ pixels: slow to draw, copy and filter. */
+const MAX_CANVAS_PIXELS = 8_000_000;
 /** The zoom at which a page of `pageWidth` fills `width` (the scroll area), never below the smallest zoom nor above 200%. */
 const fitScale = (width: number, pageWidth: number) => Math.min(2, Math.max(MIN_SCALE, (width - PAD * 2) / pageWidth));
 
@@ -178,6 +203,7 @@ interface PageProps {
   flash: PdfSelection | null;
   flashKey: number;
   onBacklink: (index: number) => void;
+  alwaysNear?: boolean;
 }
 
 interface PageRects {
@@ -187,25 +213,48 @@ interface PageRects {
 const NO_RECTS: PageRects = { marks: [], flash: [] };
 
 /** One page. It draws itself (canvas + selectable text) only while it is near the screen, so a long PDF does not fill the memory. */
-function PageView({ doc, num, width, height, scale, marks, flash, flashKey, onBacklink }: PageProps) {
+const PageView = memo(function PageView({ doc, num, width, height, scale, marks, flash, flashKey, onBacklink, alwaysNear = false }: PageProps) {
   const pageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
   const divsRef = useRef<HTMLElement[]>([]);
   const lastTask = useRef<RenderTask | null>(null);
   const scrolledFor = useRef(0);
-  const [near, setNear] = useState(false);
+  const [near, setNear] = useState(alwaysNear);
   const nearRef = useRef(near);
   nearRef.current = near;
   const [ready, setReady] = useState(0);
   const [rects, setRects] = useState<PageRects>(NO_RECTS);
 
+  // Debounce the heavy PDF.js render scale so rapid zooming doesn't spam re-renders
+  const isInitial = useRef(true);
+  const [renderScale, setRenderScale] = useState(scale);
+
   useEffect(() => {
+    if (isInitial.current) {
+      isInitial.current = false;
+      setRenderScale(scale);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setRenderScale((prev) => {
+        if (prev > 0 && Math.abs(prev - scale) / prev < 0.03) return prev;
+        return scale;
+      });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [scale]);
+
+  useEffect(() => {
+    if (alwaysNear) {
+      setNear(true);
+      return;
+    }
     const el = pageRef.current!;
     const obs = new IntersectionObserver(([e]) => setNear(e!.isIntersecting), { root: el.closest(".pdf-scroll"), rootMargin: "150% 0px" });
     obs.observe(el);
     return () => obs.disconnect();
-  }, []);
+  }, [alwaysNear]);
 
   useEffect(() => {
     if (!near) return;
@@ -213,43 +262,71 @@ function PageView({ doc, num, width, height, scale, marks, flash, flashKey, onBa
     let task: RenderTask | undefined;
     let layer: InstanceType<typeof pdfjs.TextLayer> | undefined;
     let unbind: (() => void) | undefined;
-    const canvas = canvasRef.current!;
-    const text = textRef.current!;
+    const canvas = canvasRef.current;
+    const text = textRef.current;
+    if (!canvas || !text) return;
+
     void (async () => {
       // One canvas can't be drawn twice at once: wait for a cancelled render of the previous scale to let go.
       await lastTask.current?.promise.catch(() => undefined);
       if (dead) return;
       const page = await doc.getPage(num);
       if (dead) return;
-      const viewport = page.getViewport({ scale });
-      const dpr = window.devicePixelRatio || 1;
-      canvas.style.visibility = "hidden"; // a resized canvas shows black until it is painted
-      canvas.width = Math.floor(viewport.width * dpr);
-      canvas.height = Math.floor(viewport.height * dpr);
-      text.replaceChildren();
-      task = page.render({ canvas, viewport, transform: dpr === 1 ? undefined : [dpr, 0, 0, dpr, 0, 0] });
+      const viewport = page.getViewport({ scale: renderScale });
+      const dpr = Math.min(window.devicePixelRatio || 1, Math.sqrt(MAX_CANVAS_PIXELS / (viewport.width * viewport.height)));
+      const targetWidth = Math.floor(viewport.width * dpr);
+      const targetHeight = Math.floor(viewport.height * dpr);
+
+      // Render to an offscreen scratch canvas so existing content stays visible without flashing
+      const scratchCanvas = document.createElement("canvas");
+      scratchCanvas.width = targetWidth;
+      scratchCanvas.height = targetHeight;
+
+      const scratchText = document.createElement("div");
+      scratchText.className = "textLayer";
+      scratchText.style.setProperty("--scale-factor", String(renderScale));
+      scratchText.style.setProperty("--total-scale-factor", String(renderScale));
+
+      task = page.render({
+        canvas: scratchCanvas,
+        viewport,
+        transform: dpr === 1 ? undefined : [dpr, 0, 0, dpr, 0, 0],
+      });
       lastTask.current = task;
-      layer = new pdfjs.TextLayer({ textContentSource: page.streamTextContent(), container: text, viewport });
+
+      layer = new pdfjs.TextLayer({
+        textContentSource: page.streamTextContent(),
+        container: scratchText,
+        viewport,
+      });
+
       await Promise.all([task.promise, layer.render()]);
       if (dead) return;
-      unbind = bindTextLayer(text);
-      canvas.style.visibility = "";
+
+      // Atomic swap: update on-screen canvas and text layer simultaneously in one tick
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      const targetCtx = canvas.getContext("2d");
+      targetCtx?.drawImage(scratchCanvas, 0, 0);
+
+      unbind = bindTextLayer(scratchText);
+      text.replaceChildren(...scratchText.childNodes);
+
       divsRef.current = layer.textDivs;
       pageDivs.set(pageRef.current!, layer.textDivs);
       setReady((n) => n + 1);
     })().catch((e) => {
       if (!dead && e?.name !== "RenderingCancelledException") console.error(e);
     });
+
     return () => {
       dead = true;
       task?.cancel();
       layer?.cancel();
       unbind?.();
-      divsRef.current = [];
-      pageDivs.delete(pageRef.current!);
-      setRects(NO_RECTS);
+      // Keep existing canvas & text intact while waiting for next render to complete
     };
-  }, [doc, num, scale, near]);
+  }, [doc, num, renderScale, near]);
 
   // Far from the screen: give the canvas's memory back (the next render sets its size again).
   useEffect(() => {
@@ -284,7 +361,12 @@ function PageView({ doc, num, width, height, scale, marks, flash, flashKey, onBa
       ref={pageRef}
       className="pdf-page"
       data-page={num}
-      style={{ width, height, "--scale-factor": scale, "--total-scale-factor": scale } as CSSProperties}
+      style={{
+        width,
+        height,
+        "--scale-factor": renderScale,
+        "--total-scale-factor": renderScale,
+      } as CSSProperties}
       onClick={(e) => {
         // Cmd/Ctrl-click a highlighted passage: the note that links to it.
         if (!e.metaKey && !e.ctrlKey) return;
@@ -304,10 +386,17 @@ function PageView({ doc, num, width, height, scale, marks, flash, flashKey, onBa
           <i key={`${flashKey}:${i}`} className="pdf-flash" style={r} />
         ))}
       </div>
-      <div ref={textRef} className="textLayer" />
+      <div
+        ref={textRef}
+        className="textLayer"
+        style={{
+          transform: renderScale && scale !== renderScale ? `scale(${scale / renderScale})` : undefined,
+          transformOrigin: "top left",
+        }}
+      />
     </div>
   );
-}
+});
 
 export default function PdfView({ file, read, stamp, backlinks, jump, onCopyLink, onOpenNote }: Props) {
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
@@ -315,16 +404,51 @@ export default function PdfView({ file, read, stamp, backlinks, jump, onCopyLink
   const [error, setError] = useState<string | null>(null);
   const [scale, setScale] = useState(0);
   const [current, setCurrent] = useState(1);
-  const [pageText, setPageText] = useState("1");
   const [pop, setPop] = useState<{ x: number; y: number; page: number; sel: PdfSelection } | null>(null);
   const [dark, setDark] = useState(getPdfDark);
+
+  const [layout, setLayout] = useState<PdfLayoutMode>(getPdfLayout);
+  const [readingMode, setReadingMode] = useState<PdfReadingMode>(getPdfReadingMode);
+  const [typography, setTypography] = useState<PdfTypography>(getPdfTypography);
+  const [toc, setToc] = useState<PdfTocItem[]>([]);
+  const [bookmarks, setBookmarks] = useState<number[]>(() => getSavedBookmarks(file));
+  const [activeModal, setActiveModal] = useState<"contents" | "display" | "search" | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [containerSize, setContainerSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
+  const [userZoom, setUserZoom] = useState<number>(1.0);
+
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const prevZoomRef = useRef(userZoom);
+  const userZoomRef = useRef(userZoom);
+  userZoomRef.current = userZoom;
+  const isWheelZoomRef = useRef(false);
+  const isPanningRef = useRef(false);
+  const [isPanning, setIsPanning] = useState(false);
+  const panStartRef = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
   const keepRatio = useRef<number | null>(null);
   const handledJump = useRef(0);
   const currentRef = useRef(1);
   const restoredRef = useRef(false);
   const lastSavedPageRef = useRef<number | null>(null);
+
+  // ResizeObserver to track container dimensions accurately
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const update = () => {
+      if (el.clientWidth > 0 && el.clientHeight > 0) {
+        setContainerSize({ width: el.clientWidth, height: el.clientHeight });
+      }
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const bookTitle = useMemo(() => basename(file).replace(/\.pdf$/i, ""), [file]);
 
   useEffect(() => {
     let dead = false;
@@ -352,6 +476,52 @@ export default function PdfView({ file, read, stamp, backlinks, jump, onCopyLink
     };
   }, [file, read, stamp]);
 
+  // Extract outline (Table of Contents) once document is loaded
+  useEffect(() => {
+    if (!doc) return;
+    let dead = false;
+    void extractPdfOutline(doc).then((items) => {
+      if (!dead) setToc(items);
+    });
+    return () => {
+      dead = true;
+    };
+  }, [doc]);
+
+  // Refresh bookmarks on file change
+  useEffect(() => {
+    setBookmarks(getSavedBookmarks(file));
+  }, [file]);
+
+  const handleToggleBookmark = useCallback(() => {
+    toggleBookmark(file, current);
+    setBookmarks(getSavedBookmarks(file));
+  }, [file, current]);
+
+  const handleRemoveBookmark = useCallback(
+    (p: number) => {
+      const next = getSavedBookmarks(file).filter((b) => b !== p);
+      saveBookmarks(file, next);
+      setBookmarks(next);
+    },
+    [file],
+  );
+
+  const handleSelectLayout = useCallback((l: PdfLayoutMode) => {
+    setPdfLayout(l);
+    setLayout(l);
+  }, []);
+
+  const handleSelectReadingMode = useCallback((m: PdfReadingMode) => {
+    setPdfReadingMode(m);
+    setReadingMode(m);
+  }, []);
+
+  const handleChangeTypography = useCallback((typo: Partial<PdfTypography>) => {
+    setPdfTypography(typo);
+    setTypography((prev) => ({ ...prev, ...typo }));
+  }, []);
+
   /** Distance of each page's top from the top of the scrolled content. */
   const tops = useMemo(() => {
     let y = PAD;
@@ -362,10 +532,50 @@ export default function PdfView({ file, read, stamp, backlinks, jump, onCopyLink
     });
   }, [sizes, scale]);
 
-  const goTo = useCallback((page: number) => {
-    const sc = scrollRef.current;
-    if (sc && tops.length) sc.scrollTo({ top: tops[Math.min(Math.max(page, 1), tops.length) - 1]! - PAD });
-  }, [tops]);
+  const goTo = useCallback(
+    (page: number) => {
+      if (!doc) return;
+      const target = Math.min(Math.max(page, 1), doc.numPages);
+      setCurrent(target);
+      currentRef.current = target;
+      if (restoredRef.current && target !== lastSavedPageRef.current) {
+        lastSavedPageRef.current = target;
+        savePdfPage(file, target);
+      }
+      if (layout === "scroll") {
+        const sc = scrollRef.current;
+        if (sc && tops.length) sc.scrollTo({ top: tops[target - 1]! - PAD });
+      }
+    },
+    [doc, file, layout, tops],
+  );
+
+  const handlePrev = useCallback(() => {
+    if (layout === "spread") {
+      if (current <= 2) {
+        goTo(1);
+      } else {
+        const left = current % 2 === 0 ? current : current - 1;
+        goTo(Math.max(1, left - 2));
+      }
+    } else {
+      goTo(current - 1);
+    }
+  }, [current, goTo, layout]);
+
+  const handleNext = useCallback(() => {
+    if (!doc) return;
+    if (layout === "spread") {
+      if (current === 1) {
+        goTo(2);
+      } else {
+        const left = current % 2 === 0 ? current : current - 1;
+        goTo(Math.min(doc.numPages, left + 2));
+      }
+    } else {
+      goTo(current + 1);
+    }
+  }, [current, doc, goTo, layout]);
 
   // Restore the last read page position when document and layout are ready.
   useEffect(() => {
@@ -377,7 +587,6 @@ export default function PdfView({ file, read, stamp, backlinks, jump, onCopyLink
       const target = Math.min(saved, doc.numPages);
       if (target > 1) {
         setCurrent(target);
-        setPageText(String(target));
         currentRef.current = target;
         lastSavedPageRef.current = target;
         goTo(target);
@@ -398,7 +607,6 @@ export default function PdfView({ file, read, stamp, backlinks, jump, onCopyLink
     let page = 1;
     while (page < tops.length && tops[page]! <= at) page++;
     setCurrent(page);
-    setPageText(String(page));
     currentRef.current = page;
 
     if (restoredRef.current && page !== lastSavedPageRef.current) {
@@ -413,11 +621,6 @@ export default function PdfView({ file, read, stamp, backlinks, jump, onCopyLink
     if (sc && keepRatio.current !== null) sc.scrollTop = keepRatio.current * sc.scrollHeight;
     keepRatio.current = null;
   }, [scale]);
-  const zoom = (next: number) => {
-    const sc = scrollRef.current;
-    if (sc) keepRatio.current = sc.scrollTop / Math.max(1, sc.scrollHeight);
-    setScale(Math.min(MAX_SCALE, Math.max(MIN_SCALE, next)));
-  };
 
   useEffect(() => {
     if (!jump || !doc || !scale || jump.n === handledJump.current) return;
@@ -449,14 +652,226 @@ export default function PdfView({ file, read, stamp, backlinks, jump, onCopyLink
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [file]);
 
+  const handleZoomIn = useCallback(() => {
+    setUserZoom((z) => {
+      const next = Math.min(3.5, +(z + 0.15).toFixed(2));
+      userZoomRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    setUserZoom((z) => {
+      const next = Math.max(0.4, +(z - 0.15).toFixed(2));
+      userZoomRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const handleResetZoom = useCallback(() => {
+    userZoomRef.current = 1.0;
+    setUserZoom(1.0);
+  }, []);
+
+  // Keyboard navigation and zoom shortcuts
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement
+      ) {
+        return;
+      }
+      if (e.metaKey || e.ctrlKey) {
+        if (e.key === "+" || e.key === "=") {
+          e.preventDefault();
+          handleZoomIn();
+          return;
+        }
+        if (e.key === "-" || e.key === "_") {
+          e.preventDefault();
+          handleZoomOut();
+          return;
+        }
+        if (e.key === "0") {
+          e.preventDefault();
+          handleResetZoom();
+          return;
+        }
+      }
+      if (e.altKey) return;
+      if (e.key === "ArrowLeft" || e.key === "PageUp") {
+        e.preventDefault();
+        handlePrev();
+      } else if (e.key === "ArrowRight" || e.key === "PageDown") {
+        e.preventDefault();
+        handleNext();
+      } else if (e.key === "Escape") {
+        setActiveModal(null);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [handlePrev, handleNext, handleZoomIn, handleZoomOut, handleResetZoom]);
+
+  // Center-preserving zoom adjustment for buttons/shortcuts
+  useLayoutEffect(() => {
+    const el = surfaceRef.current;
+    if (!el) return;
+    if (isWheelZoomRef.current) {
+      isWheelZoomRef.current = false;
+      prevZoomRef.current = userZoom;
+      return;
+    }
+    const prevZoom = prevZoomRef.current;
+    if (prevZoom !== userZoom && prevZoom > 0) {
+      if (userZoom === 1.0) {
+        el.scrollLeft = 0;
+        el.scrollTop = 0;
+      } else {
+        const ratio = userZoom / prevZoom;
+        const cx = el.scrollLeft + el.clientWidth / 2;
+        const cy = el.scrollTop + el.clientHeight / 2;
+        el.scrollLeft = Math.round(cx * ratio - el.clientWidth / 2);
+        el.scrollTop = Math.round(cy * ratio - el.clientHeight / 2);
+      }
+    }
+    prevZoomRef.current = userZoom;
+  }, [userZoom]);
+
+  // Mouse pan handlers for surface
+  const handleSurfaceMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    const isText = target.closest(".textLayer") || target.closest(".pdf-mark");
+    const surface = surfaceRef.current;
+    if (!surface) return;
+
+    // Pan with middle-click OR left-click on background / canvas when zoomed in
+    if (e.button === 1 || (e.button === 0 && !isText && userZoom > 1.02)) {
+      isPanningRef.current = true;
+      setIsPanning(true);
+      panStartRef.current = {
+        x: e.clientX,
+        y: e.clientY,
+        scrollLeft: surface.scrollLeft,
+        scrollTop: surface.scrollTop,
+      };
+      if (e.button === 1) e.preventDefault();
+    }
+  }, [userZoom]);
+
+  useEffect(() => {
+    const onPointerMove = (e: PointerEvent) => {
+      if (!isPanningRef.current || !surfaceRef.current) return;
+      const dx = e.clientX - panStartRef.current.x;
+      const dy = e.clientY - panStartRef.current.y;
+      surfaceRef.current.scrollLeft = panStartRef.current.scrollLeft - dx;
+      surfaceRef.current.scrollTop = panStartRef.current.scrollTop - dy;
+    };
+
+    const onPointerUp = () => {
+      if (isPanningRef.current) {
+        isPanningRef.current = false;
+        setIsPanning(false);
+      }
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+  }, []);
+
+  // Smooth Ctrl/Cmd + Mouse wheel & trackpad pinch zoom with cursor focal-point pinning
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+
+    let rafId: number | null = null;
+    let accumulatedDelta = 0;
+    let lastEvent: { clientX: number; clientY: number } | null = null;
+
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        // Smooth exponential multiplier
+        const factor = -e.deltaY * 0.0035;
+        accumulatedDelta += factor;
+        lastEvent = { clientX: e.clientX, clientY: e.clientY };
+
+        if (rafId === null) {
+          rafId = requestAnimationFrame(() => {
+            const surface = surfaceRef.current;
+            const currentZoom = userZoomRef.current;
+            const targetZoom = Math.min(3.5, Math.max(0.4, +(currentZoom * Math.exp(accumulatedDelta)).toFixed(3)));
+            accumulatedDelta = 0;
+            rafId = null;
+
+            if (Math.abs(targetZoom - currentZoom) > 0.005) {
+              if (surface && lastEvent) {
+                const rect = surface.getBoundingClientRect();
+                const mouseX = lastEvent.clientX - rect.left;
+                const mouseY = lastEvent.clientY - rect.top;
+                const ratio = targetZoom / currentZoom;
+                const nextScrollLeft = Math.round((surface.scrollLeft + mouseX) * ratio - mouseX);
+                const nextScrollTop = Math.round((surface.scrollTop + mouseY) * ratio - mouseY);
+                surface.scrollLeft = nextScrollLeft;
+                surface.scrollTop = nextScrollTop;
+              }
+              isWheelZoomRef.current = true;
+              userZoomRef.current = targetZoom;
+              setUserZoom(targetZoom);
+            }
+          });
+        }
+      }
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
+  }, []);
+
+  // Close modals on click outside
+  useEffect(() => {
+    if (!activeModal) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest(".pdf-popover") && !target.closest(".pdf-tool-btn")) {
+        setActiveModal(null);
+      }
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [activeModal]);
+
+  // Fullscreen support
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      void rootRef.current?.requestFullscreen().catch(() => undefined);
+    } else {
+      void document.exitFullscreen().catch(() => undefined);
+    }
+  }, []);
+
+  useEffect(() => {
+    const onFs = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+
   // A selection made with the mouse offers "Copy link".
   const offerLink = () =>
     setTimeout(() => {
       const s = document.getSelection();
       const root = rootRef.current;
-      const sc = scrollRef.current;
+      const sc = scrollRef.current ?? root;
       if (!s || s.isCollapsed || !s.rangeCount || !root || !sc || !sc.contains(s.anchorNode)) return setPop(null);
-      const at = selectionToPdf(s.getRangeAt(0), sc);
+      const at = selectionToPdf(s.getRangeAt(0), root);
       const rs = s.getRangeAt(0).getClientRects();
       const end = rs[rs.length - 1];
       if (!at || !end) return setPop(null);
@@ -472,6 +887,37 @@ export default function PdfView({ file, read, stamp, backlinks, jump, onCopyLink
     return byPage;
   }, [backlinks]);
 
+  // Computed layout facing pages for spread
+  const leftSpreadPage = current === 1 ? 1 : current % 2 === 0 ? current : current - 1;
+  const rightSpreadPage = current === 1 ? null : leftSpreadPage + 1 <= (doc?.numPages ?? 1) ? leftSpreadPage + 1 : null;
+
+  // Sizing scale for spread and single view modes
+  const activeScale = useMemo(() => {
+    if (!sizes.length) return 1;
+    const cw = containerSize.width || rootRef.current?.clientWidth || window.innerWidth;
+    const ch = (containerSize.height || rootRef.current?.clientHeight || window.innerHeight) - 96;
+
+    let baseScale = 1.0;
+    if (layout === "scroll") {
+      baseScale = scale || fitScale(cw - 15, sizes[0]![0]);
+    } else if (layout === "single") {
+      const pw = sizes[current - 1]?.[0] ?? 600;
+      const ph = sizes[current - 1]?.[1] ?? 800;
+      baseScale = Math.min((cw - 48) / pw, (ch - 16) / ph);
+    } else {
+      // Spread mode
+      const pw = sizes[leftSpreadPage - 1]?.[0] ?? 600;
+      const ph = sizes[leftSpreadPage - 1]?.[1] ?? 800;
+      if (current === 1 || !rightSpreadPage) {
+        baseScale = Math.min((cw - 48) / pw, (ch - 16) / ph);
+      } else {
+        baseScale = Math.min((cw - 48 - GAP) / (pw * 2), (ch - 16) / ph);
+      }
+    }
+
+    return Math.max(MIN_SCALE, baseScale * userZoom);
+  }, [containerSize, layout, sizes, current, scale, leftSpreadPage, rightSpreadPage, userZoom]);
+
   if (!doc) {
     // The root is there while loading too: the fit-to-width zoom is measured from it.
     return (
@@ -483,60 +929,197 @@ export default function PdfView({ file, read, stamp, backlinks, jump, onCopyLink
 
   return (
     <div className={dark ? "pdf-view pdf-dark" : "pdf-view"} ref={rootRef}>
-      <div className="pdf-toolbar">
-        <button title="Previous page" aria-label="Previous page" disabled={current <= 1} onClick={() => goTo(current - 1)}>‹</button>
-        <input
-          className="pdf-page-input"
-          aria-label="Page"
-          value={pageText}
-          onChange={(e) => setPageText(e.target.value.replace(/\D/g, ""))}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && pageText) goTo(Number(pageText));
+      {/* Top Toolbar matching Google Play Books style */}
+      <PdfToolbar
+        title={bookTitle}
+        isDark={dark}
+        isFullscreen={isFullscreen}
+        isBookmarked={bookmarks.includes(current)}
+        zoomPercent={Math.round(userZoom * 100)}
+        activeModal={activeModal}
+        onZoomIn={handleZoomIn}
+        onZoomOut={handleZoomOut}
+        onResetZoom={handleResetZoom}
+        onToggleDark={() => {
+          setPdfDark(!dark);
+          setDark(!dark);
+        }}
+        onToggleFullscreen={toggleFullscreen}
+        onToggleBookmark={handleToggleBookmark}
+        onToggleModal={(m) => setActiveModal((prev) => (prev === m ? null : m))}
+      />
+
+      {/* Popovers */}
+      {activeModal === "contents" && (
+        <PdfContentsModal
+          toc={toc}
+          bookmarks={bookmarks}
+          currentPage={current}
+          onGoTo={(p) => {
+            goTo(p);
+            setActiveModal(null);
           }}
-          onBlur={() => setPageText(String(current))}
+          onRemoveBookmark={handleRemoveBookmark}
+          onClose={() => setActiveModal(null)}
         />
-        <span className="pdf-total">/ {doc.numPages}</span>
-        <button title="Next page" aria-label="Next page" disabled={current >= doc.numPages} onClick={() => goTo(current + 1)}>›</button>
-        <span className="pdf-spacer" />
-        <button title="Zoom out" aria-label="Zoom out" onClick={() => zoom(scale / 1.2)}>−</button>
-        <button
-          className="pdf-zoom"
-          title="Fit to width"
-          onClick={() => zoom(fitScale(scrollRef.current?.clientWidth ?? 800, sizes[0]![0]))}
-        >
-          {Math.round(scale * 100)}%
-        </button>
-        <button title="Zoom in" aria-label="Zoom in" onClick={() => zoom(scale * 1.2)}>+</button>
-        <button
-          title={dark ? "Switch to the normal theme" : "Switch to the dark theme"}
-          aria-label="Dark theme"
-          aria-pressed={dark}
-          onClick={() => {
+      )}
+
+      {activeModal === "display" && (
+        <PdfDisplayModal
+          isDark={dark}
+          layout={layout}
+          readingMode={readingMode}
+          typography={typography}
+          onToggleDark={() => {
             setPdfDark(!dark);
             setDark(!dark);
           }}
+          onSelectLayout={handleSelectLayout}
+          onSelectReadingMode={handleSelectReadingMode}
+          onChangeTypography={handleChangeTypography}
+          onClose={() => setActiveModal(null)}
+        />
+      )}
+
+      {activeModal === "search" && (
+        <PdfSearchModal
+          doc={doc}
+          onGoTo={(p) => {
+            goTo(p);
+            setActiveModal(null);
+          }}
+          onClose={() => setActiveModal(null)}
+        />
+      )}
+
+      {/* Reader Body */}
+      {readingMode === "reflow" ? (
+        <PdfReflowView
+          doc={doc}
+          current={current}
+          layout={layout}
+          typography={typography}
+          title={bookTitle}
+        />
+      ) : layout === "spread" ? (
+        <div
+          ref={surfaceRef}
+          className={`pdf-reader-surface pdf-spread-surface ${userZoom > 1.02 ? "zoomed" : ""} ${isPanning ? "panning" : ""}`}
+          onMouseDown={handleSurfaceMouseDown}
+          onMouseUp={offerLink}
         >
-          {dark ? "☀" : "☾"}
-        </button>
-      </div>
-      <div className="pdf-scroll" ref={scrollRef} onScroll={onScroll} onMouseDown={() => setPop(null)} onMouseUp={offerLink}>
-        <div className="pdf-pages">
-          {sizes.map(([w, h], i) => (
+          <div className="pdf-spread-stage">
+            {current === 1 ? (
+              <div className="pdf-spread-single-wrap">
+                <PageView
+                  key="spread-1"
+                  doc={doc}
+                  num={1}
+                  width={(sizes[0]?.[0] ?? 600) * activeScale}
+                  height={(sizes[0]?.[1] ?? 800) * activeScale}
+                  scale={activeScale}
+                  marks={pages.get(1) ?? NO_MARKS}
+                  flash={jump && jump.page === 1 ? (jump.selection ?? null) : null}
+                  flashKey={jump?.n ?? 0}
+                  onBacklink={(b) => onOpenNote(backlinks[b]!.note)}
+                  alwaysNear
+                />
+              </div>
+            ) : (
+              <div className="pdf-spread-pair-wrap">
+                {leftSpreadPage && (
+                  <div className="pdf-spread-page-left">
+                    <PageView
+                      key={`spread-${leftSpreadPage}`}
+                      doc={doc}
+                      num={leftSpreadPage}
+                      width={(sizes[leftSpreadPage - 1]?.[0] ?? 600) * activeScale}
+                      height={(sizes[leftSpreadPage - 1]?.[1] ?? 800) * activeScale}
+                      scale={activeScale}
+                      marks={pages.get(leftSpreadPage) ?? NO_MARKS}
+                      flash={jump && jump.page === leftSpreadPage ? (jump.selection ?? null) : null}
+                      flashKey={jump?.n ?? 0}
+                      onBacklink={(b) => onOpenNote(backlinks[b]!.note)}
+                      alwaysNear
+                    />
+                  </div>
+                )}
+                {rightSpreadPage && (
+                  <div className="pdf-spread-page-right">
+                    <PageView
+                      key={`spread-${rightSpreadPage}`}
+                      doc={doc}
+                      num={rightSpreadPage}
+                      width={(sizes[rightSpreadPage - 1]?.[0] ?? 600) * activeScale}
+                      height={(sizes[rightSpreadPage - 1]?.[1] ?? 800) * activeScale}
+                      scale={activeScale}
+                      marks={pages.get(rightSpreadPage) ?? NO_MARKS}
+                      flash={jump && jump.page === rightSpreadPage ? (jump.selection ?? null) : null}
+                      flashKey={jump?.n ?? 0}
+                      onBacklink={(b) => onOpenNote(backlinks[b]!.note)}
+                      alwaysNear
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : layout === "single" ? (
+        <div
+          ref={surfaceRef}
+          className={`pdf-reader-surface pdf-single-surface ${userZoom > 1.02 ? "zoomed" : ""} ${isPanning ? "panning" : ""}`}
+          onMouseDown={handleSurfaceMouseDown}
+          onMouseUp={offerLink}
+        >
+          <div className="pdf-single-stage">
             <PageView
-              key={i}
+              key={`single-${current}`}
               doc={doc}
-              num={i + 1}
-              width={w * scale}
-              height={h * scale}
-              scale={scale}
-              marks={pages.get(i + 1) ?? NO_MARKS}
-              flash={jump && jump.page === i + 1 ? (jump.selection ?? null) : null}
+              num={current}
+              width={(sizes[current - 1]?.[0] ?? 600) * activeScale}
+              height={(sizes[current - 1]?.[1] ?? 800) * activeScale}
+              scale={activeScale}
+              marks={pages.get(current) ?? NO_MARKS}
+              flash={jump && jump.page === current ? (jump.selection ?? null) : null}
               flashKey={jump?.n ?? 0}
               onBacklink={(b) => onOpenNote(backlinks[b]!.note)}
+              alwaysNear
             />
-          ))}
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="pdf-scroll" ref={scrollRef} onScroll={onScroll} onMouseDown={() => setPop(null)} onMouseUp={offerLink}>
+          <div className="pdf-pages">
+            {sizes.map(([w, h], i) => (
+              <PageView
+                key={i}
+                doc={doc}
+                num={i + 1}
+                width={w * scale}
+                height={h * scale}
+                scale={scale}
+                marks={pages.get(i + 1) ?? NO_MARKS}
+                flash={jump && jump.page === i + 1 ? (jump.selection ?? null) : null}
+                flashKey={jump?.n ?? 0}
+                onBacklink={(b) => onOpenNote(backlinks[b]!.note)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Bottom Scrubber & Progress */}
+      <PdfScrubber
+        current={current}
+        total={doc.numPages}
+        layout={layout}
+        onPrev={handlePrev}
+        onNext={handleNext}
+        onGoTo={goTo}
+      />
+
+      {/* Context Selection Link */}
       {pop && (
         <button
           className="pdf-copy-link"
@@ -556,3 +1139,4 @@ export default function PdfView({ file, read, stamp, backlinks, jump, onCopyLink
 }
 
 const NO_MARKS: { sel: PdfSelection; backlink: number }[] = [];
+

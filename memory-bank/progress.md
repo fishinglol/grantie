@@ -1,8 +1,30 @@
 # Progress
 
-_Last updated: 2026-09-25_
+_Last updated: 2026-10-10_
 
 ## Done
+- **Mobile PDF Reading Progress & File Persistence System** (shipped 2026-10-10)
+  - [x] Last-read PDF page persistence to `.granite/pdf-pages.json` (`rememberPdfPage`, `getPdfSavedPage`)
+  - [x] Last active file restore on app restart from `.granite/last-open.json` (`rememberLastOpenFile`, `readLastOpenFile`)
+  - [x] Instant initial scroll jump (`instant: true` on `goto`) to avoid smooth-scroll lag during startup restore
+  - [x] Debounced page auto-saving (500ms) with instant flush on unmount and `AppState` (`background` / `inactive`)
+  - [x] File rename and move propagation (`followPdfPage`, `followPdfBookmarks`)
+  - [x] Published to EAS preview channel (`update 2026-10-10-12:26`, Android Update ID: `01a12411-66ce-7db6-a82f-412af8369a1f`)
+- **Mobile PDF Reader — Single-Page Google Play Books Mode & Note Actions** (shipped 2026-10-10)
+  - [x] Horizontal scroll-snap carousel card layout (`100vw × 100vh` per page card)
+  - [x] 3-zone tap navigation: left 15% previous page, right 15% next page, center 70% immersive controls toggle
+  - [x] Immersive top bar (back, title, search, typography display, bookmarks, menu) & bottom scrubber bar
+  - [x] Table of contents outline modal & Bookmarks list modal
+  - [x] Typography modal (font size, font family, dark/sepia/light theme) & search in book with highlighted snippets
+  - [x] Orange FAB note action sheet: open linked note, create new `Note PDF – <stem>.md`, or link existing note via vault note picker
+  - [x] Android hardware back button handler to close sheets/modals safely without exiting the app
+  - [x] Mobile `IntersectionObserver` crash fix (`rootMargin: '0px 200% 0px 200%'` with `try...catch` eager fallback)
+- **Desktop PDF Reader — Zero-Flicker Double Buffering, Trackpad Zoom & Release Build** (built 2026-10-10)
+  - [x] Two-page book spread mode (`PdfView.tsx`) with spine shadow and cover page handling
+  - [x] Bottom draggable scrubber bar (`PdfScrubber.tsx`) with quick page jump
+  - [x] Zero-flicker double-buffered canvas & text layer rendering with atomic swap
+  - [x] Trackpad horizontal & vertical panning with overscroll containment and cursor focal-point zooming
+  - [x] Tauri release bundle built (`Granite.app` with embedded `tauri://localhost` frontend) fixing blank dev screen
 - **`conflict_cleaner` CLI v0.1** — finds & resolves sync-conflict files (Python,
   standalone). Predates the app work.
 - **`packages/core-notes` v0.1**
@@ -431,6 +453,35 @@ image cards, colours + groups; and **installed plugins (Excel, Cards) appear as 
   grid/alignment guides, copy-paste of cards, card duplicate, minimap, edge labels' colour, search inside a canvas, canvases inside note embeds,
   dragging a card out of a group to detach it (membership is geometric, as in JSON Canvas), and a `.canvas` link from a note (`[[Board]]`).
 
+### Canvas Whiteboard Tools, FigJam-style toolbar (2026-10-08, desktop and phone)
+Added FigJam-style whiteboard tools and toolbar layout to the canvas (`packages/canvas`):
+- [x] **Toolbar layout**: bottom-center pill containing Select (V), Hand (H), Pen (M), Sticky (S), Shapes (X), Text (T), Section (⇧S), Table, Widgets (popover with installed plugin buttons), and Plus (popover for note/media/link card).
+- [x] **Drawings & Pen drawer**:
+  - `DrawingNode` (`type: "drawing"`, relative `points`, `stroke: { width, kind }`, `color`) added to `jsonCanvas.ts`, parsed and serialized cleanly.
+  - Pen drawer above main bar: Marker, Highlighter (`mix-blend-mode: screen`), Washi tape (striped SVG pattern), Eraser (hit testing removes drawings in 1 undo step).
+  - 2 width variants (3px/8px), 8 preset colours + rainbow native `<input type="color">` swatch.
+  - Path rendering and tapering using `perfect-freehand`.
+- [x] **Shapes & Connectors drawer**:
+  - 7 drawer shapes: `rect`, `ellipse`, `diamond`, `triangle`, `triangle-down`, `pill`, `cylinder`.
+  - 8 basic shapes in "More shapes" panel: `pentagon`, `octagon`, `cross`, `arrow-left`, `arrow-right`, `chevron`, `star`, `speech-bubble`.
+  - Stored as `type: "text"` nodes with `styleAttributes.shape`, preserving label text in Obsidian.
+  - Connectors: `styleAttributes.path` supporting curved (Bézier), elbow (smooth step), straight, and plain line.
+  - More Shapes panel with instant search, recent shapes (persisted in `localStorage`), and connectors.
+- [x] **Stickies, Text, Tables & Sections**:
+  - Sticky note: pastel-filled square text cards with dark readable text, no border.
+  - Text tool: borderless text card (`styleAttributes.borderless`).
+  - Table tool: creates text card seeded with 3x3 Markdown pipe table.
+  - Section tool: drag-to-draw group box with `Section N` label chip and rename on edit.
+- [x] **Minimap & Controls**:
+  - React Flow `<MiniMap />` positioned bottom-right with dark styling and node colours.
+  - Zoom controls (`-`, `+`, fit) and Help (`?`) moved beside minimap.
+  - Top-right controls simplified to Undo/Redo.
+- [x] **Testing & Verification**:
+  - 27 unit tests pass in `packages/canvas` (`test/draw.test.ts` and `test/jsonCanvas.test.ts`).
+  - `npx tsc -b` clean across `apps/desktop` and `apps/mobile`.
+  - `npm run build:editor` in `apps/mobile` built without errors (`editorHtml.ts` updated).
+- [ ] **Not verified**: Real Tauri desktop window, real mobile hardware (Samsung SM-A356E, Expo Go), Apple Pencil/stylus pressure variation, and whether Obsidian preserves `"drawing"` nodes upon saving.
+
 ### Uninstall, plugin API 2 (typing / paste hooks) and the Simple Table plugin (2026-09-24, desktop and phone)
 User asked (Thai, from screenshots): (1) an **Uninstall** button on installed plugins, (2) the canvas bottom bar must not show a plugin's button unless it is
 installed (already true: the bar lists only *running* plugins' block languages; verified by uninstalling, the button and the card's rendering both go away),
@@ -848,15 +899,54 @@ Desktop 0.1.4 = 0.1.3 + the `//` menu fix for plugin frames (PR #22: no text `Ch
 ## 2026-10-03 — release 0.1.5 (first release with the in-app updater)
 Desktop 0.1.5 = 0.1.4 + in-app auto-update (PR #29: **Check for updates** in the sidebar user menu, signed update files, `latest.json` on the release) + sidebar indent guide lines and bigger chevrons (desktop and phone). Version bumped in `apps/desktop/package.json`, `apps/desktop/src-tauri/tauri.conf.json` and the `apps/desktop` entry of `package-lock.json`; tag `v0.1.5` on the merge commit of the bump PR. **First tag build that signs and runs the `update-manifest` job: check the release has `Granite-Mac.app.tar.gz(.sig)`, `Granite-Windows-Setup.exe.sig` and `latest.json`.** Installed copies up to 0.1.4 have no updater: install 0.1.5 by hand once; from then on the app offers the next release itself. The Android app is not part of this release (no `.apk` attached).
 
-### Calendar 1.2.2: stale pills after a rename (2026-10-07)
-User: renaming a note left the calendar pill unchanged, and clicking it said the note never existed. Cause: Calendar read the vault once per mount (and on ↻); the stale-path
-fallback in `open()` only follows a rename when exactly one note shares the date (two notes on Oct 8 -> no follow). Fix (`examples/plugins/calendar/main.js`, `refresh()`): re-read the notes on
-`pointerover` / window `focus` / `visibilitychange` (throttled 1.5 s, one in flight), redraw only if the path/props signature changed. Plugin tests 186 pass. **Not run in the real app**;
-an installed copy in a vault stays 1.2.1 until UPDATE in the Store; phone: `npm run build:editor` in `apps/mobile` (catalog regenerated).
-
-### Calendar 1.3.0 + plugin API 10: live refresh (2026-10-07)
-User: the 1.2.2 refresh worked but only after a delay (it waits for the pointer). **API 10**: `granite.vault.onChange(handler)` (blocks only, no permission, no data): `PluginHost.notesChanged()` posts `vault-changed`
-to every block frame; desktop `usePlugins` calls it in an effect on `notes` (the vault's note list, so after rename / delete / create / sync). Edits inside a note do NOT fire it (date edits still need the
-pointer / focus refresh). Calendar listens (250 ms debounce, `refresh(true)` bypasses the 1.5 s throttle, one more pass if an event arrives mid-read) and feature-detects, so older hosts keep the pointer refresh.
-**Phone: not wired** (`editor-web/main.tsx` is not told when the app's note list changes). Verified in a browser harness with a fake vault (delete + rename redrew with no pointer event); plugin tests 187, `tsc -b` desktop + mobile clean.
-**Needs a new desktop build** (`Granite.app` installed is older, no `onChange`); the plugin copy in `GraniteVault-new` is 1.3.0 already.
+## 2026-10-08 — Canvas Whiteboard Tools & Icon Redesign (FigJam-style toolbar)
+User requested FigJam-style whiteboard tools and toolbar for Granite's canvas, followed by a full icon redesign for clean, intuitive, and beautiful whiteboard tools, and final production builds:
+- **Format Extension**: Added `DrawingNode` (`{ type: "drawing", strokeColor, strokeWidth, points, minX, minY }`) to `packages/canvas/src/jsonCanvas.ts`. `parseCanvas` keeps drawing nodes; `groupsFirst` ensures drawings render above cards.
+- **Pure Vector & Stroke Engine (`packages/canvas/src/draw.ts`)**:
+  - `strokeBox`: point bounding box calculation.
+  - `smoothPath`: midpoint quadratic Bézier curve generation.
+  - `simplify`: point density thinning.
+  - `hitsStroke`: Euclidean hit-testing for eraser.
+  - Shape SVG path builders for all FigJam standard and extended shapes.
+- **Canvas Board (`packages/canvas/src/CanvasView.tsx`)**:
+  - Toolbar with FigJam layout: Select (V), Hand (H), Pen (M), Sticky (S), Shapes (X), Text (T), Section (⇧S), Table, Widgets popover, Add popover.
+  - Pen drawer with marker, highlighter, washi tape, and eraser. 2 width variants, preset colours + native custom color picker.
+  - Shapes drawer with connector routing (curved, elbow, straight, line), geometric shapes, and More Shapes search panel.
+  - Sticky note text cards (pastel filled, borderless), Shape text cards, and Section container frames.
+  - Minimap in bottom-right with zoom controls and help modal.
+- **Performance Optimization (lag fix)**:
+  - Removed `useViewport()` subscription from `Board` (zero board re-renders during pan/zoom).
+  - Direct SVG DOM attribute mutation in `DrawOverlay` for 60-120 FPS drawing without React reconciliation.
+  - Euclidean distance sampling threshold (< 2.5px) for stroke points.
+  - Memoized all cards and paths with `React.memo` and `useMemo`.
+  - Avoided disk commits during section resize until pointer release.
+- **Icon Redesign (`packages/canvas/src/CanvasView.tsx` & `packages/canvas/src/canvas.css`)**:
+  - Clean, modern Lucide / FigJam vector icons:
+    - `Select`: modern sleek vector pointer (`MousePointer2`).
+    - `Hand`: clean open palm.
+    - `Pen`: drawing pen/pencil.
+    - `Highlighter`: chisel tip with underline.
+    - `Washi`: tape spool / dispenser roll.
+    - `Eraser`: angled beveled rubber eraser.
+    - `Sticky Note`: Post-it with bottom-right fold peel.
+    - `Shapes`: intersecting square and circle.
+    - `Text`: serif display 'T'.
+    - `Section`: container frame with header label chip.
+    - `Table`: 3×3 grid table.
+    - `Connectors`: unified `ConnectorGlyph` with start dots and arrowheads across drawers and selection menus.
+    - `Pen Widths`: sleek stroke weight lines (2.5px vs 6.5px).
+    - `Selection Menu`: `Trash2`, `Palette`, `Focus`, `Pencil`, `ExternalLink`, `Section Frame`, `ArrowLeftRight`, and `ConnectorGlyph`.
+    - Glassmorphism pill styling (`backdrop-filter: blur(20px)`, dark translucent background, subtle border, smooth hover/active scaling).
+- **Copy, Paste & Duplicate (`packages/canvas/src/CanvasView.tsx`)**:
+  - `⌘C` / `Ctrl+C` copy, `⌘V` / `Ctrl+V` paste, `⌘D` / `Ctrl+D` duplicate for selected cards, shapes, drawings, and sections.
+  - Subgraph cloning handles connected edges (remaps node IDs and updates `fromNode`/`toNode` references) and contained section child nodes.
+  - Dedicated "Duplicate (⌘D)" button added to the `SelectionMenu` toolbar.
+  - Paste handles both internal canvas nodes (with incremental +30px offset) and external clipboard content (creates link card for URLs, or note card for plain text).
+  - Protected by input/textarea/contentEditable typing guards.
+- **Verified & Built**:
+  - `npm test --workspace=@granite/canvas`: 27/27 tests pass.
+  - `npx tsc -b apps/desktop`: 0 errors.
+  - `npx tsc -b apps/mobile`: 0 errors.
+  - `npm run build:editor` in `apps/mobile`: `editorHtml.ts` (1685 KB) generated.
+  - `npm run build` in `apps/desktop`: `tsc && vite build` succeeded (production dist built).
+  - macOS Production App: `Granite.app` bundled in `apps/desktop/src-tauri/target/release/bundle/macos/Granite.app`.

@@ -4,26 +4,153 @@
   padding: 0;
 }
 
+:root {
+  --reader-bg: #141720;
+  --reader-color: #e6e9f0;
+  --reader-font-size: 16px;
+  --reader-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --reader-line-height: 1.65;
+  --reader-page-bg: #141720;
+  --reader-border: rgba(255, 255, 255, 0.08);
+  --reader-muted: #5c6474;
+}
+
+[data-theme="light"] {
+  --reader-bg: #f8f9fa;
+  --reader-color: #1a1a1a;
+  --reader-page-bg: #ffffff;
+  --reader-border: rgba(0, 0, 0, 0.08);
+  --reader-muted: #8c93a0;
+}
+
+[data-theme="sepia"] {
+  --reader-bg: #f4ecd8;
+  --reader-color: #382e24;
+  --reader-page-bg: #f9f3e5;
+  --reader-border: rgba(56, 46, 36, 0.1);
+  --reader-muted: #7d6f5f;
+}
+
 html, body {
-  background-color: #141720;
-  color: #e6e9f0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-  font-size: 16px;
-  line-height: 1.65;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--reader-bg);
+  color: var(--reader-color);
+  font-family: var(--reader-font-family);
+  font-size: var(--reader-font-size);
+  line-height: var(--reader-line-height);
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
+  margin: 0;
+  padding: 0;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 #app {
-  max-width: 680px;
-  margin: 0 auto;
-  padding: 16px 20px 100px 20px;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+}
+
+.pdf-container {
+  display: flex;
+  flex-direction: row;
+  width: 100vw;
+  height: 100vh;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+}
+
+.pdf-container::-webkit-scrollbar {
+  display: none;
+}
+.pdf-container {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.page-section {
+  flex: 0 0 100vw;
+  width: 100vw;
+  height: 100vh;
+  box-sizing: border-box;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 20px 24px 20px;
+  background-color: var(--reader-page-bg);
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--reader-muted);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--reader-border);
+  flex-shrink: 0;
+}
+
+.page-body {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 8px 0;
+}
+
+.page-body::-webkit-scrollbar {
+  width: 4px;
+}
+.page-body::-webkit-scrollbar-thumb {
+  background: var(--reader-border);
+  border-radius: 2px;
+}
+
+.paragraph {
+  margin-bottom: 14px;
+  word-break: break-word;
+}
+
+.page-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 10px;
+  font-size: 11px;
+  color: var(--reader-muted);
+  font-weight: 500;
+  border-top: 1px solid var(--reader-border);
+  flex-shrink: 0;
+}
+
+.page-footer-left {
+  max-width: 65%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.page-footer-right {
+  font-variant-numeric: tabular-nums;
 }
 
 .status-msg {
-  padding: 40px 20px;
+  padding: 60px 20px;
   text-align: center;
-  color: #8b93a7;
+  color: var(--reader-muted);
   font-size: 15px;
 }
 
@@ -32,52 +159,25 @@ html, body {
 }
 
 .pdf-warning {
-  background-color: #2b3040;
+  background-color: rgba(232, 147, 95, 0.15);
   color: #e8935f;
   padding: 12px 16px;
   border-radius: 8px;
-  margin-bottom: 24px;
-  font-size: 14px;
+  margin-bottom: 16px;
+  font-size: 13px;
   border-left: 4px solid #e8935f;
 }
 
-.page-section {
-  margin-top: 28px;
-}
-
-.page-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: #5c6474;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  padding-top: 12px;
-  margin-bottom: 12px;
-  border-top: 1px solid #2b3040;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.page-body {
-  min-height: 40px;
-}
-
-.paragraph {
-  margin-bottom: 12px;
-  word-break: break-word;
+.empty-page-text {
+  color: var(--reader-muted);
+  font-size: 14px;
+  font-style: italic;
+  padding: 16px 0;
 }
 
 .page-loading {
-  color: #5c6474;
+  color: var(--reader-muted);
   font-size: 13px;
-  padding: 8px 0;
+  padding: 16px 0;
   font-style: italic;
-}
-
-.empty-page-text {
-  color: #5c6474;
-  font-size: 14px;
-  font-style: italic;
-  padding: 4px 0;
 }
